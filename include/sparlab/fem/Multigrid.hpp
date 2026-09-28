@@ -105,10 +105,15 @@ struct AmgOptions {
 /// Where each unknown of the reduced system lives, from which the rigid-body
 /// near-null space is built. The pointers must stay valid during `setup`.
 struct DofLayout {
-  int dim = 0;                                  ///< DOFs per node (2 or 3)
+  int dim = 0;                                  ///< spatial dimension (2 or 3)
+  /// DOFs per node: `dim` translations for a continuum model (0 means `dim`),
+  /// or 6 - three translations, then three rotations - for a shell or beam
+  /// model, whose rigid-body modes include the nodal rotations.
+  int dofs_per_node = 0;
   const Matrix* coordinates = nullptr;          ///< dim x num_nodes [m]
-  const std::vector<Index>* unknowns = nullptr; ///< global DOF (node * dim + k) of
+  const std::vector<Index>* unknowns = nullptr; ///< global DOF (node * ndpn + k) of
                                                 ///< each unknown, ascending
+  int nodal_dofs() const { return dofs_per_node > 0 ? dofs_per_node : dim; }
 };
 
 struct AmgLevelStats {

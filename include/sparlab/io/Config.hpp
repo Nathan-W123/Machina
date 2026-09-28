@@ -128,6 +128,14 @@ struct TopologyConfig {
   Scalar length_scale_tolerance = 0.02;
 };
 
+/// A material assigned to an element region, overriding the deck's primary
+/// `material` there (later regions win).
+struct MaterialRegion {
+  std::string name;
+  SelectorGroup region;
+  IsotropicMaterial material;
+};
+
 struct OutputConfig {
   bool write_csv = true;
   bool write_vtk = true;
@@ -163,6 +171,7 @@ class Configuration {
 
   std::vector<DisplacementConstraint> constraints;
   std::vector<LoadCaseSpec> load_cases;
+  std::vector<MaterialRegion> material_regions;
 
   StaticAnalysisOptions analysis;
   ModalConfig modal;

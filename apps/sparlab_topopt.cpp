@@ -306,6 +306,22 @@ int main(int argc, char** argv) {
     // missing boundary condition behind a very soft but non-singular matrix.
     require_well_posed(model);
 
+    // Self-weight and thermal loads grow and shrink with the material the
+    // optimiser places, and a second material needs its own interpolation;
+    // treating either as a fixed load would optimise the wrong problem.
+    if (!model.single_material()) {
+      throw ConfigError("topology optimisation works on one material; remove "
+                        "'material_regions' (use passive regions for fixed parts)");
+    }
+    for (const LoadCaseSpec& spec : model.load_case_specs()) {
+      if (spec.has_body_loads() || spec.has_temperature()) {
+        throw ConfigError("load case '" + spec.name +
+                          "': gravity, body forces, rotation and temperature loads depend "
+                          "on the design, and the optimiser does not yet interpolate "
+                          "them; analyse such cases with sparlab_solve");
+      }
+    }
+
     Assembler assembler(model);
     const Scalar filter_radius = config.resolved_filter_radius(model.mesh());
     DensityFilter filter(model.mesh(), config.topology.filter_type, filter_radius);

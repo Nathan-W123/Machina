@@ -37,12 +37,43 @@ tolerance is therefore 1e-5 for every element family, and the summary records
 the rounding floor next to the measured difference. CalculiX's plane elements
 (CPS4, CPS3) are *expanded* into solids through the thickness with the
 plane-stress condition imposed on the expanded element, which is a different
-discretisation of the plane problem. It coincides with plane stress only
-for a Poisson ratio of zero: measured on the Gmsh lug bracket, CPS3 agrees to
-the .frd rounding floor at nu = 0 (2.8e-6) and differs by about 1e-3 at
-nu = 0.33. A plane comparison with nu != 0 is therefore reported as an
-informational comparison between two idealisations, and scikit-fem - the same
-plane element - is the verification for those cases.
+discretisation of the plane problem. In plane stress it coincides with
+SparLab's element only for a Poisson ratio of zero: measured on the Gmsh lug
+bracket, CPS3 agrees to the .frd rounding floor at nu = 0 (2.8e-6) and differs
+by about 1e-3 at nu = 0.33. A plane-stress comparison with nu != 0 is
+therefore reported as an informational comparison between two idealisations,
+and scikit-fem - the same plane element - is the verification for those
+cases. The plane-strain expansion (CPE4, CPE3) holds the out-of-plane
+displacement at zero and is exact: the two-material plate agrees to 2.1e-6
+at nu = 0.3 / 0.33, so plane-strain comparisons are judged.
+
+Loads beyond point loads and tractions are exported in CalculiX's own form -
+pressure faces (P), self-weight (GRAV), body forces (BX/BY/BZ), rotation
+(CENTRIF), and a temperature field through *EXPANSION and *TEMPERATURE - so the
+CalculiX comparison of such a case also tests SparLab's integration of those
+loads, not only its stiffness and solve. A case whose temperature is conducted
+has a second deck, a steady *HEAT TRANSFER job that CalculiX solves itself;
+its nodal temperatures (NT) are compared with SparLab's, relative to the
+temperature range of the field.
+
+scikit-fem makes two comparisons. It solves with SparLab's assembled load
+vector (mesh.json), a check of the stiffness - per element material, for a
+model with several - and of the solve; and, for a deck with such loads, it
+integrates them itself from the same deck CalculiX reads ("scikit-fem loads"):
+body forces and pressures with order-6 rules (exact on straight cells, as
+SparLab's are), the thermal load with SparLab's rule (the element's stiffness
+rule: four points for the Tet10, exact for the linear elements). Two
+formulation choices of CalculiX differ from SparLab's and are reproduced in
+scikit-fem so that CalculiX is judged against its own problem, with its
+difference to SparLab recorded beside it: CalculiX takes the element-average
+temperature for the thermal strain of a first-order hexahedron (C3D8, and the
+hexahedra of an expanded CPS4 / CPE4), and integrates the centrifugal load of
+a C3D10 with its four-point rule, which is not exact for that cubic integrand
+(SparLab's consistent-mass integration is). Both were measured, not assumed:
+reproducing them brings CalculiX to within 1e-6 to 4e-6 of scikit-fem. A third
+shows on curved geometry only: CalculiX integrates a pressure on the six-node
+face of a C3D10 with a three-point rule, exact on a flat face but not for the
+degree-4 integrand of a curved one, whose load SparLab integrates exactly.
 
 Nothing here recomputes SparLab's numbers: they are read from the run.
 """
@@ -96,6 +127,40 @@ def parse_frd_displacements(path: str, num_nodes: int) -> np.ndarray:
     if not blocks:
         raise ResultError(f"{path} holds no displacement block")
     return blocks[-1]
+
+
+def parse_frd_temperatures(path: str, num_nodes: int) -> np.ndarray:
+    """Nodal temperatures (num_nodes,) from the NDTEMP block of a CalculiX .frd
+    file (last step)."""
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        lines = handle.readlines()
+    blocks: List[np.ndarray] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith(" -4") and "NDTEMP" in lines[i]:
+            values = np.full(num_nodes, np.nan)
+            i += 1
+            while i < len(lines) and lines[i].startswith(" -5"):
+                i += 1
+            while i < len(lines) and lines[i].startswith(" -1"):
+                row = lines[i]
+                values[int(row[3:13]) - 1] = float(row[13:25])
+                i += 1
+            blocks.append(values)
+            continue
+        i += 1
+    if not blocks:
+        raise ResultError(f"{path} holds no temperature block")
+    return blocks[-1]
+
+
+def frd_rounding_floor(values: np.ndarray) -> float:
+    """Half a unit in the sixth significant digit of the largest |value|: the
+    resolution of a .frd field."""
+    top = float(np.abs(values).max())
+    if top == 0.0:
+        return 0.0
+    return 0.5 * 10.0 ** (np.floor(np.log10(top)) - 5.0)
 
 
 def run_calculix(deck: str, workdir: str) -> str:
@@ -170,8 +235,10 @@ class SkfemProblem:
     """The discrete problem of a SparLab run rebuilt in scikit-fem: basis,
     stiffness, nodal loads and prescribed DOFs in scikit-fem's numbering."""
 
-    def __init__(self, mesh: Mesh, youngs: float, poisson: float, thickness: float,
+    def __init__(self, mesh: Mesh, youngs, poisson, thickness: float,
                  stress_state: str, forces: np.ndarray, prescribed: List[Dict]):
+        """`youngs` and `poisson` are numbers, or per-material sequences indexed
+        by `mesh.element_materials` for a model with several materials."""
         from skfem import (Basis, ElementHex1, ElementQuad1, ElementTetP1, ElementTetP2,
                            ElementTriP1, ElementVector, MeshHex, MeshQuad, MeshTet, MeshTet2,
                            MeshTri)
@@ -208,17 +275,26 @@ class SkfemProblem:
             corners = np.unique(mesh.elements[:, :4])
             dof_of_node = np.full((mesh.num_nodes, dim), -1, dtype=int)
             dof_of_node[corners] = basis.nodal_dofs.T
+            scalar_dof = np.full(mesh.num_nodes, -1, dtype=int)
+            scalar_dof[corners] = scalar.nodal_dofs[0]
             for j in range(6):
                 dof_of_node[mesh.elements[:, 4 + j]] = basis.edge_dofs[:, m.t2e[j]].T
-            if (dof_of_node < 0).any():
+                scalar_dof[mesh.elements[:, 4 + j]] = scalar.edge_dofs[0, m.t2e[j]]
+            if (dof_of_node < 0).any() or (scalar_dof < 0).any():
                 raise ResultError("some Tet10 nodes have no scikit-fem DOF")
+            # scikit-fem numbers the corner vertices in ascending node order.
+            vertex_of_node = np.full(mesh.num_nodes, -1, dtype=int)
+            vertex_of_node[corners] = np.arange(corners.size)
+            scalar_element = ElementTetP2()
         elif mesh.element_type == "Tri3":
             # Linear simplices: any vertex order describes the same element.
             m = MeshTri(p, np.ascontiguousarray(mesh.elements.T))
             element = ElementVector(ElementTriP1())
+            scalar_element = ElementTriP1()
         elif mesh.element_type == "Tet4":
             m = MeshTet(p, np.ascontiguousarray(mesh.elements.T))
             element = ElementVector(ElementTetP1())
+            scalar_element = ElementTetP1()
         elif dim == 2:
             # scikit-fem's quad corners are ordered (0,0), (0,1), (1,1), (1,0) on
             # its reference square; SparLab stores them counter-clockwise, so
@@ -226,6 +302,7 @@ class SkfemProblem:
             t = np.ascontiguousarray(mesh.elements[:, [0, 3, 2, 1]].T)
             m = MeshQuad(p, t)
             element = ElementVector(ElementQuad1())
+            scalar_element = ElementQuad1()
         else:
             # scikit-fem hex corners: (0,0,0), (0,1,0), (1,0,0), (0,0,1),
             # (1,1,0), (0,1,1), (1,0,1), (1,1,1) in reference coordinates;
@@ -234,19 +311,60 @@ class SkfemProblem:
             t = np.ascontiguousarray(mesh.elements[:, [0, 3, 1, 4, 2, 7, 5, 6]].T)
             m = MeshHex(p, t)
             element = ElementVector(ElementHex1())
+            scalar_element = ElementHex1()
         if dof_of_node is None:
             basis = Basis(m, element)
             dof_of_node = basis.nodal_dofs.T
+            # Linear meshes keep SparLab's node numbering for their vertices.
+            scalar_dof = np.arange(mesh.num_nodes)
+            vertex_of_node = np.arange(mesh.num_nodes)
         self.basis = basis
         self.dof_of_node = dof_of_node
+        self.skfem_mesh = m
+        self.vector_element = element
+        self.scalar_element = scalar_element
+        self.scalar_dof_of_node = scalar_dof
+        self.vertex_of_node = vertex_of_node
+        self.stress_state = stress_state
 
-        lam, mu = lame_parameters(youngs, poisson)
-        if stress_state == "plane_stress":
-            lam = 2.0 * lam * mu / (lam + 2.0 * mu)
-        elif stress_state not in ("plane_strain", "three_dimensional"):
+        if stress_state not in ("plane_stress", "plane_strain", "three_dimensional"):
             raise ResultError(f"unsupported stress state {stress_state}")
+
+        def lame(e: float, nu: float):
+            lam_, mu_ = lame_parameters(e, nu)
+            if stress_state == "plane_stress":
+                lam_ = 2.0 * lam_ * mu_ / (lam_ + 2.0 * mu_)
+            return lam_, mu_
+
+        if np.ndim(youngs) == 0:
+            lam, mu = lame(float(youngs), float(poisson))
+            self.k = asm(linear_elasticity(lam, mu), basis) * self.thickness
+            self.lam_e = np.full(mesh.num_elements, lam)
+            self.mu_e = np.full(mesh.num_elements, mu)
+        else:
+            # Several materials: the Lame parameters as element-wise fields.
+            from skfem import BilinearForm
+            from skfem.helpers import ddot, sym_grad, trace, eye
+
+            if mesh.element_materials is None:
+                raise ResultError("several materials but mesh.json has no element_materials")
+            pairs = np.asarray([lame(float(e), float(n)) for e, n in zip(youngs, poisson)])
+            per_element = pairs[mesh.element_materials]            # (elements, 2)
+            self.lam_e = per_element[:, 0].copy()
+            self.mu_e = per_element[:, 1].copy()
+            nqp = basis.X.shape[-1]
+            lam = np.repeat(per_element[:, :1], nqp, axis=1)       # (elements, qp)
+            mu = np.repeat(per_element[:, 1:], nqp, axis=1)
+            dim_ = dim
+
+            @BilinearForm
+            def elasticity(u, v, w):
+                eps_u = sym_grad(u)
+                sigma = w["lam"] * eye(trace(eps_u), dim_) + 2.0 * w["mu"] * eps_u
+                return ddot(sigma, sym_grad(v))
+
+            self.k = asm(elasticity, basis, lam=lam, mu=mu) * self.thickness
         self.lam, self.mu = lam, mu
-        self.k = asm(linear_elasticity(lam, mu), basis) * self.thickness
 
         # Nodal loads and prescribed DOFs mapped through skfem's DOF numbering.
         self.f = np.zeros(basis.N)
@@ -263,12 +381,23 @@ class SkfemProblem:
             self.x[dof] = float(entry["value_m"])
         self.fixed = np.unique(np.asarray(fixed, dtype=int))
         self.free = np.setdiff1d(np.arange(basis.N), self.fixed)
+        self._factor = None
+        self._k_fp = None
 
-    def static(self) -> np.ndarray:
-        """The static solution in scikit-fem's numbering."""
-        from skfem import condense, solve
+    def static(self, f: Optional[np.ndarray] = None) -> np.ndarray:
+        """The static solution in scikit-fem's numbering, for the load vector
+        of mesh.json or for `f`: K_ff u_f = f_f - K_fp x_p, with K_ff factorised
+        once (SuperLU) and reused for every load vector."""
+        import scipy.sparse.linalg as sla
 
-        return solve(*condense(self.k, self.f, x=self.x, D=self.fixed))
+        if self._factor is None:
+            rows = self.k[self.free]
+            self._factor = sla.factorized(rows[:, self.free].tocsc())
+            self._k_fp = rows[:, self.fixed]
+        load = self.f if f is None else f
+        u = self.x.copy()
+        u[self.free] = self._factor(load[self.free] - self._k_fp @ self.x[self.fixed])
+        return u
 
     def nodal(self, u: np.ndarray) -> np.ndarray:
         out = np.zeros((self.mesh.num_nodes, self.dim))
@@ -301,6 +430,234 @@ class SkfemProblem:
         inverse = scipy.linalg.eigh(-gff, kff, eigvals_only=True)
         positive = inverse[inverse > 0.0]
         return np.sort(1.0 / positive)[:num_modes]
+
+
+# ---------------------------------------------------------------------------
+# The loads of a CalculiX deck, integrated by scikit-fem
+# ---------------------------------------------------------------------------
+# Corner nodes (0-based, local) of CalculiX's faces 1, 2, ... (manual, 6.2).
+CALCULIX_FACES = {
+    "Quad4": [(0, 1), (1, 2), (2, 3), (3, 0)],
+    "Tri3": [(0, 1), (1, 2), (2, 0)],
+    "Hex8": [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3),
+             (3, 7, 4, 0)],
+    "Tet4": [(0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)],
+    "Tet10": [(0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)],
+}
+
+
+class DeckLoads:
+    """The loads of an exported CalculiX static deck, as CalculiX reads them:
+    *CLOAD nodal forces, *DLOAD pressure faces, GRAV, BX/BY/BZ on element
+    sets and CENTRIF, and the nodal *TEMPERATURE field."""
+
+    def __init__(self, path: str, num_nodes: int, num_elements: int):
+        self.cload: List[tuple] = []       # (node, component, value), 0-based
+        self.pressure: List[tuple] = []    # (element, face 1-based, pressure)
+        self.gravity: Optional[np.ndarray] = None
+        self.body: List[tuple] = []        # (element set, component, value)
+        self.centrifugal: Optional[tuple] = None  # (omega^2, point, axis)
+        self.temperature: Optional[np.ndarray] = None
+        self.elsets: Dict[str, np.ndarray] = {"EALL": np.arange(num_elements)}
+        keyword, name, ids = "", "", []
+        with open(path, "r", encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle]
+        for line in lines + ["*END"]:
+            if not line:
+                continue
+            if line.startswith("*"):
+                if keyword == "*ELSET":
+                    self.elsets[name] = np.asarray(ids, dtype=int) - 1
+                keyword = line.split(",")[0].upper()
+                name, ids = "", []
+                if keyword == "*ELSET":
+                    name = line.split("ELSET=")[1].split(",")[0].strip()
+                if keyword == "*TEMPERATURE":
+                    self.temperature = np.full(num_nodes, np.nan)
+                continue
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if keyword == "*ELSET":
+                ids.extend(int(p) for p in parts)
+            elif keyword == "*CLOAD":
+                self.cload.append((int(parts[0]) - 1, int(parts[1]) - 1, float(parts[2])))
+            elif keyword == "*TEMPERATURE":
+                self.temperature[int(parts[0]) - 1] = float(parts[1])
+            elif keyword == "*DLOAD":
+                kind = parts[1].upper()
+                values = [float(v) for v in parts[2:]]
+                if kind.startswith("P") and kind[1:].isdigit():
+                    self.pressure.append((int(parts[0]) - 1, int(kind[1:]), values[0]))
+                elif kind == "GRAV":
+                    self.gravity = values[0] * np.asarray(values[1:4])
+                elif kind in ("BX", "BY", "BZ"):
+                    self.body.append((parts[0], "XYZ".index(kind[1]), values[0]))
+                elif kind == "CENTRIF":
+                    self.centrifugal = (values[0], np.asarray(values[1:4]),
+                                        np.asarray(values[4:7]))
+                else:
+                    raise ResultError(f"{path}: unsupported *DLOAD type {kind}")
+        if self.temperature is not None and np.isnan(self.temperature).any():
+            raise ResultError(f"{path}: *TEMPERATURE leaves some nodes without a value")
+
+    @property
+    def native(self) -> bool:
+        """True when the deck carries any load in CalculiX's own form."""
+        return bool(self.pressure or self.body or self.gravity is not None
+                    or self.centrifugal is not None or self.temperature is not None)
+
+
+def sparlab_thermal_intorder(element_type: str) -> int:
+    """The rule SparLab integrates the thermal load with: the element's
+    stiffness rule, which is the four-point rule (order 2) for the Tet10 and
+    exact for the thermal integrand of every linear element."""
+    return 2 if element_type == "Tet10" else 6
+
+
+def native_load_vector(problem: "SkfemProblem", loads: DeckLoads, materials: List[Dict],
+                       element_materials: Optional[np.ndarray], thermal: str,
+                       body_intorder: int = 6, pressure_intorder: int = 6,
+                       thermal_intorder: Optional[int] = None) -> np.ndarray:
+    """The load vector of `loads` integrated by scikit-fem, in its numbering.
+
+    Point loads and tractions are the deck's nodal forces; everything else is
+    integrated here: the body force density
+    rho g + rho omega^2 (I - e e^T)(x - c) + b over the volume with a rule of
+    order `body_intorder` (6 is exact on straight cells, as SparLab's
+    consistent-mass integration is), the pressure as -p n over the faces with
+    a rule of order `pressure_intorder` (6 is exact for the degree-4 integrand
+    of a curved six-node face, as SparLab's rule is), and the thermal load int eps(v) : sigma_0 with
+    sigma_0 = k_th alpha dT I (k_th = 3 lambda + 2 mu in 3-D and plane strain,
+    2 lambda* + 2 mu in plane stress) with a rule of order `thermal_intorder`
+    (by default SparLab's, `sparlab_thermal_intorder`). `thermal` is
+    "interpolated" - the temperature interpolated by the shape functions, the
+    consistent load - or "element_average", each cell at the mean of its nodal
+    temperatures, which is how CalculiX treats first-order hexahedra.
+    """
+    from skfem import Basis, FacetBasis, LinearForm, asm
+    from skfem.helpers import div, dot
+
+    dim, mesh, t = problem.dim, problem.mesh, problem.thickness
+    m = problem.skfem_mesh
+    if thermal_intorder is None:
+        thermal_intorder = sparlab_thermal_intorder(mesh.element_type)
+    basis = Basis(m, problem.vector_element, intorder=body_intorder)
+    nqp = basis.X.shape[-1]
+    ne = mesh.num_elements
+    f = np.zeros(basis.N)
+    for node, component, value in loads.cload:
+        f[problem.dof_of_node[node, component]] += value
+
+    index = element_materials if element_materials is not None else np.zeros(ne, dtype=int)
+    rho = np.asarray([float(mat.get("density_kg_per_m3", 0.0)) for mat in materials])[index]
+    b = np.zeros((dim, ne, nqp))
+    if loads.gravity is not None:
+        b += rho[None, :, None] * loads.gravity[:dim, None, None]
+    if loads.centrifugal is not None:
+        omega2, point, axis = loads.centrifugal
+        axis = axis / np.linalg.norm(axis)
+        x = np.zeros((3, ne, nqp))
+        x[:dim] = basis.global_coordinates().value
+        r = x - point[:, None, None]
+        perp = r - axis[:, None, None] * np.einsum("i,ijk->jk", axis, r)[None]
+        b += omega2 * rho[None, :, None] * perp[:dim]
+    for elset, component, value in loads.body:
+        b[component, loads.elsets[elset], :] += value
+    if np.any(b != 0.0):
+        @LinearForm
+        def body(v, w):
+            return dot(w["b"], v)
+
+        f += asm(body, basis, b=b) * t
+
+    if loads.pressure:
+        faces = CALCULIX_FACES[mesh.element_type]
+        facet_of = {tuple(sorted(col)): i for i, col in enumerate(m.facets.T)}
+        chosen, values = [], []
+        for element, face, pressure in loads.pressure:
+            corners = mesh.elements[element][list(faces[face - 1])]
+            key = tuple(sorted(problem.vertex_of_node[corners]))
+            if key not in facet_of:
+                raise ResultError(f"pressure face {face} of element {element + 1} is not a "
+                                  "facet of the scikit-fem mesh")
+            chosen.append(facet_of[key])
+            values.append(pressure)
+        chosen = np.asarray(chosen)
+        fb = FacetBasis(m, problem.vector_element, facets=chosen, intorder=pressure_intorder)
+        pressure = np.repeat(np.asarray(values)[:, None], fb.X.shape[-1], axis=1)
+
+        @LinearForm
+        def load(v, w):
+            return -w["p"] * dot(w.n, v)
+
+        f += asm(load, fb, p=pressure) * t
+
+    if loads.temperature is not None:
+        alpha = np.asarray([float(mat.get("thermal_expansion_per_K", 0.0))
+                            for mat in materials])[index]
+        references = {float(mat.get("reference_temperature_K", 0.0)) for mat in materials
+                      if float(mat.get("thermal_expansion_per_K", 0.0)) != 0.0}
+        if len(references) > 1:
+            raise ResultError("materials with different reference temperatures")
+        t_ref = references.pop() if references else 0.0
+        tbasis = Basis(m, problem.vector_element, intorder=thermal_intorder)
+        tqp = tbasis.X.shape[-1]
+        if thermal == "interpolated":
+            scalar = Basis(m, problem.scalar_element, intorder=thermal_intorder)
+            nodal = np.zeros(scalar.N)
+            nodal[problem.scalar_dof_of_node] = loads.temperature
+            dt = scalar.interpolate(nodal).value - t_ref
+        elif thermal == "element_average":
+            mean = loads.temperature[mesh.elements].mean(axis=1) - t_ref
+            dt = np.repeat(mean[:, None], tqp, axis=1)
+        else:
+            raise ValueError(thermal)
+        lam, mu = problem.lam_e, problem.mu_e
+        k_th = (2.0 * lam + 2.0 * mu) if problem.stress_state == "plane_stress" \
+            else (3.0 * lam + 2.0 * mu)
+        coefficient = np.repeat((k_th * alpha)[:, None], tqp, axis=1)
+
+        @LinearForm
+        def thermal_load(v, w):
+            return w["c"] * w["dt"] * div(v)
+
+        f += asm(thermal_load, tbasis, c=coefficient, dt=dt) * t
+    return f
+
+
+def calculix_formulation(ccx_type: str, loads: Optional[DeckLoads]) -> Optional[Dict]:
+    """Where CalculiX's treatment of a deck's loads departs from SparLab's, the
+    options that make scikit-fem reproduce CalculiX's problem instead; None
+    when the two formulations coincide. Measured (docs/verification.md):
+      * CalculiX evaluates the thermal strain of a first-order hexahedron -
+        C3D8, and the hexahedra it expands CPS4 / CPE4 into - at the
+        element-average temperature; SparLab integrates the interpolated
+        temperature, the consistent load. They agree for a uniform field.
+      * CalculiX integrates the centrifugal load of a C3D10 with its four-point
+        rule, which is not exact for the cubic integrand N_a rho omega^2 r;
+        SparLab's consistent-mass integration is exact.
+      * CalculiX integrates a pressure on the six-node face of a C3D10 with a
+        three-point rule, exact on a flat face but not for the degree-4
+        integrand of a curved one; SparLab's rule is exact for it.
+    """
+    if loads is None:
+        return None
+    reasons = []
+    options = {"thermal": "interpolated", "body_intorder": 6, "pressure_intorder": 6}
+    if (loads.temperature is not None and np.ptp(loads.temperature) > 0.0
+            and ccx_type in ("C3D8", "CPS4", "CPE4")):
+        options["thermal"] = "element_average"
+        reasons.append("element-average temperature for the thermal strain of "
+                       "first-order hexahedra")
+    if loads.centrifugal is not None and ccx_type == "C3D10":
+        options["body_intorder"] = 2
+        reasons.append("four-point rule for the centrifugal load of the C3D10")
+    if loads.pressure and ccx_type == "C3D10":
+        options["pressure_intorder"] = 2
+        reasons.append("three-point rule for a pressure on the six-node faces of the C3D10")
+    if not reasons:
+        return None
+    options["reason"] = "; ".join(reasons)
+    return options
 
 
 def solve_with_skfem(mesh: Mesh, youngs: float, poisson: float, thickness: float,
@@ -366,22 +723,49 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
 
         # --- scikit-fem ---
         forces = mesh.nodal_forces(name)
-        problem = SkfemProblem(mesh, float(material["youngs_modulus_Pa"]),
-                               float(material["poisson_ratio"]), thickness, stress_state,
+        materials = summary.get("materials")
+        if materials:
+            youngs = [float(m["youngs_modulus_Pa"]) for m in materials]
+            poisson = [float(m["poisson_ratio"]) for m in materials]
+        else:
+            youngs = float(material["youngs_modulus_Pa"])
+            poisson = float(material["poisson_ratio"])
+        problem = SkfemProblem(mesh, youngs, poisson, thickness, stress_state,
                                forces, mesh.prescribed)
         u_sk = problem.static()
         sk = problem.nodal(u_sk)
         stats = compare(sk, ours)
         stats["tolerance"] = tolerances["skfem"]
         stats["passed"] = stats["max_rel_diff"] <= tolerances["skfem"]
-        stats["element"] = {"Quad4": "ElementQuad1", "Hex8": "ElementHex1",
-                            "Tri3": "ElementTriP1", "Tet4": "ElementTetP1",
-                            "Tet10": "ElementTetP2"}[element_type]
+        skfem_element = {"Quad4": "ElementQuad1", "Hex8": "ElementHex1",
+                         "Tri3": "ElementTriP1", "Tet4": "ElementTetP1",
+                         "Tet10": "ElementTetP2"}[element_type]
+        stats["element"] = skfem_element
+        stats["comparison"] = "SparLab's assembled load vector (mesh.json)"
         entry["codes"]["scikit-fem"] = stats
+
+        # --- scikit-fem integrating the deck's loads itself ---
+        deck = case.path(f"calculix_{_safe(name)}.inp")
+        loads = (DeckLoads(deck, mesh.num_nodes, mesh.num_elements)
+                 if os.path.isfile(deck) else None)
+        material_list = summary.get("materials") or [material]
+        if loads is not None and loads.native:
+            f_native = native_load_vector(problem, loads, material_list,
+                                          mesh.element_materials, "interpolated")
+            stats = compare(problem.nodal(problem.static(f_native)), ours)
+            stats["tolerance"] = tolerances["skfem_loads"]
+            stats["passed"] = stats["max_rel_diff"] <= tolerances["skfem_loads"]
+            stats["element"] = skfem_element
+            stats["loads"] = native_loads(deck)
+            stats["comparison"] = (
+                "loads integrated by scikit-fem from the CalculiX deck's own "
+                "definitions: body forces and pressures with order-6 rules, the "
+                "thermal load (interpolated temperature) with SparLab's stiffness "
+                "rule, point loads and tractions as nodal forces")
+            entry["codes"]["scikit-fem loads"] = stats
 
         # --- CalculiX ---
         if not skip_calculix:
-            deck = case.path(f"calculix_{_safe(name)}.inp")
             if not os.path.isfile(deck):
                 raise ResultError(f"{deck} is missing; rerun sparlab_solve with "
                                   "--export-calculix")
@@ -395,8 +779,31 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
             stats = compare(ref, ours)
             stats["tolerance"] = tolerances[key]
             stats["element"] = ccx_type
-            poisson = float(material["poisson_ratio"])
-            if key == "calculix_plane" and poisson != 0.0:
+            stats["loads"] = native_loads(deck)
+            poisson = max(float(m["poisson_ratio"])
+                          for m in (summary.get("materials") or [material]))
+            formulation = calculix_formulation(ccx_type, loads)
+            if formulation is not None:
+                # CalculiX's problem differs from SparLab's in the way stated:
+                # CalculiX is judged against scikit-fem solving CalculiX's
+                # problem, and its difference to SparLab is recorded.
+                f_ccx = native_load_vector(problem, loads, material_list,
+                                           mesh.element_materials, formulation["thermal"],
+                                           body_intorder=formulation["body_intorder"],
+                                           pressure_intorder=formulation["pressure_intorder"])
+                vs = compare(ref, problem.nodal(problem.static(f_ccx)))
+                stats["calculix_formulation"] = formulation["reason"]
+                stats["vs_skfem_calculix_formulation"] = vs
+                stats["max_rel_diff_judged"] = vs["max_rel_diff"]
+            plane_stress_expansion = ccx_type in ("CPS4", "CPS3") and poisson != 0.0
+            if formulation is not None and not plane_stress_expansion:
+                stats["passed"] = vs["max_rel_diff"] <= tolerances[key]
+                stats["comparison"] = (
+                    f"CalculiX's formulation differs ({formulation['reason']}): judged "
+                    "against scikit-fem solving CalculiX's problem; max_rel_diff is "
+                    "SparLab's difference to CalculiX, which the scikit-fem loads check "
+                    "accounts for")
+            elif plane_stress_expansion:
                 # Not the same discrete problem (see the module docstring):
                 # recorded, not judged.
                 stats["passed"] = None
@@ -412,6 +819,36 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
             stats["frd_rounding_floor_rel"] = 5.0e-6
             stats["within_frd_rounding"] = stats["max_rel_diff"] <= 5.0e-6
             entry["codes"]["calculix"] = stats
+
+        # --- steady conduction, when the case conducted its temperature ---
+        conduction_deck = case.path(f"calculix_{_safe(name)}_conduction.inp")
+        if not skip_calculix and os.path.isfile(conduction_deck):
+            with tempfile.TemporaryDirectory(prefix="sparlab_ccx_heat_") as work:
+                frd = run_calculix(conduction_deck, work)
+                ref_t = parse_frd_temperatures(frd, mesh.num_nodes)
+            if np.isnan(ref_t).any():
+                raise ResultError(f"CalculiX returned no temperature for some nodes of {name}")
+            ours_t = case.temperature(name)["temperature[K]"].to_numpy()
+            span = float(ours_t.max() - ours_t.min())
+            diff = np.abs(ref_t - ours_t)
+            floor = frd_rounding_floor(ref_t)
+            with open(conduction_deck, "r", encoding="utf-8") as handle:
+                heat_type = re.search(r"TYPE=(\w+)", handle.read()).group(1)
+            stats = {
+                "element": heat_type,
+                "quantity": "nodal temperature",
+                "max_abs_diff_K": float(diff.max()),
+                "max_rel_diff": float(diff.max() / max(span, 1e-300)),
+                "normalised_by": "the temperature range of SparLab's field",
+                "temperature_range_K": span,
+                "tolerance": tolerances["calculix_conduction"],
+                "frd_rounding_floor_K": floor,
+                "frd_rounding_floor_rel": floor / max(span, 1e-300),
+                "comparison": "same discrete conduction problem, solved by CalculiX "
+                              "(*HEAT TRANSFER, STEADY STATE)",
+            }
+            stats["passed"] = stats["max_rel_diff"] <= tolerances["calculix_conduction"]
+            entry["codes"]["calculix conduction"] = stats
 
         # --- linear buckling, when the run computed it ---
         ours_lf = np.asarray(buckling.get(name, {}).get("load_factors") or [], dtype=float)
@@ -441,6 +878,22 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
                 entry["codes"]["calculix buckling"] = stats
         report["load_cases"].append(entry)
     return report
+
+
+def native_loads(deck: str) -> List[str]:
+    """The distributed loads a CalculiX deck applies in CalculiX's own form."""
+    found = []
+    with open(deck, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    for label, pattern in (("pressure (P)", r"^\d+, P\d, "), ("self-weight (GRAV)", r", GRAV, "),
+                           ("body force (BX/BY/BZ)", r", B[XYZ], "),
+                           ("rotation (CENTRIF)", r", CENTRIF, "),
+                           ("temperature (*TEMPERATURE)", r"^\*TEMPERATURE$")):
+        if re.search(pattern, text, flags=re.MULTILINE):
+            found.append(label)
+    if re.search(r"^\*CLOAD$", text, flags=re.MULTILINE):
+        found.append("assembled nodal forces (*CLOAD)")
+    return found
 
 
 def compare_factors(reference: np.ndarray, ours: np.ndarray, tolerance: float,
@@ -474,10 +927,15 @@ def main(argv=None) -> int:
     parser.add_argument("--output", default="results/cross_validation")
     parser.add_argument("--skip-calculix", action="store_true")
     parser.add_argument("--tol-skfem", type=float, default=1e-7)
+    parser.add_argument("--tol-skfem-loads", type=float, default=1e-7,
+                        help="loads integrated by scikit-fem vs SparLab")
     parser.add_argument("--tol-calculix-solid", type=float, default=1e-5)
     parser.add_argument("--tol-calculix-plane", type=float, default=1e-5)
     parser.add_argument("--tol-skfem-buckling", type=float, default=1e-7)
     parser.add_argument("--tol-calculix-buckling", type=float, default=1e-4)
+    parser.add_argument("--tol-calculix-conduction", type=float, default=1e-4,
+                        help="max nodal temperature difference over the temperature range "
+                             "(the .frd rounding of a temperature near 300 K is 5e-4 K)")
     parser.add_argument("--skfem-buckling-max-dofs", type=int, default=6000,
                         help="largest free-DOF count for the dense buckling eigensolve")
     args = parser.parse_args(argv)
@@ -487,10 +945,12 @@ def main(argv=None) -> int:
               "scikit-fem only", file=sys.stderr)
         return 2
 
-    tolerances = {"skfem": args.tol_skfem, "calculix_solid": args.tol_calculix_solid,
+    tolerances = {"skfem": args.tol_skfem, "skfem_loads": args.tol_skfem_loads,
+                  "calculix_solid": args.tol_calculix_solid,
                   "calculix_plane": args.tol_calculix_plane,
                   "skfem_buckling": args.tol_skfem_buckling,
                   "calculix_buckling": args.tol_calculix_buckling,
+                  "calculix_conduction": args.tol_calculix_conduction,
                   "skfem_buckling_max_dofs": args.skfem_buckling_max_dofs}
     import skfem
     summary = {
@@ -530,9 +990,13 @@ def main(argv=None) -> int:
                 else:
                     all_passed = all_passed and stats["passed"]
                     verdict = "PASS" if stats["passed"] else "FAIL"
-                print(f"  {report['case']:<28} {lc['load_case']:<14} {code:<11} "
-                      f"{stats['element']:<12} max rel diff {stats['max_rel_diff']:.3e} "
-                      f"(tol {stats['tolerance']:.0e}) {verdict}")
+                judged = stats.get("max_rel_diff_judged", stats["max_rel_diff"])
+                extra = ("" if "max_rel_diff_judged" not in stats else
+                         f" [vs CalculiX's own formulation; SparLab "
+                         f"{stats['max_rel_diff']:.1e}]")
+                print(f"  {report['case']:<28} {lc['load_case']:<14} {code:<18} "
+                      f"{stats['element']:<12} max rel diff {judged:.3e} "
+                      f"(tol {stats['tolerance']:.0e}) {verdict}{extra}")
     summary["all_passed"] = all_passed
     os.makedirs(args.output, exist_ok=True)
     path = os.path.join(args.output, "summary.json")

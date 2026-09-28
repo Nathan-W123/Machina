@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 201 cases, 11 966 assertions
+make test              # the Catch2 suite: 218 cases, 13 433 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -46,6 +46,11 @@ All numbers in this document come from `results/verification/summary.json`,
 | Linear buckling of a clamped column, Q4 and Tet10 | verification + validation | larger finest-mesh error of `lambda_1` vs Euler-Engesser | `6.64e-03` | `0.01` | PASS |
 | Buckling-constraint sensitivity, Q4 and Hex8 | verification | worst case of the best-step max scaled error (KS aggregate and `lambda_1`) | `1.72e-06` | `1e-5` | PASS |
 | Sensitivity through the overhang filter, Q4 and Hex8 | verification | worst over `beta = 0, 4, 16` of the best scaled-entry or directional error | `2.81e-06` | `1e-5` | PASS |
+| Thick cylinder under internal pressure vs Lame (plane strain; Q4, Tri3, Hex8, Tet10) | verification | largest shortfall of the RMS displacement order below the element's | `-0.001` | `0.3` | PASS |
+| Rotating disk (plane stress) and cylinder (plane strain) vs exact | verification | largest shortfall of the RMS displacement order | `-0.006` | `0.3` | PASS |
+| Conduction and thermal stress in a thick cylinder vs exact | verification | largest shortfall of the RMS temperature and displacement orders | `0.005` | `0.3` | PASS |
+| Bimetallic strip under uniform heating vs Timoshenko | verification | finest-mesh relative curvature error (order `2.00` also required) | `3.01e-04` | `1e-3` | PASS |
+| Bar hanging under its own weight vs exact | verification | Tet10 displacement error (its space holds the exact field); linear-element RMS orders also required | `3.78e-13` | `1e-10` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -63,26 +68,33 @@ And from the cross-validation against two independent codes (section 14):
 
 | Problem | Reference | Max relative nodal-displacement difference | Tolerance | Result |
 |---------|-----------|-------------------------------------------:|----------:|--------|
-| Plane cantilever, 1 440 Q4 | scikit-fem 12.0.2, `ElementQuad1` | `1.47e-10` | `1e-7` | PASS |
+| Plane cantilever, 1 440 Q4 | scikit-fem 12.0.2, `ElementQuad1` | `1.50e-10` | `1e-7` | PASS |
 | Plane cantilever, 1 440 Q4 | CalculiX 2.21, `CPS4` | `8.75e-07` | `1e-5` | PASS |
-| Solid block, tip load, 1 280 Hex8 | scikit-fem, `ElementHex1` | `5.59e-12` | `1e-7` | PASS |
+| Solid block, tip load, 1 280 Hex8 | scikit-fem, `ElementHex1` | `5.96e-12` | `1e-7` | PASS |
 | Solid block, tip load, 1 280 Hex8 | CalculiX, `C3D8` | `3.39e-06` | `1e-5` | PASS |
-| Solid block, top pressure | scikit-fem, `ElementHex1` | `1.42e-11` | `1e-7` | PASS |
+| Solid block, top pressure | scikit-fem, `ElementHex1` | `1.23e-11` | `1e-7` | PASS |
 | Solid block, top pressure | CalculiX, `C3D8` | `2.43e-06` | `1e-5` | PASS |
-| Plane cantilever, 2 880 Tri3, `nu = 0` | scikit-fem, `ElementTriP1` | `1.66e-11` | `1e-7` | PASS |
+| Plane cantilever, 2 880 Tri3, `nu = 0` | scikit-fem, `ElementTriP1` | `6.96e-12` | `1e-7` | PASS |
 | Plane cantilever, 2 880 Tri3, `nu = 0` | CalculiX, `CPS3` | `8.86e-07` | `1e-5` | PASS |
-| Solid block, 7 680 Tet4, tip load / top pressure | scikit-fem, `ElementTetP1` | `1.72e-12` / `9.46e-12` | `1e-7` | PASS |
+| Solid block, 7 680 Tet4, tip load / top pressure | scikit-fem, `ElementTetP1` | `1.34e-12` / `7.75e-12` | `1e-7` | PASS |
 | Solid block, 7 680 Tet4, tip load / top pressure | CalculiX, `C3D4` | `3.64e-06` / `2.97e-06` | `1e-5` | PASS |
-| Gmsh lug bracket, 20 336 Tri3, `nu = 0`, two load cases | scikit-fem, `ElementTriP1` | `6.09e-13` / `7.52e-14` | `1e-7` | PASS |
+| Gmsh lug bracket, 20 336 Tri3, `nu = 0`, two load cases | scikit-fem, `ElementTriP1` | `5.26e-13` / `8.66e-14` | `1e-7` | PASS |
 | Gmsh lug bracket, 20 336 Tri3, `nu = 0`, two load cases | CalculiX, `CPS3` | `2.76e-06` / `4.29e-06` | `1e-5` | PASS |
-| Gmsh lug bracket, `nu = 0.33` (the benchmark material) | scikit-fem, `ElementTriP1` | `5.04e-13` / `2.42e-13` | `1e-7` | PASS |
+| Gmsh lug bracket, `nu = 0.33` (the benchmark material) | scikit-fem, `ElementTriP1` | `3.90e-13` / `2.86e-13` | `1e-7` | PASS |
 | Gmsh lug bracket, `nu = 0.33` | CalculiX, `CPS3` | `5.63e-04` / `1.14e-03` | - | INFO |
-| Gmsh engine mount, 39 936 Tet4, two load cases | scikit-fem, `ElementTetP1` | `1.48e-12` / `5.28e-13` | `1e-7` | PASS |
+| Gmsh engine mount, 39 936 Tet4, two load cases | scikit-fem, `ElementTetP1` | `1.52e-12` / `5.62e-13` | `1e-7` | PASS |
 | Gmsh engine mount, 39 936 Tet4, two load cases | CalculiX, `C3D4` | `1.71e-06` / `1.98e-06` | `1e-5` | PASS |
-| Gmsh engine mount, 13 918 curved Tet10, two load cases | scikit-fem, `ElementTetP2` on `MeshTet2` | `1.54e-12` / `1.12e-12` | `1e-7` | PASS |
+| Gmsh engine mount, 13 918 curved Tet10, two load cases | scikit-fem, `ElementTetP2` on `MeshTet2` | `1.16e-12` / `7.95e-13` | `1e-7` | PASS |
 | Gmsh engine mount, 13 918 curved Tet10, two load cases | CalculiX, `C3D10` | `1.48e-06` / `1.65e-06` | `1e-5` | PASS |
-| Axial column: 640 Hex8 / 480 Tet4 / 480 Tet10 | scikit-fem | `2.63e-11` / `6.35e-12` / `5.77e-11` | `1e-7` | PASS |
+| Axial column: 640 Hex8 / 480 Tet4 / 480 Tet10 | scikit-fem | `2.99e-11` / `6.63e-12` / `5.85e-11` | `1e-7` | PASS |
 | Axial column: 640 Hex8 / 480 Tet4 / 480 Tet10 | CalculiX, `C3D8` / `C3D4` / `C3D10` | `1.05e-06` / `1.95e-06` / `2.46e-06` | `1e-5` | PASS |
+| Block, 500 Hex8 / 648 Tet10: self-weight, pressure, rotation, body force, combined | scikit-fem integrating the loads itself | `<= 1.32e-12` / `<= 1.79e-12` | `1e-7` | PASS |
+| Block, 500 Hex8 / 648 Tet10, the same five cases | CalculiX, `C3D8` / `C3D10`, its own load cards | `<= 3.25e-06` / `<= 3.29e-06` | `1e-5` | PASS |
+| Two-material plate, 400 Hex8 / 300 Tet10 / 800 Q4 plane strain: conducted, uniform and regional temperatures | scikit-fem integrating the thermal load itself | `<= 7.64e-13` | `1e-7` | PASS |
+| The same plates | CalculiX, `C3D8` / `C3D10` / `CPE4`, `*EXPANSION` and `*TEMPERATURE` | `<= 3.57e-06` | `1e-5` | PASS |
+| The same plates, conducted temperature | CalculiX `*HEAT TRANSFER` (temperature, relative to its range) | `3.17e-05` / `3.47e-05` / `1.12e-05` | `1e-4` | PASS |
+| Gmsh engine mount, 13 918 curved Tet10: bore pressure, self-weight, rotation, conduction | scikit-fem integrating the loads itself | `<= 8.92e-12` | `1e-7` | PASS |
+| The same | CalculiX `C3D10`; conduction `*HEAT TRANSFER` | `<= 2.45e-06`; `5.21e-06` | `1e-5`; `1e-4` | PASS |
 
 And the linear buckling load factors of the same three columns, four modes
 each (section 20):
@@ -91,7 +103,7 @@ each (section 20):
 |--------|-----------|------------------------------------:|----------:|--------|
 | 640 Hex8 | scikit-fem: `K_G` of its own static solution, dense eigensolve | `7.22e-10` | `1e-7` | PASS |
 | 640 Hex8 | CalculiX `*BUCKLE`, `C3D8` | `8.26e-05` | `1e-4` | PASS |
-| 480 Tet4 | scikit-fem | `7.29e-11` | `1e-7` | PASS |
+| 480 Tet4 | scikit-fem | `8.54e-11` | `1e-7` | PASS |
 | 480 Tet4 | CalculiX `*BUCKLE`, `C3D4` | `6.43e-06` | `1e-4` | PASS |
 | 480 Tet10 | scikit-fem | `8.41e-10` | `1e-7` | PASS |
 | 480 Tet10 | CalculiX `*BUCKLE`, `C3D10` | `6.70e-05` | `1e-4` | PASS |
@@ -99,7 +111,10 @@ each (section 20):
 The two `INFO` rows are not a disagreement between codes but between
 idealisations: CalculiX expands its plane elements into a layer of solid
 elements, which reproduces plane stress only at `nu = 0` - the same mesh at
-`nu = 0` agrees to the `.frd` rounding floor (section 14).
+`nu = 0` agrees to the `.frd` rounding floor (section 14). Where CalculiX's own
+formulation of a load differs from SparLab's, its row is judged against
+scikit-fem solving CalculiX's problem (section 22); SparLab's own loads are
+judged by scikit-fem integrating them independently, to `1e-12`.
 
 ## 1. Element-level verification
 
@@ -558,7 +573,7 @@ node (`python/scripts/cross_validate.py`, `make cross-validation`):
   same integration order - the 4-point rule for the Tet10. It is the *same
   element formulation* in an independent implementation, so the only
   expected difference is linear-solver round-off - and that is what is
-  measured, from `7.5e-14` to `1.5e-10` relative over the eleven problems.
+  measured, from `8.7e-14` to `1.5e-10` relative over the seventeen problems.
   scikit-fem's Tet10 node order is checked against SparLab's cell by cell
   before anything is solved;
 * **CalculiX 2.21** (`ccx`) runs the exported `.inp` decks. `C3D8`, `C3D4`
@@ -731,8 +746,9 @@ iteration; the growth limit is judged over the multi-level meshes only
 `results/verification/multigrid_scaling.csv` and the larger comparison in
 `docs/benchmarks.md`: for one solve at these sizes Jacobi CG is about as fast
 as multigrid, because its cheap iterations cost about what the multigrid
-setup does; the direct solver is 51 times slower at 47 775 Hex8 DOFs
-(42.2 s against 0.83 s).
+setup does; the direct solver is about 40 times slower at 47 775 Hex8 DOFs
+(28.6 s against 0.69 s in the run behind `docs/results`; wall-clock times
+vary from run to run on a shared machine, the iteration counts do not).
 
 ## 18. The Heaviside projection
 
@@ -901,14 +917,179 @@ sensitivity-overhang`.
   of the volume (the test's square blocks measure one cell at a 1 %
   tolerance and three cells at 5 %).
 
+## 22. Pressure, volume and thermal loads
+
+**Unit tests against exact answers** (`tests/test_loads_thermal.cpp`):
+
+* the self-weight of every element type sums to the model's mass times `g`
+  to round-off, on straight and curved cells;
+* a bar hanging under its own weight is nodally exact on Q4 (the problem is
+  one-dimensional at `nu = 0`) and exact everywhere on Tet10, whose space holds
+  the quadratic field;
+* a rotating bar carries the exact centrifugal stretch; a plane model refuses
+  an in-plane rotation axis, and gravity on a massless model is refused;
+* the pressure on the curved outer face of a Tet10 quarter cylinder has the
+  resultant `-p` times the projected area in `x` and `y` and zero in `z`, to
+  `1e-12`; the follower-pressure stiffness `d f / d x` matches central
+  differences of the load to `1e-7` on distorted faces of all four shapes;
+* free thermal expansion is stress-free on every element and idealisation; a
+  fully restrained block carries the hydrostatic thermal stress
+  `-E alpha dT / (1 - 2 nu)` (Hex8) and `-E alpha dT / (1 - nu)` (Q4 plane
+  stress); a linear temperature gradient bends a free Tet10 bar without
+  stress; the thermal prestress of a restrained bar gives the same buckling
+  load as the equivalent mechanical compression;
+* steady conduction reproduces exact one-dimensional profiles with a heat
+  source (Tet10, exact everywhere), convection (Q4) and a surface flux (Hex8),
+  and refuses a problem with fluxes alone; a conducted field drives the
+  thermal strain of its load case;
+* two materials in series give the exact tip displacement.
+
+**Studies against exact continuum solutions** (`apps/verify_loads.cpp`).
+Each reference solves the same continuum problem the model discretises, so
+the error must vanish at the element's rate: `O(h^2)` in the nodal
+displacements and temperatures of the linear elements, `O(h^3)` for the
+Tet10, whose edge nodes lie on the curved surfaces. The measured error is the
+RMS nodal error relative to the RMS exact field, a discrete L2 norm, and each
+study checks the order measured between its two finest meshes against the
+element's order less 0.3 (the pre-asymptotic margin). The largest nodal error
+is reported too. The curved models are quarter sections with symmetry
+supports; the Hex8 and Tet10 sections are one cell deep with `u_z = 0` at
+every node, which is exactly plane strain - and on the same mesh the Hex8
+errors equal the Q4 errors to every printed digit in both plane-strain
+studies, the 3-D pressure and thermal loads reproducing the 2-D ones.
+
+| Study | Element | Finest mesh (`n_r x n_theta`), DOFs | RMS displacement error | Order | Stress error | Order |
+|-------|---------|------|-----:|-----:|-----:|-----:|
+| Lame cylinder, internal pressure (plane strain) | Q4 | 64 x 128, 16 770 | `4.61e-05` | `2.00` | `7.22e-05` | `1.99` |
+| | Tri3 | 64 x 128, 16 770 | `1.02e-04` | `2.00` | `1.30e-02` | `0.98` |
+| | Hex8 | 32 x 64, 12 870 | `1.84e-04` | `2.00` | `2.87e-04` | `1.98` |
+| | Tet10 | 32 x 64, 75 465 | `4.53e-07` | `3.11` | `8.15e-05` | `1.91` |
+| Rotating disk (plane stress) / cylinder (plane strain) | Q4 | 64 x 128, 16 770 | `5.77e-05` | `2.01` | `1.35e-04` | `1.90` |
+| | Tri3 | 64 x 128, 16 770 | `1.54e-04` | `2.01` | `1.53e-02` | `0.97` |
+| | Hex8 | 32 x 64, 12 870 | `3.17e-04` | `2.01` | `5.90e-04` | `1.80` |
+| | Tet10 | 32 x 64, 75 465 | `1.72e-06` | `3.10` | `3.62e-04` | `1.88` |
+| Conduction + thermal stress (plane strain) | Q4 | 64 x 128, 16 770 | `6.23e-05` | `2.00` | `1.09e-04` | `1.98` |
+| | Tri3 | 64 x 128, 16 770 | `5.46e-05` | `2.00` | `2.20e-03` | `0.97` |
+| | Hex8 | 32 x 64, 12 870 | `2.49e-04` | `2.00` | `4.30e-04` | `1.97` |
+| | Tet10 | 32 x 64, 75 465 | `3.04e-07` | `3.10` | `1.38e-04` | `1.98` |
+
+* **Lame's thick cylinder**: `a = 0.1 m`, `b = 0.2 m`, `100 MPa` internal
+  pressure on the curved bore (`pressures`), steel. The mean radial
+  displacement of the bore nodes converges to Lame's `9.53333e-05 m`
+  (Tet10: to all six printed digits).
+* **Rotating disk and cylinder**: `a = 0.1 m`, `b = 0.3 m`, `600 rad/s`
+  about `z` (`centrifugal`), free surfaces; the Q4 and Tri3 models are a
+  10 mm disk in plane stress, the solid ones a long cylinder in plane strain,
+  each against its exact solution.
+* **Conduction and thermal stress**: `k = 45 W/(m K)`, `1 MW/m^3` generation,
+  the bore held at 400 K, convection `h = 500 W/(m^2 K)` to 300 K from the
+  outer surface, stress free at 300 K. The RMS error of the temperature change
+  converges at `2.00` (Q4, Tri3, Hex8) and `3.01` (Tet10, `1.83e-07`), and the
+  heat leaving through the bore - from the reactions of the prescribed
+  temperatures, against the exact `8 635 W/m` - at `2.00` (`1.53e-05` Q4) and
+  to `1.3e-11` on the Tet10.
+* **Stresses** are compared at element centroids with the element's
+  quadrature-point average, which converges at `O(h^2)` for the Q4, Hex8 and
+  Tet10 and at `O(h)` for the constant-strain Tri3, as expected.
+
+The reference itself is checked in each run: one exact axisymmetric solution
+(`u = [c_T I(r) - c_b rho omega^2 (r^4 - a^4)/8] / r + C1 r + C2 / r`, with
+`I(r)` the weighted integral of the temperature change and `C1`, `C2` from the
+surface pressures) matches Lame's and the rotating-disk closed forms of
+Timoshenko and Goodier to `8.9e-16` and `6.4e-16`; its equilibrium residual,
+by central differences, is below `1.3e-7` of the largest stress; and the
+temperature satisfies its convection condition and heat balance to `3e-16`.
+
+* **Bimetallic strip**: 20 mm of two layers, 0.4 mm (`E = 140 GPa`,
+  `alpha = 1.5e-6 /K`) under 0.6 mm (`E = 100 GPa`, `alpha = 1.9e-5 /K`),
+  heated by 50 K in plane stress with supports that react nothing
+  (`max 5.9e-8 N`). Away from the free ends, uniform curvature is an exact
+  plane-stress state, and its curvature is Timoshenko's (1925),
+  `1.29468 1/m` (the force and moment balance and Timoshenko's formula agree
+  to `1.7e-16`). The curvature fitted to the middle half of the bottom edge
+  converges at order `1.98 -> 2.00` to an error of `3.0e-04` on 800 x 40
+  square cells (tolerance `1e-3`).
+* **Hanging bar**: a 0.5 m steel bar of 0.1 m square section (a plate in
+  plane stress for Q4 and Tri3) under its own weight, carried by the traction
+  `rho g L` on its top face, with three-two-one supports where the exact field
+  vanishes - they react `1e-12` of the weight. The exact field is quadratic:
+  the Tet10 reproduces it to `4.3e-13`, and the RMS errors of the linear
+  elements converge at `2.19` (Q4), `2.00` (Tri3), `2.15` (Hex8) and `1.90`
+  (Tet4, 70 227 DOFs, solved by multigrid CG). The largest nodal error
+  converges more slowly (orders `1.36 -> 1.64` on the Q4): it sits at the four
+  corners where the ends meet the free sides, as the maximum-norm estimate for
+  bilinear elements, `O(h^2 |log h|)`, allows - the largest error between
+  `0.2 L` and `0.8 L` converges at `1.97, 2.02, 2.00` (Q4) and
+  `2.02, 2.01, 2.00` (Tri3). This is why every study judges the RMS error.
+
+Writing the self-weight study exposed a defect in the static solver's force
+balance: it divided the residual resultant by the *resultant* of the applied
+loads, so any self-equilibrated load - a thermal strain, or a self-weight
+carried by a traction - failed on round-off (a relative error of `20` on a
+resultant of `5e-13 N`). It now divides by the gross size `sum |f_n|` of the
+applied nodal forces, the scale of the round-off in the sum
+(`docs/formulation.md`, section 4); for loads acting in one direction the two
+are equal, and every earlier study reproduced its value exactly.
+
+**Cross-validation of the loads.** Six decks
+(`configs/verification/block_loads_*`, `plate_thermal_*`,
+`engine_mount_tet10_loads_analysis.json`) export every load in CalculiX's own
+form - `P` faces, `GRAV`, `BX/BY/BZ` on element sets, `CENTRIF`, `*EXPANSION`
+with `*TEMPERATURE`, one `*MATERIAL` per material - so CalculiX integrates
+the loads with its own code, and a conducted temperature as a steady
+`*HEAT TRANSFER` job CalculiX solves itself. scikit-fem integrates the same
+loads independently from the same deck, with order-6 rules (the thermal load
+with SparLab's stiffness rule). All 113 comparisons of the cross-validation
+pass (2 informational, as before):
+
+* scikit-fem's independent integration agrees with SparLab to `1.4e-13` -
+  `1.8e-12` on the structured blocks and plates (self-weight, pressure,
+  rotation, regional body force, two materials under conducted, uniform and
+  regional temperatures) and to `4e-12` - `9e-12` on the curved Tet10 engine
+  mount, whose bore pressure acts on curved six-node faces;
+* CalculiX agrees to `6.7e-07` - `3.6e-06` wherever its formulation is
+  SparLab's, and its conduction solution to `5e-06` - `3.5e-05` of the
+  temperature range, at its `.frd` rounding (`5e-4 K` on temperatures near
+  300 K);
+* three of CalculiX's formulation choices differ from SparLab's. Each was
+  identified by reproducing it in scikit-fem, which brings CalculiX to within
+  `5.8e-7` - `3.4e-6` of scikit-fem, and each is now reproduced in the
+  comparison, so CalculiX is judged against its own problem:
+  * for a first-order hexahedron (`C3D8`, and the hexahedra it expands a
+    `CPE4` into) CalculiX evaluates the thermal strain at the element-average
+    temperature, where SparLab integrates the interpolated temperature - the
+    consistent load, which scikit-fem reproduces to `3e-13`. The two agree for
+    a uniform temperature (`2.7e-06`) and differ by `6.0e-03` and `4.2e-02` on
+    the conducted and the regional field of the Hex8 plate, the difference
+    vanishing with refinement for both;
+  * for the `C3D10` CalculiX integrates the centrifugal load with its
+    four-point rule, not exact for the cubic integrand `N_a rho omega^2 r`
+    (SparLab's consistent-mass integration is exact): `2.5e-05` on the block;
+  * for the `C3D10` it integrates a face pressure with a three-point rule,
+    exact on a flat face but not for the degree-4 integrand of a curved one:
+    `2.8e-04` on the engine mount's bore, where SparLab's three-point-per-
+    direction rule agrees with scikit-fem's order-4 to order-8 rules to
+    `4e-12`;
+* CalculiX's plane-strain expansion (`CPE4`) is exact - the two-material Q4
+  plate agrees to `2.1e-06` at `nu = 0.3 / 0.33` - so plane-strain rows are
+  judged; plane stress at `nu != 0` stays informational;
+* CalculiX 2.21 ignores `DC2D4` / `DC2D3` heat-transfer cards (it reads no
+  integration point for them), so a plane conduction deck uses the plane
+  element itself in the `*HEAT TRANSFER` step.
+
+scikit-fem's check of the stiffness now assembles each element with its own
+material's Lame constants, so the two-material decks are the same discrete
+problem there too.
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
 
 * **no comparison against experiment**;
-* the cross-validation covers linear static displacements on eleven
-  problems, three of them read from mesh files, and linear buckling load
-  factors on three. Stresses, natural frequencies and the optimised designs
+* the cross-validation covers linear static displacements on seventeen
+  problems, five of them on the three meshes read from files - six of them
+  under pressure, body and thermal loads, with conducted temperatures on four
+  - and linear buckling load factors on three. Stresses, natural frequencies and the optimised designs
   are not compared with another code, and CalculiX's `*BUCKLE` factors for
   `C3D8` and `C3D10` differ from SparLab's by up to `8.3e-5` for a reason
   not identified (section 14);
@@ -922,7 +1103,10 @@ Stated plainly, since the absence matters as much as the presence:
   integrand is rational); the same rule in scikit-fem and CalculiX
   reproduces SparLab's answer, which verifies the implementation, not the
   rule;
-* plane strain is unit-tested but no verification *study* runs in it;
+* the thermal and pressure studies run in plane strain and the rotating disk
+  in plane stress; the conduction studies cover prescribed temperatures,
+  convection and generation on curved boundaries, and surface fluxes only in
+  the unit tests and the cross-validation decks;
 * the sensitivity checks run on 72- and 36-element meshes (they need two
   extra solves per element per step); the gradients are not FD-verified at
   benchmark resolution, although they are the same code path;

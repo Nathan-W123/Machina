@@ -43,8 +43,9 @@ int main(int argc, char** argv) {
                                "auto, ...)"},
            {"--no-vtk", "skip VTK output"},
            {"--no-csv", "skip per-node/per-element CSV output"},
-           {"--export-calculix", "also write one CalculiX .inp per load case into the "
-                                 "output directory (cross-validation)"},
+           {"--export-calculix", "also write one CalculiX .inp per load case, and a "
+                                 "heat-transfer .inp for a conducted temperature, into "
+                                 "the output directory (cross-validation)"},
            {"--strict-config", "treat unknown configuration keys as errors"},
            {"--verbosity <lvl>", "trace|debug|info|warn|error|silent"},
            {"--help", "show this message"}});
@@ -108,8 +109,10 @@ int main(int argc, char** argv) {
         return dofs.restrict_to_free(analysis.solve_homogeneous(dofs.expand(b)));
       };
       for (std::size_t l : config.buckling_load_cases()) {
-        const SparseMatrix k_g =
-            assemble_geometric_stiffness(model, assembler, solutions[l].displacement);
+        const Vector& temperature = model.load_case_data(l).temperature;
+        const SparseMatrix k_g = assemble_geometric_stiffness(
+            model, assembler, solutions[l].displacement, nullptr,
+            temperature.size() > 0 ? &temperature : nullptr);
         BucklingResult result = solve_buckling(model, assembler, analysis.stiffness(), k_g,
                                                config.buckling.options, solve);
         result.load_case = solutions[l].load_case_name;
@@ -122,8 +125,11 @@ int main(int argc, char** argv) {
     {
       ScopedTimer t(timings, "stress_recovery");
       stresses.reserve(solutions.size());
-      for (const StaticSolution& sol : solutions) {
-        stresses.push_back(recover_stresses(model, assembler, sol.displacement));
+      for (std::size_t l = 0; l < solutions.size(); ++l) {
+        const Vector& temperature = model.load_case_data(l).temperature;
+        stresses.push_back(recover_stresses(model, assembler, solutions[l].displacement,
+                                            nullptr,
+                                            temperature.size() > 0 ? &temperature : nullptr));
       }
     }
 
@@ -147,9 +153,14 @@ int main(int argc, char** argv) {
           writer.write_reactions(model.mesh(), model.dofs(), name,
                                  solutions[l].reactions);
         }
+        const Vector& temperature = model.load_case_data(l).temperature;
+        if (config.output.write_csv && temperature.size() > 0) {
+          writer.write_temperature(model.mesh(), name, temperature);
+        }
         if (config.output.write_vtk) {
           writer.write_static_vtk(model.mesh(), name, solutions[l].displacement,
-                                  stresses[l], nullptr, nullptr);
+                                  stresses[l], nullptr, nullptr,
+                                  temperature.size() > 0 ? &temperature : nullptr);
         }
       }
       if (modal) writer.write_modal(model.mesh(), *modal);

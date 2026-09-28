@@ -13,11 +13,22 @@
 namespace sparlab {
 namespace {
 
-/// Nodal vector (force, reaction, ...) at node `n` of a full-length vector,
-/// padded with a zero z component on a 2-D model.
-Vector3 nodal_vector(const Vector& full, Index n, int dim) {
+/// Nodal vector (force, reaction, ...) at node `n` of a full-length vector
+/// with `ndpn` DOFs per node: its translational part, padded with a zero z
+/// component on a 2-D model.
+Vector3 nodal_vector(const Vector& full, Index n, int dim, int ndpn) {
   Vector3 v = Vector3::Zero();
-  for (int k = 0; k < dim; ++k) v(k) = full(n * dim + k);
+  for (int k = 0; k < dim; ++k) v(k) = full(n * ndpn + k);
+  return v;
+}
+
+/// Rotational part (a nodal moment, a rotation) of node `n` of a full-length
+/// vector; zero on a model whose nodes carry translations only.
+Vector3 nodal_rotation_part(const Vector& full, Index n, int ndpn) {
+  Vector3 v = Vector3::Zero();
+  if (ndpn == kMaxDofsPerNode) {
+    for (int k = 0; k < 3; ++k) v(k) = full(n * ndpn + 3 + k);
+  }
   return v;
 }
 
@@ -53,6 +64,7 @@ StaticAnalysis::StaticAnalysis(const FemModel& model, const Assembler& assembler
   if (options_.check_model) require_well_posed(model_);
   prescribed_ = model_.dofs().prescribed_vector();
   layout_.dim = model_.dim();
+  layout_.dofs_per_node = model_.dofs_per_node();
   layout_.coordinates = &model_.mesh().coordinates();
   layout_.unknowns = &model_.dofs().free_dofs();
 }
@@ -155,8 +167,10 @@ Vector StaticAnalysis::solve_homogeneous(const Vector& rhs, const Vector* initia
 }
 
 StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar weight,
-                                              const Vector& applied_force) {
+                                              const Vector& applied_force,
+                                              const LoadCaseData* data) {
   const int dim = model_.dim();
+  const int ndpn = model_.dofs_per_node();
   StaticSolution sol;
   sol.load_case_name = name;
   sol.weight = weight;
@@ -193,39 +207,55 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
 
   sol.compliance = applied_force.dot(sol.displacement);
   sol.strain_energy = 0.5 * sol.displacement.dot(k_full_ * sol.displacement);
+  if (data != nullptr && data->thermal.size() > 0) {
+    // Elastic energy of sigma = D (B u - eps0): the thermal part of the load
+    // does work against the free expansion, not against the stiffness.
+    sol.strain_energy += data->thermal_self_energy - data->thermal.dot(sol.displacement);
+  }
 
   // Peak displacement magnitude and its node.
   const Index nn = model_.mesh().num_nodes();
   for (Index n = 0; n < nn; ++n) {
-    const Scalar mag = magnitude(nodal_vector(sol.displacement, n, dim), dim);
+    const Scalar mag = magnitude(nodal_vector(sol.displacement, n, dim, ndpn), dim);
     if (mag > sol.max_displacement_magnitude) {
       sol.max_displacement_magnitude = mag;
       sol.max_displacement_node = n;
     }
   }
 
-  // Global force and moment balance about the origin.
+  // Global force and moment balance about the origin. On a shell or beam
+  // model the nodal moments (applied and reacted) add to the moments of the
+  // forces. Both balances are measured against the gross size of the applied
+  // loads, sum |f_n| and sum |x_n| |f_n|, the scale of the round-off in their
+  // sums: the resultant of a self-equilibrated load - a thermal strain, or a
+  // self-weight carried by a traction - is itself round-off.
   EquilibriumCheck& eq = sol.equilibrium;
+  Scalar force_scale = 0.0;
   Scalar applied_moment_scale = 0.0;
   for (Index n = 0; n < nn; ++n) {
     const Vector3 x = model_.mesh().node(n);
-    const Vector3 fa = nodal_vector(applied_force, n, dim);
-    const Vector3 fr = nodal_vector(sol.reactions, n, dim);
+    const Vector3 fa = nodal_vector(applied_force, n, dim, ndpn);
+    const Vector3 fr = nodal_vector(sol.reactions, n, dim, ndpn);
     eq.applied_force += fa;
     eq.reaction_force += fr;
     eq.applied_moment += moment_about_origin(x, fa, dim);
     eq.reaction_moment += moment_about_origin(x, fr, dim);
+    force_scale += fa.norm();
     applied_moment_scale += x.norm() * fa.norm();
+    if (ndpn == kMaxDofsPerNode) {
+      const Vector3 ma = nodal_rotation_part(applied_force, n, ndpn);
+      eq.applied_moment += ma;
+      eq.reaction_moment += nodal_rotation_part(sol.reactions, n, ndpn);
+      applied_moment_scale += ma.norm();
+    }
   }
   eq.force_residual = eq.applied_force + eq.reaction_force;
   eq.moment_residual = eq.applied_moment + eq.reaction_moment;
-  eq.relative_force_error =
-      eq.force_residual.norm() / std::max(eq.applied_force.norm(), 1.0e-30);
+  eq.relative_force_error = eq.force_residual.norm() / std::max(force_scale, 1.0e-30);
   eq.relative_moment_error =
       eq.moment_residual.norm() / std::max(applied_moment_scale, 1.0e-30);
 
-  if (eq.applied_force.norm() > 0.0 &&
-      eq.relative_force_error > options_.equilibrium_tolerance) {
+  if (force_scale > 0.0 && eq.relative_force_error > options_.equilibrium_tolerance) {
     std::ostringstream os;
     os << "load case '" << name << "': global force balance is violated. Applied "
        << vector_text(eq.applied_force, dim) << " N, reactions "
@@ -253,7 +283,8 @@ std::vector<StaticSolution> StaticAnalysis::solve_all(const Vector* stiffness_sc
   std::vector<StaticSolution> solutions;
   solutions.reserve(loads.size());
   for (std::size_t l = 0; l < loads.size(); ++l) {
-    solutions.push_back(build_solution(specs[l].name, specs[l].weight, loads[l]));
+    solutions.push_back(
+        build_solution(specs[l].name, specs[l].weight, loads[l], &model_.load_case_data(l)));
     log::debug("load case '", specs[l].name, "': compliance ",
                solutions.back().compliance, " J, max |u| ",
                solutions.back().max_displacement_magnitude, " m");

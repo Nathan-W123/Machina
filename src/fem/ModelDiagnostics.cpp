@@ -40,8 +40,15 @@ class DisjointSet {
 /// Row of the rigid-mode matrix for component `k` of a node at offset `x`
 /// from the reference point: translations first, then the rotation(s). In 2-D
 /// the single rotation is about z, u = theta (-y, x); in 3-D the three
-/// rotations are u = omega x r.
+/// rotations are u = omega x r. A rotational DOF of a shell or beam node
+/// (k = 3, 4, 5) turns with the rigid rotation about axis k - 3 and does not
+/// move with a translation.
 Vector rigid_mode_row(const Vector3& x, int k, int dim) {
+  if (k >= 3) {
+    Vector row = Vector::Zero(6);
+    row(k) = 1.0;
+    return row;
+  }
   if (dim == 2) {
     Vector row(3);
     if (k == 0) {
@@ -147,7 +154,7 @@ ModelDiagnostics diagnose_model(const FemModel& model) {
     std::vector<Vector> rows;
     for (Index n : nodes) {
       const Vector3 x = mesh.node(n) - centroid;
-      for (int k = 0; k < dim; ++k) {
+      for (int k = 0; k < dofs.dofs_per_node(); ++k) {
         const Index d = dofs.dof(n, k);
         if (!dofs.is_constrained(d)) continue;
         rows.push_back(rigid_mode_row(x, k, dim));

@@ -39,7 +39,8 @@ void check_scale(const Vector* scale, Index num_elements, const char* what) {
 }  // namespace
 
 Assembler::Assembler(const FemModel& model) : model_(model) {
-  uniform_ = mesh_is_uniform(model_.mesh());
+  // One cached element matrix pair needs identical cells *and* one material.
+  uniform_ = mesh_is_uniform(model_.mesh()) && model_.single_material();
   build_cache();
 }
 
@@ -57,13 +58,13 @@ void Assembler::build_cache() {
 
 Matrix Assembler::compute_element_stiffness(Index e) const {
   return model_.element().stiffness(model_.mesh().element_coordinates(e),
-                                    model_.constitutive(), model_.thickness(),
+                                    model_.constitutive_of(e), model_.thickness(),
                                     model_.integration());
 }
 
 Matrix Assembler::compute_element_mass(Index e) const {
   return model_.element().consistent_mass(model_.mesh().element_coordinates(e),
-                                          model_.material().density(),
+                                          model_.material_of(e).density(),
                                           model_.thickness(), model_.integration());
 }
 
@@ -86,7 +87,9 @@ void Assembler::build_pattern() const {
   const Index nn = mesh.num_nodes();
   const Index ne = mesh.num_elements();
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
+  // Node blocks are dofs_per_node wide: the translations of a continuum
+  // node, the translations and rotations of a shell or beam node.
+  const int dim = model_.dofs_per_node();
 
   // Elements around each node.
   std::vector<Index> inc_ptr(static_cast<std::size_t>(nn) + 1, 0);
@@ -182,7 +185,7 @@ SparseMatrix Assembler::scatter(const ElementMatrix& element_matrix, const Vecto
   const Mesh& mesh = model_.mesh();
   const Index ne = mesh.num_elements();
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
+  const int dim = model_.dofs_per_node();
   const Pattern& p = pattern_;
   SparseMatrix k(p.size, p.size);
   k.resizeNonZeros(static_cast<Eigen::Index>(p.inner.size()));
@@ -230,7 +233,7 @@ SparseMatrix Assembler::assemble_stiffness(const Vector* scale) const {
   }
 
   const int npe = mesh.nodes_per_elem();
-  const int edofs = npe * mesh.dim();
+  const int edofs = npe * model_.dofs_per_node();
   TripletList triplets;
   triplets.reserve(static_cast<std::size_t>(ne) * edofs * edofs);
 
@@ -258,10 +261,12 @@ SparseMatrix Assembler::assemble_mass(MassType type, const Vector* scale) const 
   const Mesh& mesh = model_.mesh();
   const Index ne = mesh.num_elements();
   check_scale(scale, ne, "mass");
-  if (model_.material().density() <= 0.0) {
-    throw ModelError(
-        "mass assembly requires a positive material density; set 'material.density' "
-        "to run modal analysis");
+  for (const IsotropicMaterial& material : model_.materials()) {
+    if (material.density() <= 0.0) {
+      throw ModelError("mass assembly requires a positive density of every material; "
+                       "material '" + material.name() +
+                       "' has none. Set its 'density' to run a modal or dynamic analysis");
+    }
   }
 
   if (use_pattern_ && type == MassType::Consistent &&
@@ -270,15 +275,17 @@ SparseMatrix Assembler::assemble_mass(MassType type, const Vector* scale) const 
   }
 
   const int npe = mesh.nodes_per_elem();
-  const int edofs = npe * mesh.dim();
+  const int edofs = npe * model_.dofs_per_node();
   TripletList triplets;
   triplets.reserve(static_cast<std::size_t>(ne) * edofs * edofs);
 
   // The corner rows of a quadratic tetrahedron's consistent mass sum to a
-  // negative number, so it is lumped by scaling the diagonal to the element
-  // mass instead (Hinton, Rock and Zienkiewicz 1976).
-  const bool scaled_diagonal = mesh.element_type() == ElementType::Tet10;
-  const int dim = mesh.dim();
+  // negative number, and the rotational rows of a shell or beam hold rotary
+  // inertia rather than mass, so those elements are lumped by scaling the
+  // diagonal to the element's total per DOF component instead (Hinton, Rock
+  // and Zienkiewicz 1976).
+  const bool scaled_diagonal = model_.element().diagonal_scaled_lumping();
+  const int dim = model_.dofs_per_node();
   std::vector<Index> gdofs(static_cast<std::size_t>(edofs));
   for (Index e = 0; e < ne; ++e) {
     const Scalar s = scale ? (*scale)(e) : 1.0;
@@ -331,7 +338,7 @@ SparseMatrix Assembler::assemble_elementwise(
   const Mesh& mesh = model_.mesh();
   const Index ne = mesh.num_elements();
   const int npe = mesh.nodes_per_elem();
-  const int edofs = npe * mesh.dim();
+  const int edofs = npe * model_.dofs_per_node();
   const auto checked = [&](Index e) {
     Matrix me = element_matrix(e);
     if (me.rows() != edofs || me.cols() != edofs) {
@@ -378,7 +385,7 @@ Scalar Assembler::total_mass(const Vector* scale) const {
   Scalar mass = 0.0;
   for (Index e = 0; e < mesh.num_elements(); ++e) {
     const Scalar s = scale ? (*scale)(e) : 1.0;
-    mass += s * model_.material().density() * mesh.element_measure(e) * thickness;
+    mass += s * model_.material_of(e).density() * mesh.element_measure(e) * thickness;
   }
   return mass;
 }

@@ -384,13 +384,14 @@ void AmgPreconditioner::Impl::build_finest_nodes(const DofLayout& layout, Index 
   Level& lvl = levels.front();
   const std::vector<Index>& unknowns = *layout.unknowns;
   const int dim = layout.dim;
+  const int ndpn = layout.nodal_dofs();
   const Matrix& coords = *layout.coordinates;
   lvl.node_ptr.clear();
   lvl.node_ptr.push_back(0);
   Index previous_node = -1;
   for (Index i = 0; i < n; ++i) {
     const Index g = unknowns[static_cast<std::size_t>(i)];
-    const Index node = g / dim;
+    const Index node = g / ndpn;
     if (node >= coords.cols() || g < 0) {
       std::ostringstream os;
       os << "multigrid: unknown " << i << " maps to DOF " << g
@@ -424,11 +425,19 @@ void AmgPreconditioner::Impl::build_finest_nodes(const DofLayout& layout, Index 
   lvl.nullspace.setZero(n, m);
   for (Index i = 0; i < n; ++i) {
     const Index g = unknowns[static_cast<std::size_t>(i)];
-    const Index node = g / dim;
-    const int k = static_cast<int>(g % dim);
+    const Index node = g / ndpn;
+    const int k = static_cast<int>(g % ndpn);
     Vector3 x = Vector3::Zero();
     x.head(dim) = coords.col(node);
     const Vector3 r = (x - centre) / scale;
+    if (k >= 3) {
+      // A nodal rotation of a shell or beam node: the rigid rotation about
+      // axis k - 3 turns every node by the same angle. With the translations
+      // written in coordinates scaled by 1/scale, the rotation entry of the
+      // same mode is 1/scale, so each column stays a rigid motion.
+      lvl.nullspace(i, k) = 1.0 / scale;
+      continue;
+    }
     lvl.nullspace(i, k) = 1.0;
     if (dim == 2) {
       lvl.nullspace(i, 2) = k == 0 ? -r.y() : r.x();
@@ -928,6 +937,14 @@ void AmgPreconditioner::setup(const SparseMatrix& a, const DofLayout& layout) {
   }
   if (layout.dim != 2 && layout.dim != 3) {
     throw SolverError("multigrid: the DOF layout must be two- or three-dimensional");
+  }
+  if (layout.nodal_dofs() != layout.dim &&
+      !(layout.dim == 3 && layout.nodal_dofs() == kMaxDofsPerNode)) {
+    std::ostringstream os;
+    os << "multigrid: a " << layout.dim << "-D layout with " << layout.nodal_dofs()
+       << " DOFs per node is not supported (translations only, or three translations "
+          "and three rotations in 3-D)";
+    throw SolverError(os.str());
   }
   if (layout.coordinates == nullptr || layout.unknowns == nullptr ||
       static_cast<Index>(layout.unknowns->size()) != a.rows()) {

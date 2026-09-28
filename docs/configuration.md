@@ -18,6 +18,7 @@ reports its line and column.
 | `units` | string | `"SI"` | informational only |
 | `mesh` | object | required | see below |
 | `material` | object | required | see below |
+| `material_regions` | array | `[]` | other materials on element regions; see below |
 | `model` | object | `{}` | idealisation and integration |
 | `boundary_conditions` | array | required, non-empty | displacement constraints |
 | `load_cases` | array | required, non-empty | loading |
@@ -106,7 +107,41 @@ among them.
 | `name` | string | `"material"` | carried into result files |
 | `youngs_modulus` | number [Pa] | required | `> 0` |
 | `poisson_ratio` | number | required | in `(-1, 0.5)` so both idealisations stay positive definite |
-| `density` | number [kg/m^3] | `0` | `>= 0`; a positive value is required for modal analysis |
+| `density` | number [kg/m^3] | `0` | `>= 0`; a positive value is required for modal analysis, self-weight and rotation |
+| `thermal_expansion` | number [1/K] | `0` | linear expansion coefficient `alpha`; `0` means a temperature causes no strain |
+| `reference_temperature` | number [K] | `0` | the stress-free temperature `T_ref`: the thermal strain is `alpha (T - T_ref)` |
+| `conductivity` | number [W/(m K)] | `0` | `k`, needed by a conducted temperature field (`load_cases[].temperature.conduction`) |
+
+Temperatures may be given in kelvin or in degrees Celsius as long as every
+temperature of the deck - `reference_temperature`, and the load cases' uniform,
+regional, prescribed and ambient values - uses the same scale: only differences
+enter the thermal strain and the conduction problem. The thermal strain is
+`alpha dT {1, 1, 0}` in plane stress (the free out-of-plane expansion leaves the
+in-plane law unchanged), `(1 + nu) alpha dT {1, 1, 0}` in plane strain (the
+restrained out-of-plane expansion; `sigma_zz = nu (sigma_xx + sigma_yy) - E alpha dT`
+is reported as `sigma_zz`), and `alpha dT {1, 1, 1, 0, 0, 0}` in 3-D.
+
+## `material_regions`
+
+```json
+"material_regions": [
+  { "name": "aluminium_half", "region": { "box": { "xmin": 0.1 } },
+    "material": { "name": "aluminium", "youngs_modulus": 70.0e9, "poisson_ratio": 0.33,
+                  "density": 2700.0, "thermal_expansion": 2.3e-5,
+                  "reference_temperature": 293.15, "conductivity": 167.0 } }
+]
+```
+
+Each entry gives the elements of `region` (selected at their centroids, like
+every element region) the `material`, which takes the same keys as the top-level
+`material`. Later entries override earlier ones on shared elements; every
+other element keeps the top-level material. A region that selects no element
+is an error. Stresses, strain energies, the self-weight, the thermal strain and
+the conduction all use each element's own material, and the CalculiX export
+writes one `*MATERIAL` and `*SOLID SECTION` per material.
+
+Topology optimisation (`sparlab_topopt`) rejects `material_regions` for now:
+its interpolation is written for one solid material.
 
 ## `model`
 
@@ -119,7 +154,7 @@ among them.
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `thickness` | number [m] | `1.0` | out-of-plane thickness, `> 0`; plane meshes only - a solid mesh rejects the key |
-| `stress_state` | string | `plane_stress` (`three_dimensional` on a solid mesh) | `plane_stress`, `plane_strain` or `three_dimensional`; the plane idealisations need a plane mesh (Q4 or Tri3) and `three_dimensional` a solid one (Hex8 or Tet4) |
+| `stress_state` | string | `plane_stress` (`three_dimensional` on a solid mesh) | `plane_stress`, `plane_strain` or `three_dimensional`; the plane idealisations need a plane mesh (Q4 or Tri3) and `three_dimensional` a solid one (Hex8, Tet4 or Tet10) |
 | `integration.stiffness_points` | integer | `2` | Gauss points per direction for `K_e`, 1-4 (2x2 for the Q4, 2x2x2 for the Hex8); the linear simplices have a constant strain and integrate exactly with one point whatever is set here |
 | `integration.mass_points` | integer | `3` | Gauss points per direction for `M_e`, 1-4; the simplices use the exact closed-form consistent mass instead |
 | `integration.face_points` | integer | `2` | Gauss points per direction on a loaded edge or face, 1-4; `edge_points` is accepted as a synonym |
@@ -210,6 +245,11 @@ vector, so the reactions stay exact.
 | `weight` | number | `1.0` | weight in the multi-load objective, `>= 0`; weights are normalised to sum to 1 |
 | `point_loads` | array | `[]` | concentrated nodal forces |
 | `tractions` | array | `[]` | distributed edge loads |
+| `pressures` | array | `[]` | normal pressures on boundary edges or faces |
+| `gravity` | `[g_x, g_y(, g_z)]` [m/s^2] | none | uniform acceleration of the whole model: the self-weight `rho g` of every element |
+| `body_forces` | array | `[]` | uniform force densities on element regions |
+| `centrifugal` | object | none | steady rotation about an axis |
+| `temperature` | object | none | the case's temperature field, whose thermal strain loads the structure |
 | `prescribed_displacement_only` | bool | `false` | declares a case with no applied force, driven by the prescribed displacements (the patch test, enforced-deflection studies) |
 
 **Point load**
@@ -232,7 +272,92 @@ Tractions are integrated to consistent nodal forces, so the resultant is exactly
 `traction * (loaded area)` on a solid one, at any mesh resolution. A traction
 region matching no boundary edge or face is an error.
 
-A load case with neither `point_loads` nor `tractions` is an error unless
+**Pressure**
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `pressure` | number [Pa] | required | positive pushes *into* the body |
+| `region` | object | required | node region; like a traction, a boundary edge or face is loaded when all its nodes lie inside |
+
+A pressure acts along the normal of the face at every point: it is integrated
+with the face's own area vector (`x_s x x_t` on a surface, the rotated tangent
+on an edge), so on a curved Tet10 face - whose edge nodes lie on the true
+geometry - it follows the curvature, and its resultant on a closed surface is
+zero to round-off. On a curved six-node face it is integrated with three
+points per direction, exact for the degree-4 integrand.
+
+**Body force**
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `force_density` | `[b_x, b_y(, b_z)]` [N/m^3] | required | force per unit volume |
+| `region` | object | every element | element region (centroids) |
+
+**Centrifugal**
+
+```json
+"centrifugal": { "angular_velocity": 300.0, "axis": [0.0, 0.0, 1.0], "point": [0.0, 0.05, 0.0] }
+```
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `angular_velocity` | number [rad/s] | required | `omega` |
+| `axis` | `[a_x, a_y, a_z]` | `[0, 0, 1]` | direction of the axis (normalised); a plane model can only spin about `z` |
+| `point` | `[x, y(, z)]` [m] | origin | a point on the axis |
+
+Every element carries `rho omega^2 r_perp`, `r_perp` its distance vector from
+the axis. The body loads are integrated from the consistent mass,
+`f = M_e(rho = 1) b(x_nodes)`, which is exact for any force density affine in
+position - self-weight, a uniform body force and the centrifugal load - on
+straight and curved cells alike (`include/sparlab/fem/Loads.hpp`).
+
+**Temperature**
+
+Three ways to give a case a temperature field [K]; the thermal strain of each
+element uses its own material's `thermal_expansion` and `reference_temperature`.
+
+```json
+"temperature": { "uniform": 343.15 }
+
+"temperature": { "uniform": 293.15,
+                 "regions": [ { "name": "end", "value": 393.15,
+                                "region": { "box": { "xmin": 0.15 } } } ] }
+
+"temperature": { "conduction": {
+    "prescribed": [ { "name": "root", "value": 373.15, "region": { "box": { "xmax": 0.0 } } } ],
+    "flux":       [ { "name": "end",  "value": 1.0e4,  "region": { "box": { "xmin": 0.2 } } } ],
+    "sources":    [ { "name": "heater", "value": 2.0e5, "region": { "box": { "xmin": 0.15 } } } ],
+    "convection": [ { "name": "top", "film_coefficient": 25.0, "ambient": 293.15,
+                      "region": { "box": { "zmin": 0.02 } } } ] } }
+```
+
+| Key | Meaning |
+|-----|---------|
+| `uniform` [K] | every node at this temperature; with `regions` the base value, which defaults to the primary material's `reference_temperature` |
+| `regions` | node regions and their temperatures; later entries win on shared nodes |
+| `conduction.prescribed` | fixed temperatures [K] on node regions |
+| `conduction.flux` | heat flux into the body [W/m^2] on boundary edges / faces |
+| `conduction.sources` | volumetric heat generation [W/m^3]; `region` (element centroids) is optional and defaults to every element |
+| `conduction.convection` | `q = film_coefficient (T - ambient)` leaving the body [W/(m^2 K), K] on boundary edges / faces |
+
+`conduction` solves steady heat conduction, `-div(k grad T) = Q`, on the same
+mesh with the same shape functions (a plane model conducts in its plane with its
+thickness and insulated faces), and the solved temperature drives the thermal
+strain. It needs a prescribed temperature or convection somewhere: with fluxes
+and sources alone the temperature is fixed only up to a constant, which is
+refused. The run logs the heat balance - heat entering through sources, fluxes
+and convection against heat leaving through the prescribed temperatures - and
+stops with `SolverError` if it misses by more than `1e-6` of the largest heat
+flow. `conduction` cannot be combined with `uniform` or `regions`. The solved
+temperatures are written to `temperature_<case>.csv` and to the VTK file.
+
+A temperature changes the applied load by `f_th = int B^T D eps_0 dV`,
+integrated with the element's stiffness rule, and the elastic strain energy
+becomes `1/2 u^T K u - u^T f_th + 1/2 int eps_0^T D eps_0 dV`; the stresses are
+`D (B u - eps_0)`. A linear buckling analysis includes the thermal prestress.
+
+A load case with no load at all - no point load, traction, pressure, gravity,
+body force, rotation or temperature - is an error unless
 `prescribed_displacement_only` is set.
 
 ## `solver`

@@ -180,6 +180,105 @@ SelectorGroup parse_region(const ConfigNode& node, const std::string& default_na
   return group;
 }
 
+namespace {
+
+/// A material section: elastic constants, density and the thermal properties.
+IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& default_name) {
+  IsotropicMaterial material(mat.positive_number("youngs_modulus"),
+                             mat.require("poisson_ratio").number(),
+                             mat.number_or("density", 0.0),
+                             mat.string_or("name", default_name));
+  const Scalar alpha = mat.number_or("thermal_expansion", 0.0);
+  const Scalar t_ref = mat.number_or("reference_temperature", 0.0);
+  const Scalar conductivity = mat.number_or("conductivity", 0.0);
+  material.set_thermal(alpha, t_ref, conductivity);
+  return material;
+}
+
+/// Temperature field of a load case: "uniform", optionally with "regions",
+/// or a "conduction" problem.
+TemperatureSpec parse_temperature(const ConfigNode& node, int dim, Scalar default_base,
+                                  const std::string& case_name) {
+  TemperatureSpec spec;
+  const ConfigNode conduction = node.child("conduction");
+  const bool has_regions = !node.array("regions").empty();
+  if (conduction.exists()) {
+    if (node.child("uniform").exists() || has_regions) {
+      throw ConfigError("'" + node.path() + "' combines 'conduction' with 'uniform' or "
+                        "'regions'; a conducted field is the solution of the conduction "
+                        "problem alone");
+    }
+    spec.source = TemperatureSpec::Source::Conduction;
+    ConductionSpec& c = spec.conduction;
+    int index = 0;
+    for (const ConfigNode& p : conduction.array("prescribed")) {
+      RegionValue v;
+      v.region = parse_region(p.require("region"),
+                              p.string_or("name", case_name + "_prescribed" + std::to_string(index++)),
+                              dim);
+      v.value = p.require("value").number();
+      c.prescribed.push_back(std::move(v));
+    }
+    index = 0;
+    for (const ConfigNode& f : conduction.array("flux")) {
+      RegionValue v;
+      v.region = parse_region(f.require("region"),
+                              f.string_or("name", case_name + "_flux" + std::to_string(index++)),
+                              dim);
+      v.value = f.require("value").number();
+      c.fluxes.push_back(std::move(v));
+    }
+    index = 0;
+    for (const ConfigNode& h : conduction.array("convection")) {
+      ConvectionSpec v;
+      v.region = parse_region(h.require("region"),
+                              h.string_or("name", case_name + "_convection" + std::to_string(index++)),
+                              dim);
+      v.film_coefficient = h.positive_number("film_coefficient");
+      v.ambient = h.require("ambient").number();
+      c.convection.push_back(std::move(v));
+    }
+    index = 0;
+    for (const ConfigNode& q : conduction.array("sources")) {
+      RegionValue v;
+      if (q.child("region").exists()) {
+        v.region = parse_region(q.require("region"),
+                                q.string_or("name", case_name + "_source" + std::to_string(index++)),
+                                dim);
+      } else {
+        v.whole_model = true;
+        v.region.name = "all elements";
+      }
+      v.value = q.require("value").number();
+      c.sources.push_back(std::move(v));
+    }
+    return spec;
+  }
+  if (has_regions) {
+    spec.source = TemperatureSpec::Source::Regions;
+    spec.uniform = node.number_or("uniform", default_base);
+    int index = 0;
+    for (const ConfigNode& r : node.array("regions")) {
+      RegionValue v;
+      v.region = parse_region(r.require("region"),
+                              r.string_or("name", case_name + "_temperature" + std::to_string(index++)),
+                              dim);
+      v.value = r.require("value").number();
+      spec.regions.push_back(std::move(v));
+    }
+    return spec;
+  }
+  if (!node.child("uniform").exists()) {
+    throw ConfigError("'" + node.path() + "' needs 'uniform' (a temperature [K] for every "
+                      "node), 'regions', or 'conduction'");
+  }
+  spec.source = TemperatureSpec::Source::Uniform;
+  spec.uniform = node.require("uniform").number();
+  return spec;
+}
+
+}  // namespace
+
 const IsotropicMaterial& Configuration::material() const {
   if (!material_.has_value()) {
     throw ConfigError("the configuration has no material section");
@@ -412,10 +511,14 @@ Configuration parse_configuration(const json::Value& document, const std::string
   // --- material -----------------------------------------------------------
   {
     const ConfigNode mat = root.require("material");
-    config.set_material(IsotropicMaterial(mat.positive_number("youngs_modulus"),
-                                          mat.require("poisson_ratio").number(),
-                                          mat.number_or("density", 0.0),
-                                          mat.string_or("name", "material")));
+    config.set_material(parse_material(mat, "material"));
+    int index = 0;
+    for (const ConfigNode& mr : root.array("material_regions")) {
+      const std::string name = mr.string_or("name", "material_region" + std::to_string(index++));
+      config.material_regions.push_back(
+          {name, parse_region(mr.require("region"), name, dim),
+           parse_material(mr.require("material"), name)});
+    }
   }
 
   // --- model --------------------------------------------------------------
@@ -549,15 +652,54 @@ Configuration parse_configuration(const json::Value& document, const std::string
         spec.tractions.push_back(std::move(load));
       }
 
+      int pressure_index = 0;
+      for (const ConfigNode& pr : lc.array("pressures")) {
+        PressureLoadSpec load;
+        std::ostringstream ln;
+        ln << spec.name << "_pressure" << pressure_index++;
+        load.region = parse_region(pr.require("region"), pr.string_or("name", ln.str()), dim);
+        load.pressure = pr.require("pressure").number();
+        spec.pressures.push_back(std::move(load));
+      }
+
+      spec.gravity = lc.vector3_or("gravity", Vector3::Zero(), dim);
+      int body_index = 0;
+      for (const ConfigNode& bf : lc.array("body_forces")) {
+        BodyForceSpec body;
+        std::ostringstream ln;
+        ln << spec.name << "_body" << body_index++;
+        if (bf.child("region").exists()) {
+          body.whole_model = false;
+          body.region = parse_region(bf.require("region"), bf.string_or("name", ln.str()), dim);
+        } else {
+          body.region.name = bf.string_or("name", ln.str());
+        }
+        body.force_density = bf.require("force_density").vector3(dim);
+        spec.body_forces.push_back(std::move(body));
+      }
+      const ConfigNode centrifugal = lc.child("centrifugal");
+      if (centrifugal.exists()) {
+        CentrifugalSpec& c = spec.centrifugal;
+        c.enabled = true;
+        c.angular_velocity = centrifugal.require("angular_velocity").number();
+        c.axis = centrifugal.vector3_or("axis", Vector3::UnitZ(), 3);
+        c.point = centrifugal.vector3_or("point", Vector3::Zero(), dim);
+      }
+      const ConfigNode temperature = lc.child("temperature");
+      if (temperature.exists()) {
+        spec.temperature = parse_temperature(temperature, dim,
+                                             config.material().reference_temperature(),
+                                             spec.name);
+      }
+
       spec.prescribed_displacement_only =
           lc.boolean_or("prescribed_displacement_only", false);
-      if (spec.point_loads.empty() && spec.tractions.empty() &&
-          !spec.prescribed_displacement_only) {
+      if (!spec.has_loads() && !spec.prescribed_displacement_only) {
         throw ConfigError(
             "load case '" + spec.name +
-            "' defines neither point_loads nor tractions. If it is meant to be "
-            "driven by prescribed displacements alone, set "
-            "\"prescribed_displacement_only\": true");
+            "' defines no load (point_loads, tractions, pressures, gravity, body_forces, "
+            "centrifugal or temperature). If it is meant to be driven by prescribed "
+            "displacements alone, set \"prescribed_displacement_only\": true");
       }
       config.load_cases.push_back(std::move(spec));
     }
@@ -893,6 +1035,17 @@ FemModel build_model(const Configuration& config) {
   Mesh mesh = build_mesh(config);
   FemModel model(std::move(mesh), config.material(), config.thickness,
                  config.stress_state, config.integration);
+  for (const MaterialRegion& mr : config.material_regions) {
+    const std::vector<Index> elements = mr.region.select_elements(model.mesh());
+    if (elements.empty()) {
+      throw ConfigError("material region '" + mr.name + "' selected no element; check its "
+                        "coordinates or group name");
+    }
+    model.assign_material(mr.material, elements);
+    log::info("material region '", mr.name, "': ", elements.size(), " element(s) of '",
+              mr.material.name(), "'");
+  }
+  model.set_conduction_solver(config.analysis.linear);
   model.constraints() = config.constraints;
   model.load_case_specs() = config.load_cases;
   model.finalize();

@@ -1,5 +1,7 @@
 #include "sparlab/fem/Buckling.hpp"
 
+#include "sparlab/fem/Loads.hpp"
+
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
 #include "sparlab/fem/StaticAnalysis.hpp"
@@ -51,7 +53,8 @@ Matrix orthonormal_basis(const Matrix& z) {
 
 SparseMatrix assemble_geometric_stiffness(const FemModel& model, const Assembler& assembler,
                                           const Vector& displacement,
-                                          const Vector* stress_scale) {
+                                          const Vector* stress_scale,
+                                          const Vector* temperature) {
   const Mesh& mesh = model.mesh();
   if (displacement.size() != model.dofs().num_dofs()) {
     std::ostringstream os;
@@ -66,19 +69,28 @@ SparseMatrix assemble_geometric_stiffness(const FemModel& model, const Assembler
     throw ModelError(os.str());
   }
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
-  const int edofs = npe * dim;
+  const int edofs = npe * model.dofs_per_node();
   const Element& element = model.element();
+  const std::vector<IntegrationPoint> rule = element.integration_rule(model.integration());
   return assembler.assemble_elementwise([&](Index e) -> Matrix {
     const Scalar s = stress_scale != nullptr ? (*stress_scale)(e) : 1.0;
     if (s == 0.0) return Matrix::Zero(edofs, edofs);
-    Vector ue(edofs);
-    const Index* nodes = mesh.element_nodes(e);
-    for (int a = 0; a < npe; ++a) {
-      for (int k = 0; k < dim; ++k) ue(dim * a + k) = displacement(nodes[a] * dim + k);
+    const Vector ue = model.dofs().gather(mesh.element_nodes(e), npe, displacement);
+    const Matrix coords = mesh.element_coordinates(e);
+    if (temperature == nullptr || model.material_of(e).thermal_expansion() == 0.0) {
+      return element.geometric_stiffness(coords, model.constitutive_of(e), ue, s,
+                                         model.thickness(), model.integration());
     }
-    return element.geometric_stiffness(mesh.element_coordinates(e), model.constitutive(), ue,
-                                       s, model.thickness(), model.integration());
+    // Thermal prestress: sigma = s D (B u - eps0) at each point.
+    std::vector<Vector> stresses;
+    stresses.reserve(rule.size());
+    for (const IntegrationPoint& ip : rule) {
+      const StrainOperator op = element.strain_operator(coords, ip.point);
+      const Vector eps0 = element_thermal_strain(model, e, ip.point, *temperature);
+      stresses.push_back(s * (model.constitutive_of(e) * (op.b * ue - eps0)));
+    }
+    return element.geometric_stiffness_of_stress(coords, stresses, model.thickness(),
+                                                 model.integration());
   });
 }
 
@@ -133,6 +145,7 @@ BucklingResult solve_buckling(const FemModel& model, const Assembler& assembler,
       own = make_linear_solver(options.linear);
       DofLayout layout;
       layout.dim = model.dim();
+      layout.dofs_per_node = model.dofs_per_node();
       layout.coordinates = &model.mesh().coordinates();
       layout.unknowns = &model.dofs().free_dofs();
       own->set_layout(layout);
@@ -395,7 +408,7 @@ BucklingResult solve_buckling(const FemModel& model, const Assembler& assembler,
   // Share of each mode's strain energy in solid elements.
   const Mesh& mesh = model.mesh();
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
+  Vector pe;
   for (int j = 0; j < found; ++j) {
     if (solid_mask == nullptr) {
       result.solid_energy_fraction(j) = 1.0;
@@ -403,12 +416,9 @@ BucklingResult solve_buckling(const FemModel& model, const Assembler& assembler,
     }
     Scalar total = 0.0;
     Scalar solid = 0.0;
-    Vector pe(npe * dim);
+    const Vector shape = result.mode_shapes.col(j);
     for (Index e = 0; e < mesh.num_elements(); ++e) {
-      const Index* nodes = mesh.element_nodes(e);
-      for (int a = 0; a < npe; ++a) {
-        for (int c = 0; c < dim; ++c) pe(dim * a + c) = result.mode_shapes(nodes[a] * dim + c, j);
-      }
+      model.dofs().gather(mesh.element_nodes(e), npe, shape, pe);
       const Scalar s = stiffness_scale != nullptr ? (*stiffness_scale)(e) : 1.0;
       const Scalar energy = s * pe.dot(assembler.element_stiffness(e) * pe);
       total += energy;
@@ -439,7 +449,9 @@ BucklingResult analyse_buckling(const FemModel& model, const Assembler& assemble
   StaticAnalysis analysis(model, assembler, static_options);
   analysis.prepare();
   const Vector u = analysis.solve_load_vector(model.load_vectors()[load_case]);
-  const SparseMatrix k_g = assemble_geometric_stiffness(model, assembler, u);
+  const Vector& temperature = model.load_case_data(load_case).temperature;
+  const SparseMatrix k_g = assemble_geometric_stiffness(
+      model, assembler, u, nullptr, temperature.size() > 0 ? &temperature : nullptr);
   const DofManager& dofs = model.dofs();
   const FreeSolve solve = [&](const Vector& b) {
     return dofs.restrict_to_free(analysis.solve_homogeneous(dofs.expand(b)));

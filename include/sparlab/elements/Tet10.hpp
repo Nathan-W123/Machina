@@ -68,6 +68,7 @@ class Tet10Element final : public Element {
   int dim() const override { return 3; }
   int num_nodes() const override { return 10; }
   int num_faces() const override { return 4; }
+  bool diagonal_scaled_lumping() const override { return true; }
   NaturalPoint reference_centroid() const override;
 
   Matrix stiffness(const Matrix& coords, const Matrix& d, Scalar thickness,

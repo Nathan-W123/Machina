@@ -58,19 +58,30 @@ class Element {
   virtual ~Element() = default;
 
   virtual ElementType type() const = 0;
-  /// Spatial dimension (2 or 3), also the translational DOFs per node.
+  /// Spatial dimension (2 or 3): the translational DOFs per node.
   virtual int dim() const = 0;
   virtual int num_nodes() const = 0;
   /// Number of boundary faces (edges in 2-D).
   virtual int num_faces() const = 0;
+
+  /// Degrees of freedom per node, in node-major order: the `dim` translations
+  /// of a continuum element; the three translations followed by the three
+  /// rotations about the global axes for a shell or beam element.
+  virtual int dofs_per_node() const { return dim(); }
+
+  /// Lump the mass matrix by scaling its diagonal to the element mass per
+  /// DOF component (Hinton, Rock and Zienkiewicz) rather than by row sums:
+  /// the quadratic tetrahedron, whose corner row sums are negative, and the
+  /// structural elements, whose rotational rows carry rotary inertia.
+  virtual bool diagonal_scaled_lumping() const { return false; }
 
   /// Natural coordinates of the element centroid: the origin of the
   /// reference square / cube, (1/3, 1/3) on the triangle, (1/4, 1/4, 1/4) on
   /// the tetrahedron.
   virtual NaturalPoint reference_centroid() const { return NaturalPoint(); }
 
-  /// Degrees of freedom carried by the element (num_nodes * dim).
-  int num_dofs() const { return num_nodes() * dim(); }
+  /// Degrees of freedom carried by the element (num_nodes * dofs_per_node).
+  int num_dofs() const { return num_nodes() * dofs_per_node(); }
 
   /// Voigt components of the element's strain operator.
   int num_voigt() const { return voigt_components(dim()); }
@@ -122,9 +133,17 @@ class Element {
   /// the thickness of a plane element and 1 for a solid.
   /// \param d constitutive matrix the stress is computed with [Pa].
   /// \param stress_scale factor \f$s\f$ on the stress (1 for a plain analysis).
-  Matrix geometric_stiffness(const Matrix& coords, const Matrix& d, const Vector& ue,
-                             Scalar stress_scale, Scalar thickness,
-                             const IntegrationOptions& opts) const;
+  /// Shell and beam elements override it with their own kinematics.
+  virtual Matrix geometric_stiffness(const Matrix& coords, const Matrix& d, const Vector& ue,
+                                     Scalar stress_scale, Scalar thickness,
+                                     const IntegrationOptions& opts) const;
+
+  /// Geometric stiffness of a given stress field: `stresses` holds the Voigt
+  /// stress at each point of `integration_rule(opts)`, in its order. This is
+  /// the form a prestress that is not \f$D B u_e\f$ needs - a thermal one,
+  /// \f$D(Bu_e - \varepsilon_0)\f$, say. Continuum elements only.
+  Matrix geometric_stiffness_of_stress(const Matrix& coords, const std::vector<Vector>& stresses,
+                                       Scalar thickness, const IntegrationOptions& opts) const;
 
   /// Derivative of \f$\phi_e^T K_{G,e}(u_e)\phi_e\f$ with respect to \f$u_e\f$.
   /// Because \f$K_{G,e}\f$ is linear in \f$u_e\f$ this is the vector
@@ -136,10 +155,10 @@ class Element {
   /// \f]
   /// with \f$\hat\Phi\f$ the Voigt vector of \f$\Phi\f$ with doubled shear
   /// entries. It is the adjoint load of a buckling-load sensitivity.
-  Vector geometric_stiffness_derivative(const Matrix& coords, const Matrix& d,
-                                        const Vector& phi, Scalar stress_scale,
-                                        Scalar thickness,
-                                        const IntegrationOptions& opts) const;
+  virtual Vector geometric_stiffness_derivative(const Matrix& coords, const Matrix& d,
+                                                const Vector& phi, Scalar stress_scale,
+                                                Scalar thickness,
+                                                const IntegrationOptions& opts) const;
 
   /// Consistent nodal forces for a constant traction on local face
   /// `local_face` (an edge in 2-D):

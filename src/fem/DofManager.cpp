@@ -10,10 +10,11 @@ namespace sparlab {
 DofManager::DofManager(Index num_nodes, int dofs_per_node)
     : num_nodes_(num_nodes), dofs_per_node_(dofs_per_node) {
   if (num_nodes_ < 0) throw ModelError("DofManager requires a non-negative node count");
-  if (dofs_per_node_ != 2 && dofs_per_node_ != 3) {
+  if (dofs_per_node_ != 2 && dofs_per_node_ != 3 && dofs_per_node_ != kMaxDofsPerNode) {
     std::ostringstream os;
-    os << "DofManager supports 2 or 3 translational DOFs per node (got " << dofs_per_node_
-       << ")";
+    os << "DofManager supports 2 or 3 translational DOFs per node, or 6 (translations "
+          "and rotations) for shell and beam nodes (got "
+       << dofs_per_node_ << ")";
     throw ModelError(os.str());
   }
   constrained_.assign(static_cast<std::size_t>(num_dofs()), 0);
@@ -29,7 +30,11 @@ Index DofManager::dof(Index node, int component) const {
   if (component < 0 || component >= dofs_per_node_) {
     std::ostringstream os;
     os << "DOF component " << component << " is outside [0, " << dofs_per_node_ - 1
-       << "] (0 = x, 1 = y" << (dofs_per_node_ == 3 ? ", 2 = z)" : ")");
+       << "] (";
+    for (int k = 0; k < dofs_per_node_; ++k) {
+      os << (k ? ", " : "") << k << " = " << dof_component_name(k);
+    }
+    os << ")";
     throw ModelError(os.str());
   }
   return node * dofs_per_node_ + component;
@@ -139,6 +144,31 @@ void DofManager::element_dofs(const Index* nodes, int nodes_per_elem, Index* out
   for (int a = 0; a < nodes_per_elem; ++a) {
     for (int k = 0; k < dofs_per_node_; ++k) {
       out[dofs_per_node_ * a + k] = nodes[a] * dofs_per_node_ + k;
+    }
+  }
+}
+
+void DofManager::gather(const Index* nodes, int nodes_per_elem, const Vector& full,
+                        Vector& out) const {
+  out.resize(nodes_per_elem * dofs_per_node_);
+  for (int a = 0; a < nodes_per_elem; ++a) {
+    for (int k = 0; k < dofs_per_node_; ++k) {
+      out(dofs_per_node_ * a + k) = full(nodes[a] * dofs_per_node_ + k);
+    }
+  }
+}
+
+Vector DofManager::gather(const Index* nodes, int nodes_per_elem, const Vector& full) const {
+  Vector out;
+  gather(nodes, nodes_per_elem, full, out);
+  return out;
+}
+
+void DofManager::scatter_add(const Index* nodes, int nodes_per_elem, const Vector& local,
+                             Vector& full, Scalar factor) const {
+  for (int a = 0; a < nodes_per_elem; ++a) {
+    for (int k = 0; k < dofs_per_node_; ++k) {
+      full(nodes[a] * dofs_per_node_ + k) += factor * local(dofs_per_node_ * a + k);
     }
   }
 }

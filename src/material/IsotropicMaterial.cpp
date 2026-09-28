@@ -2,6 +2,7 @@
 
 #include "sparlab/core/Exceptions.hpp"
 
+#include <cmath>
 #include <sstream>
 #include <utility>
 
@@ -62,6 +63,47 @@ Matrix6 IsotropicMaterial::three_dimensional_matrix() const {
     d(3 + i, 3 + i) = g;
   }
   return d;
+}
+
+void IsotropicMaterial::set_thermal(Scalar expansion, Scalar reference_temperature,
+                                    Scalar conductivity) {
+  if (!std::isfinite(expansion) || !std::isfinite(reference_temperature) ||
+      !std::isfinite(conductivity)) {
+    throw ConfigError("material '" + name_ + "' has a non-finite thermal property");
+  }
+  if (conductivity < 0.0) {
+    std::ostringstream os;
+    os << "material '" << name_ << "' needs a non-negative conductivity (got "
+       << conductivity << " W/(m K))";
+    throw ConfigError(os.str());
+  }
+  alpha_ = expansion;
+  t_ref_ = reference_temperature;
+  k_ = conductivity;
+}
+
+Vector IsotropicMaterial::thermal_strain(StressState state, Scalar delta_t) const {
+  const Scalar e0 = alpha_ * delta_t;
+  switch (state) {
+    case StressState::PlaneStress: {
+      Vector v(3);
+      v << e0, e0, 0.0;
+      return v;
+    }
+    case StressState::PlaneStrain: {
+      // eps_zz = 0 restrains the out-of-plane expansion, which reappears as
+      // nu alpha dT in each in-plane direction.
+      Vector v(3);
+      v << (1.0 + nu_) * e0, (1.0 + nu_) * e0, 0.0;
+      return v;
+    }
+    case StressState::ThreeDimensional: {
+      Vector v = Vector::Zero(6);
+      v.head(3).setConstant(e0);
+      return v;
+    }
+  }
+  throw ConfigError("unhandled stress state");
 }
 
 Matrix IsotropicMaterial::constitutive(StressState state) const {

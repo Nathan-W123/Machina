@@ -105,8 +105,18 @@ ModalResult solve_modal(const FemModel& model, const Assembler& assembler,
 
   ModalResult result;
   // Every translational direction carries the full mass once, so the sum of
-  // the assembled matrix is dim times the structural mass.
-  result.total_mass = m_full.sum() / static_cast<Scalar>(model.dim());
+  // the assembled matrix is dim times the structural mass. A shell or beam
+  // model also carries rotary inertia on its rotational DOFs; its mass is the
+  // kinetic energy of a unit rigid translation along x, t^T M t.
+  if (model.dofs_per_node() == model.dim()) {
+    result.total_mass = m_full.sum() / static_cast<Scalar>(model.dim());
+  } else {
+    Vector t = Vector::Zero(model.dofs().num_dofs());
+    for (Index node = 0; node < model.mesh().num_nodes(); ++node) {
+      t(model.dofs().dof(node, 0)) = 1.0;
+    }
+    result.total_mass = t.dot(m_full * t);
+  }
 
   const int m_req = std::min<int>(options.num_modes, static_cast<int>(n));
   if (m_req < options.num_modes) {
@@ -172,6 +182,7 @@ ModalResult solve_modal(const FemModel& model, const Assembler& assembler,
     auto solver = make_linear_solver(lin);
     DofLayout layout;
     layout.dim = model.dim();
+    layout.dofs_per_node = model.dofs_per_node();
     layout.coordinates = &model.mesh().coordinates();
     layout.unknowns = &model.dofs().free_dofs();
     solver->set_layout(layout);
@@ -352,19 +363,14 @@ ModalResult solve_modal(const FemModel& model, const Assembler& assembler,
   if (mass_scale != nullptr) {
     const Mesh& mesh = model.mesh();
     const int npe = mesh.nodes_per_elem();
-    const int dim = mesh.dim();
     const Scalar threshold = 0.3;
+    Vector pe;
     for (int i = 0; i < m_req; ++i) {
       Scalar total = 0.0;
       Scalar low = 0.0;
-      Vector pe(npe * dim);
+      const Vector shape = result.mode_shapes.col(i);
       for (Index e = 0; e < mesh.num_elements(); ++e) {
-        const Index* nodes = mesh.element_nodes(e);
-        for (int a = 0; a < npe; ++a) {
-          for (int c = 0; c < dim; ++c) {
-            pe(dim * a + c) = result.mode_shapes(nodes[a] * dim + c, i);
-          }
-        }
+        model.dofs().gather(mesh.element_nodes(e), npe, shape, pe);
         const Scalar s = (*mass_scale)(e);
         const Scalar ke = s * pe.dot(assembler.element_mass(e) * pe);
         total += ke;

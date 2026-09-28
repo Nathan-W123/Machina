@@ -2,6 +2,9 @@
 
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
+#include "sparlab/fem/HeatConduction.hpp"
+#include "sparlab/fem/LinearSolver.hpp"
+#include "sparlab/fem/Loads.hpp"
 
 #include <numeric>
 #include <sstream>
@@ -20,13 +23,13 @@ std::string to_string(MassType type) {
 FemModel::FemModel(Mesh mesh, IsotropicMaterial material, Scalar thickness,
                    StressState stress_state, IntegrationOptions integration)
     : mesh_(std::move(mesh)),
-      material_(std::move(material)),
+      materials_{std::move(material)},
       thickness_(thickness),
       stress_state_(stress_state),
       integration_(integration),
       element_(make_element(mesh_.element_type())),
-      d_(material_.constitutive(stress_state)),
-      dofs_(mesh_.num_nodes(), mesh_.dim()) {
+      d_{materials_.front().constitutive(stress_state)},
+      dofs_(mesh_.num_nodes(), element_->dofs_per_node()) {
   if (stress_state_dimension(stress_state_) != mesh_.dim()) {
     std::ostringstream os;
     os << "stress state '" << to_string(stress_state_) << "' belongs to a "
@@ -50,8 +53,33 @@ FemModel::FemModel(Mesh mesh, IsotropicMaterial material, Scalar thickness,
 }
 
 void FemModel::set_material(const IsotropicMaterial& material) {
-  material_ = material;
-  d_ = material_.constitutive(stress_state_);
+  materials_.front() = material;
+  d_.front() = material.constitutive(stress_state_);
+}
+
+void FemModel::assign_material(const IsotropicMaterial& material,
+                               const std::vector<Index>& elements) {
+  if (finalized_) {
+    throw ModelError("materials must be assigned before FemModel::finalize()");
+  }
+  const Index ne = mesh_.num_elements();
+  for (Index e : elements) {
+    if (e < 0 || e >= ne) {
+      std::ostringstream os;
+      os << "material '" << material.name() << "' assigned to element " << e
+         << ", outside [0, " << ne - 1 << "]";
+      throw ModelError(os.str());
+    }
+  }
+  materials_.push_back(material);
+  d_.push_back(material.constitutive(stress_state_));
+  if (element_material_.empty()) element_material_.assign(static_cast<std::size_t>(ne), 0);
+  const int id = static_cast<int>(materials_.size()) - 1;
+  for (Index e : elements) element_material_[static_cast<std::size_t>(e)] = id;
+}
+
+void FemModel::set_conduction_solver(const LinearSolverOptions& options) {
+  conduction_solver_ = std::make_shared<LinearSolverOptions>(options);
 }
 
 void FemModel::finalize(bool require_load_cases) {
@@ -65,7 +93,9 @@ void FemModel::finalize(bool require_load_cases) {
             dofs_.num_free(), " free");
 
   load_vectors_.clear();
+  load_data_.clear();
   load_vectors_.reserve(load_case_specs_.size());
+  load_data_.reserve(load_case_specs_.size());
   for (const LoadCaseSpec& spec : load_case_specs_) {
     if (!(spec.weight >= 0.0)) {
       std::ostringstream os;
@@ -73,17 +103,50 @@ void FemModel::finalize(bool require_load_cases) {
          << "); weights must be non-negative";
       throw ConfigError(os.str());
     }
-    load_vectors_.push_back(
-        assemble_load_vector(mesh_, *element_, spec, thickness_, integration_));
+    LoadCaseData data;
+    data.mechanical = assemble_load_vector(mesh_, *element_, spec, thickness_, integration_);
+    Vector total = data.mechanical;
+    if (spec.has_body_loads()) {
+      data.body = assemble_body_load_vector(*this, spec);
+      for (Index n = 0; n < mesh_.num_nodes(); ++n) {
+        for (int k = 0; k < mesh_.dim(); ++k) {
+          data.body_resultant(k) += data.body(n * dofs_.dofs_per_node() + k);
+        }
+      }
+      total += data.body;
+    }
+    if (spec.has_temperature()) {
+      if (spec.temperature.source == TemperatureSpec::Source::Conduction) {
+        LinearSolverOptions linear;
+        if (conduction_solver_) linear = *conduction_solver_;
+        const ConductionResult solved = solve_conduction(*this, spec.temperature.conduction, linear);
+        data.temperature = solved.temperature;
+        data.conduction = solved.summary;
+        data.conduction_solved = true;
+        log::info("load case '", spec.name, "': steady conduction, temperature ",
+                  solved.summary.min_temperature, " to ", solved.summary.max_temperature,
+                  " K, heat in ", solved.summary.applied_heat, " W, out through prescribed "
+                  "temperatures ", solved.summary.prescribed_heat, " W (relative balance "
+                  "error ", solved.summary.relative_balance_error, ")");
+      } else {
+        data.temperature = resolve_region_temperatures(mesh_, spec.temperature);
+      }
+      const ThermalLoad thermal = assemble_thermal_load(*this, data.temperature);
+      data.thermal = thermal.force;
+      data.thermal_self_energy = thermal.self_energy;
+      total += data.thermal;
+    }
     // A zero load vector is a mistake *unless* the case is driven by prescribed
     // displacements, which is how the patch test and any enforced-deflection
     // study work.
-    if (load_vectors_.back().norm() == 0.0 && !dofs_.has_nonzero_prescribed() &&
+    if (total.norm() == 0.0 && !dofs_.has_nonzero_prescribed() &&
         !spec.prescribed_displacement_only) {
       log::warn("load case '", spec.name,
                 "' has a zero resultant force vector and no non-zero prescribed "
                 "displacement, so its solution is identically zero");
     }
+    load_vectors_.push_back(std::move(total));
+    load_data_.push_back(std::move(data));
   }
 
   if (!load_case_specs_.empty()) {
@@ -103,6 +166,18 @@ const std::vector<Vector>& FemModel::load_vectors() const {
     throw ModelError("load vectors requested before FemModel::finalize() was called");
   }
   return load_vectors_;
+}
+
+const LoadCaseData& FemModel::load_case_data(std::size_t l) const {
+  if (!finalized_) {
+    throw ModelError("load-case data requested before FemModel::finalize() was called");
+  }
+  if (l >= load_data_.size()) {
+    std::ostringstream os;
+    os << "load case " << l << " requested, the model has " << load_data_.size();
+    throw ModelError(os.str());
+  }
+  return load_data_[l];
 }
 
 std::vector<Scalar> FemModel::normalised_weights() const {

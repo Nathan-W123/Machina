@@ -10,10 +10,14 @@
 /// no separate assembly.
 ///
 /// Energy definitions used consistently across the code base:
-///   * strain energy \f$ U = \tfrac{1}{2} u^T K u \f$ [J],
-///   * compliance \f$ C = f^T u \f$ [J] with \f$f\f$ the *applied* load vector.
-/// For homogeneous Dirichlet data \f$C = 2U\f$; the two are reported separately
-/// so the identity can be checked (it is, in the test suite).
+///   * strain energy \f$ U = \tfrac{1}{2} u^T K u \f$ [J] - with a thermal
+///     strain the elastic energy
+///     \f$\tfrac12 u^T K u - u^T f_{th} + \tfrac12\int\varepsilon_0^T D\,\varepsilon_0\f$,
+///   * compliance \f$ C = f^T u \f$ [J] with \f$f\f$ the *applied* load vector
+///     (thermal equivalent loads included).
+/// For homogeneous Dirichlet data and no thermal strain \f$C = 2U\f$; the two
+/// are reported separately so the identity can be checked (it is, in the test
+/// suite).
 #pragma once
 
 #include "sparlab/core/Types.hpp"
@@ -27,7 +31,11 @@
 namespace sparlab {
 
 /// Global force / moment balance of a solved load case. Moments are taken
-/// about the origin; on a 2-D model only the z component is non-zero.
+/// about the origin; on a 2-D model only the z component is non-zero. The
+/// relative errors divide by the gross size of the applied nodal loads,
+/// \f$\sum_n |f_n|\f$ and \f$\sum_n |x_n|\,|f_n|\f$ (plus nodal moments), the
+/// scale of the round-off in the sums, so a self-equilibrated load - a
+/// thermal strain, a self-weight carried by a traction - is judged fairly.
 struct EquilibriumCheck {
   Vector3 applied_force = Vector3::Zero();    ///< sum of applied nodal forces [N]
   Vector3 reaction_force = Vector3::Zero();   ///< sum of support reactions [N]
@@ -35,8 +43,8 @@ struct EquilibriumCheck {
   Vector3 applied_moment = Vector3::Zero();   ///< about the origin [N m]
   Vector3 reaction_moment = Vector3::Zero();  ///< about the origin [N m]
   Vector3 moment_residual = Vector3::Zero();  ///< applied + reaction [N m]
-  Scalar relative_force_error = 0.0;          ///< |residual| / max(|applied|, tiny)
-  Scalar relative_moment_error = 0.0;         ///< normalised by |applied moment| scale
+  Scalar relative_force_error = 0.0;          ///< |residual| / sum_n |f_n|
+  Scalar relative_moment_error = 0.0;         ///< |residual| / sum_n |x_n| |f_n|
 };
 
 /// Result of one solved load case.
@@ -117,7 +125,8 @@ class StaticAnalysis {
 
  private:
   StaticSolution build_solution(const std::string& name, Scalar weight,
-                                const Vector& applied_force);
+                                const Vector& applied_force,
+                                const LoadCaseData* data = nullptr);
 
   LinearSolver& active_solver();
   Vector free_guess(const Vector* initial_guess) const;

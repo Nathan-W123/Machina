@@ -19,9 +19,9 @@ buckle out of its plane, so plate buckling of a thin lightened web - which
 can govern it - stays invisible to the 2-D decks.
 
 **Linear, small strain, small displacement.** One factorisation, one solve, no
-load stepping. Geometric non-linearity, plasticity, contact, creep and thermal
-strain are all absent. The deformation figures are exaggerated by a stated
-factor purely for visibility; the analysis behind them is linear.
+load stepping. Geometric non-linearity, plasticity, contact and creep are
+absent. The deformation figures are exaggerated by a stated factor purely for
+visibility; the analysis behind them is linear.
 
 **Buckling is linear bifurcation.** The buckling check is the eigenvalue
 problem `(K + lambda K_G(u)) phi = 0` of the linear static state: the
@@ -37,10 +37,33 @@ it.
 no forced response, no fatigue. A natural frequency here is the undamped
 eigenvalue of the constrained model.
 
-**No body forces.** Loads enter as boundary tractions and concentrated nodal
-forces. Self-weight and inertia relief are not implemented; the wing-rib deck's
-"fuel inertia" case is a *representative edge pressure*, not a body-force
-calculation.
+**Body loads: self-weight, force densities and steady rotation.** Gravity,
+uniform body force densities on element regions and the centrifugal load of a
+steady rotation are integrated exactly from the consistent mass. Rotation is
+the static centrifugal load only: no Coriolis or gyroscopic terms and no spin
+softening (the stiffness change of a spinning body), which a dynamic or
+geometrically non-linear analysis would add. There is no inertia relief (a
+free-flying body balanced by its own acceleration), so a body load must be
+reacted by supports. The wing-rib deck's "fuel inertia" case is still a
+*representative edge pressure*, not a body-force calculation.
+
+**Thermal strain is linear thermoelasticity.** A temperature field - uniform,
+given on regions, or the solution of steady conduction with fixed
+temperatures, surface fluxes, convection and heat generation - enters as the
+free strain `alpha (T - T_ref)` with temperature-independent `E`, `nu`,
+`alpha` and `k`. The conduction is steady (no transient heat transfer, heat
+capacity or time), has no radiation, no contact conductance between parts and
+no heat from deformation; the temperature is solved first and does not depend
+on the displacement. Materials may differ by element region
+(`material_regions`), each with its own reference temperature, but the
+CalculiX export needs one common reference temperature (CalculiX measures
+thermal strain from the initial nodal temperature). First-order hexahedra and
+quadrilaterals integrate the interpolated temperature (the consistent load),
+which cannot represent the free expansion of a linear temperature gradient
+exactly - that needs a quadratic displacement - so a free Hex8 or Q4 part in
+a gradient shows a small spurious stress that vanishes under refinement; the
+Tet10 represents it exactly. Topology optimisation does not take body loads,
+temperatures or several materials yet (`sparlab_topopt` refuses them).
 
 **Linear elements, and one quadratic element.** The four-node
 quadrilateral, the three-node triangle, the eight-node hexahedron and the

@@ -286,8 +286,10 @@ class AutoSolver final : public LinearSolver {
 
   void factorize(const SparseMatrix& a) override {
     const int dim = has_layout_ ? layout_.dim : 2;
-    const Index limit =
-        dim == 3 ? options_.auto_direct_limit_3d : options_.auto_direct_limit_2d;
+    // A shell or beam mesh (six DOFs per node) is a surface or a line: its
+    // Cholesky fill grows like a plane problem's, not a solid's.
+    const bool solid = dim == 3 && (!has_layout_ || layout_.nodal_dofs() == 3);
+    const Index limit = solid ? options_.auto_direct_limit_3d : options_.auto_direct_limit_2d;
     const LinearSolverType wanted =
         (has_layout_ && static_cast<Index>(a.rows()) > limit) ? LinearSolverType::AmgCg
                                                                : LinearSolverType::SimplicialLdlt;

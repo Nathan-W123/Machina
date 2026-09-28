@@ -33,13 +33,13 @@ relative.
 | **Finite elements** | Plane stress, plane strain and 3-D solids; bilinear quadrilaterals (Q4), linear triangles (Tri3), trilinear hexahedra (Hex8), linear tetrahedra (Tet4) and **isoparametric quadratic tetrahedra (Tet10)** with curved edges; Gauss-Legendre and collapsed-Gauss quadrature, sparse assembly into a cached pattern, exact Dirichlet partitioning |
 | **Meshes** | Structured Q4 / Tri3 / Hex8 / Tet4 / Tet10 generators, `mesh.order: 2` elevation of any tetrahedral mesh, and **Gmsh (MSH 2.2, 4.1) and Abaqus / CalculiX `.inp` readers** (C3D10 and Gmsh second-order tetrahedra included): named groups as supports, loads and passive regions, orientation repair, unit scaling, duplicate-node and quality checks |
 | **Linear solvers** | Sparse Cholesky (LDL^T), **smoothed-aggregation algebraic multigrid** preconditioned CG (bitwise identical on any number of threads), Jacobi CG, and an automatic choice by problem size |
-| **Loads** | Point loads and consistently integrated edge / face tractions, multiple load cases with weights |
+| **Loads** | Point loads, consistently integrated edge / face tractions and **pressures** (normal to curved Tet10 faces), **self-weight, body force densities and steady rotation** integrated exactly from the consistent mass, and **temperature fields** - uniform, regional, or solved by **steady heat conduction** with fixed temperatures, fluxes, convection and generation - with thermal strain for plane stress, plane strain and 3-D; several materials per model; multiple load cases with weights |
 | **Recovery** | Displacements, exact support reactions, element and nodal strain/stress, von Mises, principal stresses, element strain energy, compliance |
 | **Modal analysis** | Consistent or lumped mass, generalised eigenproblem by shift-invert subspace iteration, validity screening for negative and rigid-body eigenvalues |
 | **Linear buckling** | `(K + lambda K_G) phi = 0` of each load case by subspace iteration, with the buckling spectral transformation and an inertia-placed shift when reversed-load modes crowd the spectrum; a check of the analysed model, the full design domain and the **exported part** |
 | **Topology optimisation** | SIMP with penalty continuation, density and sensitivity filters, a **Heaviside projection** with `beta` continuation, the **robust (eroded / blueprint / dilated) formulation** for a minimum length scale, an **additive-manufacturing overhang filter**, analytical sensitivities, optimality criteria *or* the method of moving asymptotes, aggregated **stress** and **buckling** constraints with adjoint sensitivities, passive solid/void regions, multi-load-case objective, length-scale, erosion and overhang checks of the result |
 | **Geometry** | The structure before and after optimisation as VTK and watertight binary STL, with closure, manifoldness and volume checks |
-| **Verification** | Patch tests on all five elements (the Tet10's quadratic one included), rigid-body modes, positive definiteness, reaction equilibrium, agreement of seven linear solvers, multigrid iteration counts under refinement, finite-difference gradient checks (compliance, stress, buckling and the overhang filter, 2-D and 3-D, through the projection), mass conservation, beam, rod and Euler-Engesser column theory, mesh convergence - and **cross-validation against CalculiX and scikit-fem**, node by node for displacements and mode by mode for buckling load factors, including the parts meshed in Gmsh |
+| **Verification** | Patch tests on all five elements (the Tet10's quadratic one included), rigid-body modes, positive definiteness, reaction equilibrium, agreement of seven linear solvers, multigrid iteration counts under refinement, finite-difference gradient checks (compliance, stress, buckling and the overhang filter, 2-D and 3-D, through the projection), mass conservation, beam, rod and Euler-Engesser column theory, mesh convergence, **exact solutions of pressure, rotation, conduction and thermal stress** (Lame, rotating disk, heated cylinder, Timoshenko's bimetal, the hanging bar) at the element's convergence order - and **cross-validation against CalculiX and scikit-fem**, node by node for displacements (with each code integrating the new loads itself) and temperatures, and mode by mode for buckling load factors, including the parts meshed in Gmsh |
 | **Diagnostics** | Pre-solve detection of rigid-body under-constraint and floating regions, singular-matrix reporting with the likely modelling cause, explicit non-convergence and infeasibility reporting |
 | **Output** | `summary.json`, CSV tables, legacy VTK for ParaView, CalculiX decks, STL, publication-quality figures and animations |
 
@@ -147,6 +147,11 @@ All numbers below are read from the `summary.json` of the run named beside them.
 | **Column buckling vs Euler-Engesser**, Q4 and Tet10 | validation | relative difference of `lambda_1`, finest mesh | `6.64e-03` | `0.01` |
 | Buckling-constraint sensitivity vs central differences | verification | max scaled gradient error, best step | `1.72e-06` | `1e-5` |
 | Sensitivity through the overhang filter | verification | worst scaled-entry or directional gradient error, best step | `2.81e-06` | `1e-5` |
+| **Thick cylinder under internal pressure vs Lame**, Q4 / Tri3 / Hex8 / curved Tet10 | verification | RMS displacement error converges at `2.00` / `2.00` / `2.00` / `3.11` (Tet10 `4.5e-07` on 75 465 DOFs) | shortfall `-0.001` | `0.3` |
+| **Rotating disk and cylinder vs exact** | verification | RMS displacement order `2.01` (linear elements), `3.10` (Tet10) | shortfall `-0.006` | `0.3` |
+| **Conduction + thermal stress in a thick cylinder vs exact** | verification | temperature order `2.00` / `3.01` (Tet10), displacement `2.00` / `3.10` | shortfall `0.005` | `0.3` |
+| Bimetallic strip curvature vs Timoshenko | verification | relative error, 800 x 40 Q4 (order `2.00`) | `3.01e-04` | `1e-3` |
+| Bar hanging under self-weight | verification | Tet10 error (exact space); Q4 / Tri3 / Hex8 / Tet4 RMS orders `2.19 / 2.00 / 2.15 / 1.90` | `3.78e-13` | `1e-10` |
 
 `make verify` exits non-zero if any tolerance is missed, so it is a usable
 numerical regression gate. Full detail, including what is *not* covered, in
@@ -160,18 +165,21 @@ by node (`make cross-validation`):
 
 | Problem | Reference | Max relative difference | Tolerance |
 |---------|-----------|------------------------:|----------:|
-| Plane cantilever, 1 440 Q4 | scikit-fem 12.0.2 `ElementQuad1` | `1.47e-10` | `1e-7` |
+| Plane cantilever, 1 440 Q4 | scikit-fem 12.0.2 `ElementQuad1` | `1.50e-10` | `1e-7` |
 | Plane cantilever, 1 440 Q4 | CalculiX 2.21 `CPS4` | `8.75e-07` | `1e-5` |
-| Solid block, tip load, 1 280 Hex8 | scikit-fem `ElementHex1` | `5.59e-12` | `1e-7` |
+| Solid block, tip load, 1 280 Hex8 | scikit-fem `ElementHex1` | `5.96e-12` | `1e-7` |
 | Solid block, tip load, 1 280 Hex8 | CalculiX `C3D8` | `3.39e-06` | `1e-5` |
-| Solid block, face pressure | scikit-fem `ElementHex1` | `1.42e-11` | `1e-7` |
+| Solid block, face pressure | scikit-fem `ElementHex1` | `1.23e-11` | `1e-7` |
 | Solid block, face pressure | CalculiX `C3D8` | `2.43e-06` | `1e-5` |
-| Plane cantilever, 2 880 Tri3 | scikit-fem `ElementTriP1` / CalculiX `CPS3` | `1.66e-11` / `8.86e-07` | `1e-7` / `1e-5` |
-| Solid block, 7 680 Tet4, two load cases | scikit-fem `ElementTetP1` / CalculiX `C3D4` | `<= 9.46e-12` / `<= 3.64e-06` | `1e-7` / `1e-5` |
-| **Gmsh lug bracket**, 20 336 Tri3, `nu = 0` | scikit-fem / CalculiX `CPS3` | `<= 6.09e-13` / `<= 4.29e-06` | `1e-7` / `1e-5` |
-| **Gmsh engine mount**, 39 936 Tet4, solved by multigrid CG | scikit-fem / CalculiX `C3D4` | `<= 1.48e-12` / `<= 1.98e-06` | `1e-7` / `1e-5` |
-| **Gmsh engine mount**, 13 918 curved Tet10 | scikit-fem `ElementTetP2` / CalculiX `C3D10` | `<= 1.54e-12` / `<= 1.65e-06` | `1e-7` / `1e-5` |
+| Plane cantilever, 2 880 Tri3 | scikit-fem `ElementTriP1` / CalculiX `CPS3` | `6.96e-12` / `8.86e-07` | `1e-7` / `1e-5` |
+| Solid block, 7 680 Tet4, two load cases | scikit-fem `ElementTetP1` / CalculiX `C3D4` | `<= 7.75e-12` / `<= 3.64e-06` | `1e-7` / `1e-5` |
+| **Gmsh lug bracket**, 20 336 Tri3, `nu = 0` | scikit-fem / CalculiX `CPS3` | `<= 5.26e-13` / `<= 4.29e-06` | `1e-7` / `1e-5` |
+| **Gmsh engine mount**, 39 936 Tet4, solved by multigrid CG | scikit-fem / CalculiX `C3D4` | `<= 1.52e-12` / `<= 1.98e-06` | `1e-7` / `1e-5` |
+| **Gmsh engine mount**, 13 918 curved Tet10 | scikit-fem `ElementTetP2` / CalculiX `C3D10` | `<= 1.16e-12` / `<= 1.65e-06` | `1e-7` / `1e-5` |
 | Axial columns, Hex8 / Tet4 / Tet10: **buckling load factors**, 4 modes | scikit-fem (own `K_G`) / CalculiX `*BUCKLE` | `<= 8.41e-10` / `<= 8.26e-05` | `1e-7` / `1e-4` |
+| Blocks and two-material plates, Hex8 / Tet10 / plane-strain Q4: **self-weight, pressure, rotation, body force, conducted and regional temperatures** | scikit-fem integrating the loads itself / CalculiX's own load cards | `<= 1.79e-12` / `<= 3.57e-06` | `1e-7` / `1e-5` |
+| **Gmsh engine mount**, curved Tet10: bore pressure, self-weight, rotation, conduction | scikit-fem integrating the loads itself / CalculiX `C3D10` | `<= 8.92e-12` / `<= 2.45e-06` | `1e-7` / `1e-5` |
+| The conducted temperatures of those decks | CalculiX `*HEAT TRANSFER`, relative to the temperature range | `<= 3.47e-05` | `1e-4` |
 
 scikit-fem implements the same element formulations independently, so its
 differences are linear-solver round-off. CalculiX's `C3D8`, `C3D4` and
@@ -494,7 +502,7 @@ aggregates and starts every solve from the previous design's answer
 | ![Stress-constrained vs unconstrained L-bracket](docs/figures/l_bracket_stress_stress_comparison.png) | ![Solid bracket stress on the surface](docs/figures/bracket_3d_stress_down_limit.png) |
 | The same L-bracket with and without the stress constraint, on one colour scale with the limit marked | Von Mises, principal and normal stress on the surface of the optimised solid bracket |
 | ![Cross-validation](docs/figures/cross_validation.png) | ![Solid bracket mode shapes](docs/figures/bracket_3d_modes_topology.png) |
-| Nodal displacements against CalculiX and scikit-fem on eleven problems, with each tolerance and the `.frd` rounding floor | Mode shapes of the interpreted solid structure |
+| Nodal displacements against CalculiX and scikit-fem on seventeen problems - pressure, body and thermal loads and conducted temperatures included - with each tolerance and the `.frd` rounding floor | Mode shapes of the interpreted solid structure |
 | ![Gmsh lug bracket](docs/figures/lug_bracket_2d_topology.png) | ![Engine mount from an Abaqus file](docs/figures/engine_mount_3d_topology.png) |
 | A lug bracket meshed in Gmsh (20 336 triangles), optimised with the Heaviside projection | An engine mount read from an Abaqus / CalculiX file (39 936 tetrahedra), solved with multigrid CG |
 | ![Projection comparison](docs/figures/mbb_beam_projection.png) | ![Solver scaling](docs/figures/solver_scaling.png) |
@@ -841,8 +849,10 @@ Things this project deliberately does, because the opposite is easy and wrong:
 
 The short version: plane or solid continuum only (no plates, shells or
 beams), linear and small-strain, static, undamped free vibration and linear
-(bifurcation) buckling - no imperfections or post-buckling - no body forces,
-linear elements plus the quadratic tetrahedron (no Q8, Tri6 or Hex20) and one
+(bifurcation) buckling - no imperfections or post-buckling - linear
+thermoelasticity with a given or steadily conducted temperature, self-weight,
+body forces and steady rotation (not yet in the topology optimiser), linear
+elements plus the quadratic tetrahedron (no Q8, Tri6 or Hex20) and one
 cell type per mesh, attachment features are *representations* and not joint
 models, load cases are illustrative and not flight loads, the objective is
 weighted compliance and not a load envelope, the constraints are the volume,
@@ -850,7 +860,7 @@ an aggregated relaxed stress and an aggregated SIMP buckling load (no
 frequency or displacement constraints), the robust formulation's length
 scale is measured rather than stated, the overhang rule needs a structured
 grid, one machine and no distributed memory, cross-validation of
-displacements on eleven problems and of buckling load factors on three, no
+displacements on seventeen problems and of buckling load factors on three, no
 comparison against experiment.
 
 The long version, with what it would take to lift each item, is in
@@ -883,10 +893,11 @@ treating any number here as a design answer.
 * **verification** runs all the studies, plane and solid, and fails the build
   if any documented tolerance is missed, uploading the summary either way;
 * **benchmark** runs the static, modal and buckling analyses on all five
-  element types and both Gmsh parts, the scikit-fem half of the
-  cross-validation on all eleven problems - displacements, and the buckling
-  load factors of the three columns - (which fails the build on a
-  disagreement), reduced topology optimisations covering OC, MMA with the
+  element types and both Gmsh parts, the decks of the pressure, volume and
+  thermal loads, the scikit-fem half of the cross-validation on all
+  seventeen problems - displacements with SparLab's loads and with the loads
+  integrated by scikit-fem, and the buckling load factors of the three
+  columns - (which fails the build on a disagreement), reduced topology optimisations covering OC, MMA with the
   stress constraint, the Hex8 path, the projection with and without, the
   multigrid solver, the two parts read from mesh files, the buckling
   constraint, the robust formulation and the overhang filter with their

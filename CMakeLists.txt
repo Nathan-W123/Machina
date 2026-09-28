@@ -57,6 +57,7 @@ add_library(sparlab STATIC
   src/elements/Tri3.cpp
   src/elements/Tet4.cpp
   src/elements/Tet10.cpp
+  src/elements/FaceGeometry.cpp
   src/fem/DofManager.cpp
   src/fem/Selector.cpp
   src/fem/BoundaryConditions.cpp
@@ -69,6 +70,8 @@ add_library(sparlab STATIC
   src/fem/StressRecovery.cpp
   src/fem/ModalAnalysis.cpp
   src/fem/Buckling.cpp
+  src/fem/Loads.cpp
+  src/fem/HeatConduction.cpp
   src/topopt/SimpInterpolation.cpp
   src/topopt/DensityFilter.cpp
   src/topopt/DesignDomain.cpp
@@ -143,6 +146,7 @@ if(SPARLAB_BUILD_APPS)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE sparlab_app_support)
   endforeach()
+  target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp)
 endif()
 
 # ----------------------------------------------------------------------------

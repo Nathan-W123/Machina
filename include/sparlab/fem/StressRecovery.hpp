@@ -15,10 +15,16 @@
 /// values (simple averaging, not superconvergent patch recovery), and are used
 /// for smooth contour plots only.
 ///
+/// **Thermal strain.** With a temperature field the stress is
+/// \f$\sigma = s_e D (B u_e - \varepsilon_0)\f$ (IsotropicMaterial.hpp); the
+/// reported strain stays the total strain \f$B u_e\f$, and the element strain
+/// energy is the elastic one, \f$\tfrac12\int(Bu-\varepsilon_0)^T D
+/// (Bu-\varepsilon_0)\,dV\f$.
+///
 /// von Mises stress uses the correct out-of-plane stress for the active
 /// idealisation: \f$\sigma_{zz} = 0\f$ for plane stress,
-/// \f$\sigma_{zz} = \nu(\sigma_{xx}+\sigma_{yy})\f$ for plane strain and the
-/// computed \f$\sigma_{zz}\f$ in 3-D, so
+/// \f$\sigma_{zz} = \nu(\sigma_{xx}+\sigma_{yy}) - s_e E\alpha\Delta T\f$
+/// for plane strain and the computed \f$\sigma_{zz}\f$ in 3-D, so
 /// \f[
 ///   \sigma_{vm} = \sqrt{\tfrac{1}{2}\left[(\sigma_{xx}-\sigma_{yy})^2 +
 ///   (\sigma_{yy}-\sigma_{zz})^2 + (\sigma_{zz}-\sigma_{xx})^2\right] +
@@ -47,6 +53,10 @@ struct StressField {
   Vector element_principal_mid;         ///< num_elements, sigma_2 [Pa] (3-D only, else empty)
   Vector element_principal_min;         ///< num_elements, smallest principal stress [Pa]
   Vector element_strain_energy;         ///< num_elements [J]
+  /// Plane strain only: the out-of-plane stress sigma_zz per element [Pa].
+  Vector element_sigma_zz;
+  /// With a temperature field: the element's mean temperature [K].
+  Vector element_temperature;
 
   VoigtField nodal_stress;              ///< nv x num_nodes, averaged [Pa]
   Vector nodal_von_mises;               ///< num_nodes [Pa]
@@ -54,6 +64,9 @@ struct StressField {
 
 /// von Mises stress from a Voigt stress vector (3 or 6 components).
 Scalar von_mises(const Vector& voigt_stress, StressState state, Scalar poisson);
+
+/// von Mises stress of a plane state with an explicit out-of-plane stress.
+Scalar von_mises_plane(Scalar sxx, Scalar syy, Scalar sxy, Scalar szz);
 
 /// In-plane principal stresses (sigma_1 >= sigma_2) of a 2-D Voigt vector.
 void principal_stresses(const Vector& voigt_stress, Scalar& s1, Scalar& s2);
@@ -66,13 +79,17 @@ Vector element_strain_at(const FemModel& model, Index element, const NaturalPoin
                          const Vector& displacement);
 
 /// Stress at one parametric point of one element (macroscopic, scaled).
+/// \param temperature optional nodal temperatures [K] (thermal strain).
 Vector element_stress_at(const FemModel& model, Index element, const NaturalPoint& point,
-                         const Vector& displacement, Scalar stiffness_scale = 1.0);
+                         const Vector& displacement, Scalar stiffness_scale = 1.0,
+                         const Vector* temperature = nullptr);
 
 /// Recover all strain / stress data for a displacement field.
 /// \param stiffness_scale optional per-element SIMP factors \f$E(\rho)/E_0\f$.
+/// \param temperature optional nodal temperatures [K] of the load case.
 StressField recover_stresses(const FemModel& model, const Assembler& assembler,
                              const Vector& displacement,
-                             const Vector* stiffness_scale = nullptr);
+                             const Vector* stiffness_scale = nullptr,
+                             const Vector* temperature = nullptr);
 
 }  // namespace sparlab

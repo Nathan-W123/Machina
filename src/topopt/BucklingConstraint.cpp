@@ -85,8 +85,7 @@ BucklingEvaluation BucklingConstraint::evaluate(ComplianceObjective& objective,
   const Mesh& mesh = model_.mesh();
   const Index ne = mesh.num_elements();
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
-  const int edofs = npe * dim;
+  const int edofs = npe * model_.dofs_per_node();
   if (load_case >= eval.displacements.size()) {
     throw ConfigError("buckling constraint asked for a load case the evaluation lacks");
   }
@@ -162,29 +161,20 @@ BucklingEvaluation BucklingConstraint::evaluate(ComplianceObjective& objective,
     Vector rhs = Vector::Zero(dofs.num_dofs());
     for (Index e = 0; e < ne; ++e) {
       const Index* nodes = mesh.element_nodes(e);
-      for (int a = 0; a < npe; ++a) {
-        for (int k = 0; k < dim; ++k) pe(dim * a + k) = phi(nodes[a] * dim + k);
-      }
+      dofs.gather(nodes, npe, phi, pe);
       Vector& g = ge[static_cast<std::size_t>(e)];
       g = element.geometric_stiffness_derivative(mesh.element_coordinates(e), d, pe, 1.0,
                                                  model_.thickness(), model_.integration());
-      for (int a = 0; a < npe; ++a) {
-        for (int k = 0; k < dim; ++k) rhs(nodes[a] * dim + k) += stress_scale(e) * g(dim * a + k);
-      }
+      dofs.scatter_add(nodes, npe, g, rhs, stress_scale(e));
     }
     const Vector adjoint = objective.solve_adjoint(
         rhs, kAdjointSlotBase + static_cast<int>(64 * load_case) + static_cast<int>(i));
     Vector dlambda(ne);
     for (Index e = 0; e < ne; ++e) {
       const Index* nodes = mesh.element_nodes(e);
-      for (int a = 0; a < npe; ++a) {
-        for (int k = 0; k < dim; ++k) {
-          const Index dof = nodes[a] * dim + k;
-          ue(dim * a + k) = u(dof);
-          pe(dim * a + k) = phi(dof);
-          ae(dim * a + k) = adjoint(dof);
-        }
-      }
+      dofs.gather(nodes, npe, u, ue);
+      dofs.gather(nodes, npe, phi, pe);
+      dofs.gather(nodes, npe, adjoint, ae);
       const Matrix& ke = assembler_.element_stiffness(e);
       const Scalar elastic = pe.dot(ke * pe);
       const Scalar geometric = ge[static_cast<std::size_t>(e)].dot(ue);

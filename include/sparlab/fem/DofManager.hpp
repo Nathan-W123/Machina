@@ -74,6 +74,15 @@ class DofManager {
   /// element, in node-major order matching the element kernels.
   void element_dofs(const Index* nodes, int nodes_per_elem, Index* out) const;
 
+  /// The element vector (node-major, `dofs_per_node` entries per node) of the
+  /// element with `nodes`, read from a full-length vector.
+  Vector gather(const Index* nodes, int nodes_per_elem, const Vector& full) const;
+  void gather(const Index* nodes, int nodes_per_elem, const Vector& full, Vector& out) const;
+
+  /// Add `factor` times an element vector into a full-length vector.
+  void scatter_add(const Index* nodes, int nodes_per_elem, const Vector& local, Vector& full,
+                   Scalar factor = 1.0) const;
+
  private:
   void rebuild() const;
 

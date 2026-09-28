@@ -8,25 +8,33 @@ beside it.
 
 Small-strain linear elasticity on a domain `Omega` - a plane of constant
 out-of-plane thickness `t` (2-D) or a solid (3-D, where `t = 1` everywhere
-below) - with displacement boundary `Gamma_u` and traction boundary `Gamma_t`:
+below) - with displacement boundary `Gamma_u`, traction boundary `Gamma_t` and
+pressure boundary `Gamma_p`:
 
 ```
   div sigma + b = 0            in Omega          (equilibrium)
   eps = 1/2 (grad u + grad u^T)                  (kinematics)
-  sigma = D : eps                                (constitutive)
+  sigma = D : (eps - eps_0)                      (constitutive)
   u = u_bar                    on Gamma_u
   sigma . n = t_bar            on Gamma_t
+  sigma . n = -p n             on Gamma_p
 ```
 
-Body forces `b` are not implemented; loads enter as boundary tractions and
-concentrated nodal forces. The weak form, for all admissible `v`, is
+`b` is the body force density - self-weight `rho g`, a uniform force density,
+or the centrifugal load `rho omega^2 r_perp` of a steady rotation - and
+`eps_0 = alpha (T - T_ref)` (per idealisation, below) the free thermal strain of
+a temperature field. The weak form, for all admissible `v`, is
 
 ```
   integral_Omega  t eps(v)^T D eps(u) dOmega
-      =  integral_Gamma_t  t v^T t_bar dGamma  +  sum_k v(x_k)^T F_k
+      =  integral_Omega t v^T b dOmega  +  integral_Omega t eps(v)^T D eps_0 dOmega
+       + integral_Gamma_t  t v^T t_bar dGamma  -  integral_Gamma_p  t p v^T n dGamma
+       + sum_k v(x_k)^T F_k
 ```
 
-with the second term the point loads.
+with the last term the point loads. Each element may carry its own material
+(`material_regions`), so `D`, `rho`, `alpha` and `T_ref` are per element.
+Section 4b gives the discretisation of the load terms.
 
 ### Plane idealisations
 
@@ -376,7 +384,89 @@ large diagonal entries to wreck the conditioning or the eigenvalue spectrum.
 Because `K t = 0` for a rigid translation `t`, summing the residual over all
 DOFs in one direction gives `sum(r) + sum(f) = 0` identically. That is the
 global force balance every static result reports, and it is a genuine check on
-the assembly and the solve rather than an identity of the post-processing.
+the assembly and the solve rather than an identity of the post-processing. The
+reported relative error divides the residual resultant by the gross size of the
+applied nodal forces, `sum_n |f_n|` (and the moment residual by
+`sum_n |x_n| |f_n|`), which is the scale of the round-off in the sums. Dividing
+by the resultant instead would fail every self-equilibrated load - a thermal
+strain, or a self-weight carried by a traction - whose resultant is itself
+round-off.
+
+## 4b. Pressure, volume and thermal loads
+
+**Pressure** (`elements/FaceGeometry.cpp`). A boundary face with nodes `x_a` and
+face shape functions `N_a(s, t)` carries
+
+```
+  f_a = - integral p N_a a(s, t) ds dt ,    a = x_s x x_t  (surface),  a = (y_s, -x_s) t  (edge)
+```
+
+with `a` the unnormalised area vector, so `|a| ds dt` is the area element and
+the load follows the normal at every point of a curved face. On a Tet10 face
+(six nodes, `x_s`, `x_t` linear) the integrand is of degree 4 and is integrated
+with three collapsed Gauss points per direction, which is exact; on a flat
+face it is of degree 2. The linear analyses load the undeformed face. The
+derivative of the load with respect to the face's own nodal positions,
+`d f_a / d x_b = -p N_a [N_b,s (-skew(x_t)) + N_b,t skew(x_s)]` integrated over a
+surface (`face_pressure_stiffness`), is what a large-deflection analysis needs
+for a pressure that follows the deforming face; it matches central differences
+of the load to `1e-7` on distorted faces of all four shapes (tests).
+
+**Body loads** (`fem/Loads.cpp`). A force density affine in position,
+`b(x) = b_0 + B x`, is interpolated exactly by the shape functions of an
+isoparametric element (`x = sum_b N_b x_b` exactly, curved cells included), so
+
+```
+  f_a = integral N_a b dV = sum_b ( integral N_a N_b dV ) b(x_b) = ( M_e(rho = 1) b_hat )_a ,
+```
+
+the unit-density consistent mass times the nodal values of `b`. Self-weight is
+constant, a uniform force density is constant, and the centrifugal load of a
+rotation `omega` about an axis `e` through `c` is the affine
+`rho omega^2 (I - e e^T)(x - c)`: all three are integrated exactly to the mass
+matrix's own quadrature, which is exact for these integrands on straight
+cells. The resultant of self-weight is the model's mass times `g` to
+round-off (tested).
+
+**Thermal strain** (`material/IsotropicMaterial.cpp`, `fem/Loads.cpp`). With
+`dT = N^T (T_e - T_ref)` interpolated from the nodal temperatures,
+
+```
+  plane stress   eps_0 = alpha dT {1, 1, 0}               (sigma_zz = 0, eps_zz free)
+  plane strain   eps_0 = (1 + nu) alpha dT {1, 1, 0}      (eps_zz = 0;
+                 sigma_zz = nu (sigma_xx + sigma_yy) - E alpha dT)
+  3-D            eps_0 = alpha dT {1, 1, 1, 0, 0, 0}
+  f_th = integral B^T D eps_0 t dV ,
+```
+
+integrated with the element's stiffness rule - exact for the linear elements,
+the four-point rule of the Tet10 - so that any free expansion the element can
+represent (a uniform `dT`; a linear one on affine simplices) is reproduced with
+zero stress. The stress is `D (B u - eps_0)`, and the elastic strain energy is
+
+```
+  U = 1/2 u^T K u - u^T f_th + 1/2 integral eps_0^T D eps_0 t dV ,
+```
+
+not `1/2 u^T K u`: the thermal part of the load works against the free
+expansion, not against the stiffness. A linear buckling analysis includes the
+thermal prestress in `K_G`.
+
+**Steady conduction** (`fem/HeatConduction.cpp`). The temperature of a
+`conduction` load case solves `-div(k grad T) = Q` with prescribed
+temperatures, surface fluxes `q` into the body, and convection
+`h (T - T_inf)` leaving it:
+
+```
+  ( integral k grad N^T grad N t dV + integral_Gamma_h h N N^T t dGamma ) T
+      = integral N Q t dV + integral_Gamma_q N q t dGamma + integral_Gamma_h h T_inf N t dGamma ,
+```
+
+on the structural mesh and shape functions (a plane model conducts in its
+plane, insulated on its faces), prescribed temperatures by partitioning. The
+residual `r = K T - F` at the prescribed nodes is the heat entering there; the
+solve reports sources, fluxes and net convective inflow against it and
+refuses a mismatch above `1e-6` of the largest heat flow of the problem.
 
 ## 5. Linear solvers
 
@@ -640,7 +730,11 @@ aggregated stress constraint with its adjoint.
 ## 9. Cross-validation
 
 The discrete problem a deck defines is exported verbatim - the same nodes,
-connectivity, supports and consistent nodal loads - to CalculiX (`*.inp`,
+connectivity, materials and supports; point loads and tractions as their
+consistent nodal forces; pressures, self-weight, body forces, rotation and
+temperatures in CalculiX's own form (`P` faces, `GRAV`, `BX/BY/BZ`, `CENTRIF`,
+`*EXPANSION` and `*TEMPERATURE`) so that CalculiX integrates them itself, and a
+conducted temperature as its own `*HEAT TRANSFER` job - to CalculiX (`*.inp`,
 elements CPS4/CPE4, CPS3/CPE3, C3D8, C3D4, C3D10) and rebuilt in scikit-fem
 (`ElementQuad1`, `ElementTriP1`, `ElementHex1`, `ElementTetP1`, and
 `ElementTetP2` on an isoparametric `MeshTet2` with the 4-point rule, with the
@@ -652,6 +746,13 @@ points and solves the pencil densely, and CalculiX runs the exported deck
 as a `*BUCKLE` step; the load factors are compared mode by mode. CalculiX's
 plane elements are not plane elements internally: it expands them into a
 layer of solid elements, which reproduces plane stress only for `nu = 0`, so
-a plane comparison at `nu != 0` compares two idealisations and is recorded
-without being judged. `docs/verification.md` has the measured differences
+a plane-stress comparison at `nu != 0` compares two idealisations and is
+recorded without being judged; the plane-strain expansion is exact. scikit-fem
+also integrates the pressure, volume and thermal loads itself from the same
+deck CalculiX reads. Three of CalculiX's own formulation choices differ from
+SparLab's and were identified by reproducing them in scikit-fem: the
+element-average temperature for the thermal strain of a first-order
+hexahedron, and the four-point (body load) and three-point (face pressure)
+rules of the C3D10, which are not exact for a centrifugal load or for a
+pressure on a curved face. `docs/verification.md` has the measured differences
 and what they mean.

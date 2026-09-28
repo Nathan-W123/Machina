@@ -135,9 +135,13 @@ using FreeSolve = std::function<Vector(const Vector&)>;
 /// Global geometric stiffness \f$K_G(u) = \sum_e s_e A_e^T K_{G,e}(u_e) A_e\f$
 /// of the stress state of the full-length displacement `displacement`.
 /// \param stress_scale optional per-element factors \f$s_e\f$ on the stress.
+/// \param temperature optional nodal temperatures [K]: the prestress is then
+///        \f$D(Bu - \varepsilon_0)\f$, so a heated, restrained structure can
+///        buckle under its own thermal stress.
 SparseMatrix assemble_geometric_stiffness(const FemModel& model, const Assembler& assembler,
                                           const Vector& displacement,
-                                          const Vector* stress_scale = nullptr);
+                                          const Vector* stress_scale = nullptr,
+                                          const Vector* temperature = nullptr);
 
 /// Solve the buckling eigenproblem of the stress state of `displacement`.
 /// \param k_full the assembled global stiffness the displacement was solved

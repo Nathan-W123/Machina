@@ -40,12 +40,53 @@ json::Value point_json(const Vector3& v, int dim) {
   return out;
 }
 
-const char* component_name(int k) { return k == 0 ? "x" : k == 1 ? "y" : "z"; }
+const char* component_name(int k) { return dof_component_name(k); }
 
-/// Vector magnitude over the model's components only.
+/// Vector magnitude over the model's components only, of a vector holding
+/// `dim` translations per node.
 Scalar magnitude(const Vector& full, Index n, int dim) {
   return dim == 2 ? std::hypot(full(n * dim + 0), full(n * dim + 1))
                   : std::hypot(full(n * dim + 0), full(n * dim + 1), full(n * dim + 2));
+}
+
+/// DOFs per node of a full-length nodal vector (a displacement, a mode, a
+/// reaction): the translations of a continuum model, six for a shell or beam
+/// model.
+int nodal_dofs(const Mesh& mesh, const Vector& full) {
+  const Index nn = mesh.num_nodes();
+  if (nn == 0) return mesh.dim();
+  const Index ndpn = static_cast<Index>(full.size()) / nn;
+  if (ndpn * nn != full.size() || (ndpn != mesh.dim() && ndpn != kMaxDofsPerNode)) {
+    std::ostringstream os;
+    os << "a nodal vector of length " << full.size() << " does not fit the mesh's " << nn
+       << " nodes with " << mesh.dim() << " or " << kMaxDofsPerNode << " DOFs per node";
+    throw IoError(os.str());
+  }
+  return static_cast<int>(ndpn);
+}
+
+/// The translations of a full-length nodal vector, `dim` per node.
+Vector translations(const Mesh& mesh, const Vector& full) {
+  const int ndpn = nodal_dofs(mesh, full);
+  const int dim = mesh.dim();
+  if (ndpn == dim) return full;
+  Vector out(static_cast<Eigen::Index>(mesh.num_nodes()) * dim);
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    for (int k = 0; k < dim; ++k) out(n * dim + k) = full(n * ndpn + k);
+  }
+  return out;
+}
+
+/// The rotations (three per node) of a shell or beam nodal vector; empty
+/// for a continuum one.
+Vector rotations(const Mesh& mesh, const Vector& full) {
+  const int ndpn = nodal_dofs(mesh, full);
+  if (ndpn != kMaxDofsPerNode) return Vector();
+  Vector out(static_cast<Eigen::Index>(mesh.num_nodes()) * 3);
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    for (int k = 0; k < 3; ++k) out(n * 3 + k) = full(n * ndpn + 3 + k);
+  }
+  return out;
 }
 
 json::Value equilibrium_json(const EquilibriumCheck& eq, int dim) {
@@ -204,6 +245,79 @@ json::Value material_json(const IsotropicMaterial& m, StressState state) {
   out.set("density_kg_per_m3", json::Value::make_number(m.density()));
   out.set("shear_modulus_Pa", json::Value::make_number(m.shear_modulus()));
   out.set("stress_state", json::Value::make_string(to_string(state)));
+  if (m.thermal_expansion() != 0.0 || m.conductivity() != 0.0) {
+    out.set("thermal_expansion_per_K", json::Value::make_number(m.thermal_expansion()));
+    out.set("reference_temperature_K", json::Value::make_number(m.reference_temperature()));
+    out.set("conductivity_W_per_mK", json::Value::make_number(m.conductivity()));
+  }
+  return out;
+}
+
+/// Every material of a multi-material model with the elements that use it.
+json::Value materials_json(const FemModel& model) {
+  json::Value out = json::Value::make_array();
+  std::vector<Index> count(static_cast<std::size_t>(model.num_materials()), 0);
+  for (Index e = 0; e < model.mesh().num_elements(); ++e) {
+    ++count[static_cast<std::size_t>(model.element_material(e))];
+  }
+  for (int i = 0; i < model.num_materials(); ++i) {
+    json::Value m = material_json(model.materials()[static_cast<std::size_t>(i)],
+                                  model.stress_state());
+    m.set("elements", json::Value::make_number(count[static_cast<std::size_t>(i)]));
+    out.push_back(m);
+  }
+  return out;
+}
+
+/// Load parts of a load case beyond point loads and tractions: the body
+/// loads' resultant and the temperature field (with its conduction solve).
+json::Value load_parts_json(const FemModel& model, std::size_t l) {
+  const LoadCaseData& data = model.load_case_data(l);
+  const LoadCaseSpec& spec = model.load_case_specs()[l];
+  const int dim = model.dim();
+  json::Value out = json::Value::make_object();
+  if (data.body.size() > 0) {
+    out.set("body_load_resultant_N", point_json(data.body_resultant, dim));
+    if (spec.gravity.squaredNorm() > 0.0) {
+      out.set("gravity_m_per_s2", point_json(spec.gravity, dim));
+    }
+    if (spec.centrifugal.enabled) {
+      out.set("angular_velocity_rad_per_s",
+              json::Value::make_number(spec.centrifugal.angular_velocity));
+    }
+  }
+  if (data.temperature.size() > 0) {
+    json::Value t = json::Value::make_object();
+    t.set("min_K", json::Value::make_number(data.temperature.minCoeff()));
+    t.set("max_K", json::Value::make_number(data.temperature.maxCoeff()));
+    t.set("thermal_self_energy_J", json::Value::make_number(data.thermal_self_energy));
+    if (data.conduction_solved) {
+      const ConductionSummary& c = data.conduction;
+      json::Value cs = json::Value::make_object();
+      cs.set("applied_heat_W", json::Value::make_number(c.applied_heat));
+      cs.set("heat_through_prescribed_temperatures_W",
+             json::Value::make_number(c.prescribed_heat));
+      cs.set("gross_inflow_at_prescribed_temperatures_W",
+             json::Value::make_number(c.prescribed_inflow));
+      cs.set("gross_outflow_at_prescribed_temperatures_W",
+             json::Value::make_number(c.prescribed_outflow));
+      cs.set("relative_heat_balance_error", json::Value::make_number(c.relative_balance_error));
+      cs.set("scaled_residual", json::Value::make_number(c.scaled_residual));
+      cs.set("prescribed_nodes", json::Value::make_number(c.prescribed_nodes));
+      cs.set("flux_faces", json::Value::make_number(c.flux_faces));
+      cs.set("convection_faces", json::Value::make_number(c.convection_faces));
+      cs.set("source_elements", json::Value::make_number(c.source_elements));
+      cs.set("linear_solver", json::Value::make_string(c.solver));
+      t.set("conduction", cs);
+      t.set("source", json::Value::make_string("steady conduction"));
+    } else {
+      t.set("source", json::Value::make_string(
+                          spec.temperature.source == TemperatureSpec::Source::Uniform
+                              ? "uniform"
+                              : "regions"));
+    }
+    out.set("temperature", t);
+  }
   return out;
 }
 
@@ -301,14 +415,26 @@ void ResultWriter::write_mesh(const FemModel& model) const {
     elements.push_back(row);
   }
   doc.set("elements", elements);
+  if (!model.single_material()) {
+    // Index into the summary's "materials" of every element.
+    json::Value materials = json::Value::make_array();
+    for (Index e = 0; e < mesh.num_elements(); ++e) {
+      materials.push_back(json::Value::make_number(model.element_material(e)));
+    }
+    doc.set("element_materials", materials);
+  }
 
   // Prescribed DOFs, for the boundary-condition figure.
+  const int ndpn = model.dofs_per_node();
+  doc.set("dofs_per_node", json::Value::make_number(ndpn));
   json::Value constraints = json::Value::make_array();
   for (Index d : model.dofs().constrained_dofs()) {
     json::Value entry = json::Value::make_object();
-    entry.set("node", json::Value::make_number(d / dim));
-    entry.set("component", json::Value::make_string(component_name(d % dim)));
-    entry.set("value_m", json::Value::make_number(model.dofs().prescribed_value(d)));
+    const int k = static_cast<int>(d % ndpn);
+    entry.set("node", json::Value::make_number(d / ndpn));
+    entry.set("component", json::Value::make_string(component_name(k)));
+    entry.set(k < 3 ? "value_m" : "value_rad",
+              json::Value::make_number(model.dofs().prescribed_value(d)));
     constraints.push_back(entry);
   }
   doc.set("prescribed_dofs", constraints);
@@ -324,13 +450,19 @@ void ResultWriter::write_mesh(const FemModel& model) const {
     json::Value forces = json::Value::make_array();
     for (Index n = 0; n < mesh.num_nodes(); ++n) {
       bool nonzero = false;
-      for (int k = 0; k < dim; ++k) nonzero = nonzero || loads[l](n * dim + k) != 0.0;
+      for (int k = 0; k < ndpn; ++k) nonzero = nonzero || loads[l](n * ndpn + k) != 0.0;
       if (!nonzero) continue;
       json::Value f = json::Value::make_object();
       f.set("node", json::Value::make_number(n));
       for (int k = 0; k < dim; ++k) {
         f.set(std::string("f") + component_name(k) + "_N",
-              json::Value::make_number(loads[l](n * dim + k)));
+              json::Value::make_number(loads[l](n * ndpn + k)));
+      }
+      if (ndpn == kMaxDofsPerNode) {
+        for (int k = 0; k < 3; ++k) {
+          f.set(std::string("m") + component_name(k) + "_Nm",
+                json::Value::make_number(loads[l](n * ndpn + 3 + k)));
+        }
       }
       forces.push_back(f);
     }
@@ -343,12 +475,15 @@ void ResultWriter::write_mesh(const FemModel& model) const {
 }
 
 void ResultWriter::write_displacement(const Mesh& mesh, const std::string& load_case,
-                                      const Vector& displacement) const {
+                                      const Vector& full_displacement) const {
   const int dim = mesh.dim();
+  const Vector displacement = translations(mesh, full_displacement);
+  const Vector rotation = rotations(mesh, full_displacement);
   std::vector<std::string> header{"node"};
   header = concat(header, coordinate_headers(dim, ""));
   header = concat(header, component_headers(dim, "u", "m"));
   header.push_back("umag[m]");
+  if (rotation.size() > 0) header = concat(header, component_headers(3, "r", "rad"));
   CsvWriter csv(file("displacement_" + sanitise(load_case) + ".csv"), header);
   for (Index n = 0; n < mesh.num_nodes(); ++n) {
     const Vector3 x = mesh.node(n);
@@ -356,6 +491,9 @@ void ResultWriter::write_displacement(const Mesh& mesh, const std::string& load_
     for (int k = 0; k < dim; ++k) row.push_back(x(k));
     for (int k = 0; k < dim; ++k) row.push_back(displacement(n * dim + k));
     row.push_back(magnitude(displacement, n, dim));
+    if (rotation.size() > 0) {
+      for (int k = 0; k < 3; ++k) row.push_back(rotation(n * 3 + k));
+    }
     csv.row(n, row);
   }
   csv.close();
@@ -400,38 +538,72 @@ void ResultWriter::write_stress(const Mesh& mesh, const std::string& load_case,
 
 void ResultWriter::write_reactions(const Mesh& mesh, const DofManager& dofs,
                                    const std::string& load_case,
-                                   const Vector& reactions) const {
+                                   const Vector& full_reactions) const {
   const int dim = mesh.dim();
+  const int ndpn = dofs.dofs_per_node();
+  const Vector reactions = translations(mesh, full_reactions);
+  const Vector moments = rotations(mesh, full_reactions);
   std::vector<std::string> header{"node"};
   header = concat(header, coordinate_headers(dim, ""));
   header = concat(header, component_headers(dim, "r", "N"));
   header.push_back("rmag[N]");
+  if (moments.size() > 0) header = concat(header, component_headers(3, "m", "Nm"));
   CsvWriter csv(file("reactions_" + sanitise(load_case) + ".csv"), header);
   for (Index n = 0; n < mesh.num_nodes(); ++n) {
     bool constrained = false;
-    for (int k = 0; k < dim; ++k) constrained = constrained || dofs.is_constrained(n * dim + k);
+    for (int k = 0; k < ndpn; ++k) {
+      constrained = constrained || dofs.is_constrained(n * ndpn + k);
+    }
     if (!constrained) continue;
     const Vector3 x = mesh.node(n);
     std::vector<Scalar> row;
     for (int k = 0; k < dim; ++k) row.push_back(x(k));
     for (int k = 0; k < dim; ++k) row.push_back(reactions(n * dim + k));
     row.push_back(magnitude(reactions, n, dim));
+    if (moments.size() > 0) {
+      for (int k = 0; k < 3; ++k) row.push_back(moments(n * 3 + k));
+    }
+    csv.row(n, row);
+  }
+  csv.close();
+}
+
+void ResultWriter::write_temperature(const Mesh& mesh, const std::string& load_case,
+                                     const Vector& temperature) const {
+  const int dim = mesh.dim();
+  std::vector<std::string> header{"node"};
+  header = concat(header, coordinate_headers(dim, ""));
+  header.push_back("temperature[K]");
+  CsvWriter csv(file("temperature_" + sanitise(load_case) + ".csv"), header);
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    const Vector3 x = mesh.node(n);
+    std::vector<Scalar> row;
+    for (int k = 0; k < dim; ++k) row.push_back(x(k));
+    row.push_back(temperature(n));
     csv.row(n, row);
   }
   csv.close();
 }
 
 void ResultWriter::write_static_vtk(const Mesh& mesh, const std::string& load_case,
-                                    const Vector& displacement,
+                                    const Vector& full_displacement,
                                     const StressField& field, const Vector* density,
-                                    const Vector* stiffness_factor) const {
+                                    const Vector* stiffness_factor,
+                                    const Vector* temperature) const {
   const int dim = mesh.dim();
+  const Vector displacement = translations(mesh, full_displacement);
+  const Vector rotation = rotations(mesh, full_displacement);
   VtkWriter writer(mesh, "SparLab static solution: " + config_.name + " / " + load_case);
   Vector mag(mesh.num_nodes());
   for (Index n = 0; n < mesh.num_nodes(); ++n) mag(n) = magnitude(displacement, n, dim);
   writer.add_point_vectors("displacement", displacement);
+  if (rotation.size() > 0) writer.add_point_vectors("rotation", rotation);
   writer.add_point_scalars("displacement_magnitude", mag);
   writer.add_point_scalars("nodal_von_mises", field.nodal_von_mises);
+  if (temperature != nullptr) writer.add_point_scalars("temperature", *temperature);
+  if (field.element_sigma_zz.size() > 0) {
+    writer.add_cell_scalars("sigma_zz", field.element_sigma_zz);
+  }
   if (dim == 2) {
     writer.add_cell_scalars("sigma_xx", field.element_stress.row(0).transpose());
     writer.add_cell_scalars("sigma_yy", field.element_stress.row(1).transpose());
@@ -473,12 +645,21 @@ void ResultWriter::write_modal(const Mesh& mesh, const ModalResult& modal,
 
   if (!config_.output.write_mode_shapes) return;
 
+  // Mode shapes carry the nodal rotations too on a shell or beam model; the
+  // CSV lists them after the translations of each mode.
+  const int ndpn = modal.mode_shapes.cols() > 0
+                       ? nodal_dofs(mesh, Vector(modal.mode_shapes.col(0)))
+                       : dim;
   std::vector<std::string> header{"node"};
   header = concat(header, coordinate_headers(dim, ""));
   for (Eigen::Index i = 0; i < modal.mode_shapes.cols(); ++i) {
-    for (int k = 0; k < dim; ++k) {
+    for (int k = 0; k < ndpn; ++k) {
       std::ostringstream name;
-      name << "u" << component_name(k) << "_mode" << i << "[m]";
+      if (k < 3) {
+        name << "u" << component_name(k) << "_mode" << i << "[m]";
+      } else {
+        name << component_name(k) << "_mode" << i << "[rad]";
+      }
       header.push_back(name.str());
     }
   }
@@ -488,7 +669,7 @@ void ResultWriter::write_modal(const Mesh& mesh, const ModalResult& modal,
     std::vector<Scalar> row;
     for (int k = 0; k < dim; ++k) row.push_back(x(k));
     for (Eigen::Index i = 0; i < modal.mode_shapes.cols(); ++i) {
-      for (int k = 0; k < dim; ++k) row.push_back(modal.mode_shapes(n * dim + k, i));
+      for (int k = 0; k < ndpn; ++k) row.push_back(modal.mode_shapes(n * ndpn + k, i));
     }
     csv.row(n, row);
   }
@@ -499,7 +680,7 @@ void ResultWriter::write_modal(const Mesh& mesh, const ModalResult& modal,
       std::ostringstream title;
       title << "SparLab mode " << i << " at " << modal.frequencies_hz(i) << " Hz";
       VtkWriter writer(mesh, title.str());
-      const Vector shape = modal.mode_shapes.col(i);
+      const Vector shape = translations(mesh, modal.mode_shapes.col(i));
       writer.add_point_vectors("mode_shape", shape);
       Vector mag(mesh.num_nodes());
       for (Index n = 0; n < mesh.num_nodes(); ++n) mag(n) = magnitude(shape, n, dim);
@@ -535,7 +716,7 @@ void ResultWriter::write_buckling(const Mesh& mesh, const std::vector<BucklingRe
   if (!config_.output.write_mode_shapes || !config_.output.write_vtk) return;
   for (const BucklingResult& r : results) {
     for (Eigen::Index i = 0; i < r.mode_shapes.cols(); ++i) {
-      Vector shape = r.mode_shapes.col(i);
+      Vector shape = translations(mesh, r.mode_shapes.col(i));
       Scalar largest = 0.0;
       for (Index n = 0; n < mesh.num_nodes(); ++n) largest = std::max(largest, magnitude(shape, n, dim));
       if (largest > 0.0) shape /= largest;
@@ -868,6 +1049,7 @@ json::Value make_static_summary(const Configuration& config, const FemModel& mod
   out.set("provenance", make_provenance(config));
   out.set("mesh", mesh_stats_json(config, model));
   out.set("material", material_json(model.material(), model.stress_state()));
+  if (!model.single_material()) out.set("materials", materials_json(model));
   out.set("tolerances", tolerance_json(config));
   out.set("model_diagnostics", diagnostics_json(diagnostics));
 
@@ -876,6 +1058,10 @@ json::Value make_static_summary(const Configuration& config, const FemModel& mod
     const StaticSolution& sol = solutions[l];
     json::Value entry = json::Value::make_object();
     entry.set("name", json::Value::make_string(sol.load_case_name));
+    {
+      const json::Value parts = load_parts_json(model, l);
+      if (!parts.members().empty()) entry.set("loads", parts);
+    }
     entry.set("weight", json::Value::make_number(sol.weight));
     entry.set("compliance_J", json::Value::make_number(sol.compliance));
     entry.set("strain_energy_J", json::Value::make_number(sol.strain_energy));

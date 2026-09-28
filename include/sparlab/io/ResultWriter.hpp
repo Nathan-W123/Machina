@@ -69,10 +69,16 @@ class ResultWriter {
   void write_reactions(const Mesh& mesh, const DofManager& dofs,
                        const std::string& load_case, const Vector& reactions) const;
 
-  /// Combined VTK file for one load case.
+  /// Combined VTK file for one load case, with the nodal temperatures of a
+  /// thermal case when given.
   void write_static_vtk(const Mesh& mesh, const std::string& load_case,
                         const Vector& displacement, const StressField& field,
-                        const Vector* density, const Vector* stiffness_factor) const;
+                        const Vector* density, const Vector* stiffness_factor,
+                        const Vector* temperature = nullptr) const;
+
+  /// Nodal temperatures of one load case (`temperature_<lc>.csv`).
+  void write_temperature(const Mesh& mesh, const std::string& load_case,
+                         const Vector& temperature) const;
 
   /// Eigenvalues, frequencies, residuals and (optionally) mode shapes.
   void write_modal(const Mesh& mesh, const ModalResult& modal,

@@ -43,8 +43,18 @@
 ///                        vs Euler with Engesser's shear correction;
 ///   * `sensitivity-buckling` the adjoint gradient of the buckling constraint;
 ///   * `sensitivity-overhang` the compliance gradient through the overhang filter.
+///
+/// Studies of the pressure, volume and thermal loads (verify_loads.cpp):
+///   * `lame-cylinder`    thick cylinder under internal pressure vs Lame;
+///   * `rotating-disk`    spinning disk and cylinder vs the exact solutions;
+///   * `thermal-cylinder` conduction with generation and convection, and the
+///                        thermal stress it causes, vs the exact solutions;
+///   * `bimetal-strip`    curvature of a heated two-material strip vs
+///                        Timoshenko;
+///   * `self-weight`      a bar hanging under its own weight vs the exact field.
 
 #include "AppSupport.hpp"
+#include "VerifySupport.hpp"
 
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Timer.hpp"
@@ -72,6 +82,8 @@
 #include <map>
 
 using namespace sparlab;
+using verify::observed_order;
+using verify::StudyOutcome;
 
 namespace {
 
@@ -201,26 +213,10 @@ CantileverResult solve_cantilever(const CantileverSpec& spec, Index nx, Index ny
   return out;
 }
 
-/// Observed convergence order from three successive refinements of a quantity
-/// converging to `reference`: p = log(e1/e2) / log(h1/h2).
-Scalar observed_order(Scalar h1, Scalar e1, Scalar h2, Scalar e2) {
-  if (!(e1 > 0.0) || !(e2 > 0.0) || h1 == h2) return 0.0;
-  return std::log(e1 / e2) / std::log(h1 / h2);
-}
 
 // ---------------------------------------------------------------------------
 // Studies
 // ---------------------------------------------------------------------------
-
-struct StudyOutcome {
-  std::string name;
-  bool passed = true;
-  std::string metric;
-  Scalar value = 0.0;
-  Scalar tolerance = 0.0;
-  std::string kind;  ///< "verification" or "validation"
-  std::string note;
-};
 
 /// Analytical topology sensitivities vs central differences.
 StudyOutcome study_sensitivity(const std::string& out_dir, json::Value& summary,
@@ -2540,7 +2536,8 @@ int main(int argc, char** argv) {
             "sensitivity-3d | modal-3d | patch-test-simplex | mesh-convergence-simplex | "
             "multigrid | sensitivity-projection | patch-test-quadratic | "
             "mesh-convergence-tet10 | buckling-euler | sensitivity-buckling | "
-            "sensitivity-overhang"},
+            "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
+            "bimetal-strip | self-weight"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
             "pass threshold on the max relative gradient error (default 1e-5)"},
@@ -2624,6 +2621,21 @@ int main(int argc, char** argv) {
     }
     if (all || study == "sensitivity-overhang") {
       outcomes.push_back(study_sensitivity_overhang(out_dir, summary, sensitivity_tolerance));
+    }
+    if (all || study == "lame-cylinder") {
+      outcomes.push_back(verify::study_lame_cylinder(out_dir, summary));
+    }
+    if (all || study == "rotating-disk") {
+      outcomes.push_back(verify::study_rotating_disk(out_dir, summary));
+    }
+    if (all || study == "thermal-cylinder") {
+      outcomes.push_back(verify::study_thermal_cylinder(out_dir, summary));
+    }
+    if (all || study == "bimetal-strip") {
+      outcomes.push_back(verify::study_bimetal_strip(out_dir, summary));
+    }
+    if (all || study == "self-weight") {
+      outcomes.push_back(verify::study_self_weight(out_dir, summary));
     }
     if (outcomes.empty()) {
       throw ConfigError("unknown study '" + study +

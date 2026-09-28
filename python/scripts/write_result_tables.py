@@ -235,14 +235,22 @@ def cross_validation_table(results_dir: str) -> Optional[str]:
                 # nu != 0): recorded, not judged.
                 verdict = ("INFO" if entry.get("passed") is None
                            else "PASS" if entry["passed"] else "FAIL")
+                judged = entry.get("max_rel_diff_judged", entry["max_rel_diff"])
                 rows.append([
                     case["case"], case.get("element_type", ""), load_case["load_case"],
                     f"{code} {versions.get(code, '')}".strip(), entry.get("element", ""),
-                    _fmt(entry["max_rel_diff"], 3), _fmt(entry.get("rms_rel_diff"), 3),
+                    _fmt(judged, 3), _fmt(entry.get("rms_rel_diff"), 3),
                     _fmt(entry["tolerance"], 2), verdict,
                 ])
+                flat = {k: v for k, v in entry.items() if not isinstance(v, (dict, list))
+                        or k in ("reference_load_factors", "sparlab_load_factors",
+                                 "per_mode_rel_diff")}
+                if "max_rel_diff_judged" in entry:
+                    flat["sparlab_vs_calculix"] = entry["max_rel_diff"]
+                if isinstance(entry.get("loads"), list):
+                    flat["loads"] = "; ".join(entry["loads"])
                 frames.append({"case": case["case"], "load_case": load_case["load_case"],
-                               "code": code, **entry})
+                               "code": code, **flat})
     if not rows:
         return None
     pd.DataFrame(frames).to_csv(os.path.join(_OUTPUT, "cross_validation.csv"), index=False)
@@ -751,6 +759,74 @@ def tet10_verification_table(results_dir: str) -> Optional[str]:
     return _markdown_table(["study", "element", "grid", "DOFs", "error"], rows)
 
 
+def load_verification_table(results_dir: str) -> Optional[str]:
+    """The pressure, volume and thermal load studies: one row per element of
+    each quarter-section study (its finest mesh and the order measured between
+    its two finest meshes), then the bimetal strip and the hanging bar."""
+    base = os.path.join(results_dir, "verification")
+    rows = []
+    frames = []
+    labels = {"lame_cylinder": "Lame cylinder, internal pressure",
+              "rotating_disk": "rotating disk / cylinder",
+              "thermal_cylinder": "conduction + thermal stress"}
+    for stem, study in labels.items():
+        path = os.path.join(base, f"{stem}.csv")
+        if not os.path.isfile(path):
+            continue
+        table = pd.read_csv(path)
+        for element, sub in table.groupby("element", sort=False):
+            last = sub.iloc[-1]
+            has_t = "T_rms_error[-]" in sub.columns
+            row = {
+                "study": study, "element": str(element),
+                "mesh": f"{int(last['n_r'])} x {int(last['n_theta'])}",
+                "DOFs": int(last["num_dofs"]),
+                "u RMS error": float(last["u_rms_error[-]"]),
+                "u order": float(last["u_rms_order[-]"]),
+                "stress error": float(last["stress_error[-]"]),
+                "T RMS error": float(last["T_rms_error[-]"]) if has_t else None,
+                "T order": float(last["T_rms_order[-]"]) if has_t else None,
+            }
+            frames.append(row)
+            rows.append([study, ELEMENT_LABELS.get(row["element"], row["element"]), row["mesh"],
+                         _fmt(row["DOFs"]), _fmt(row["u RMS error"], 3),
+                         _fmt(row["u order"], 3), _fmt(row["stress error"], 3),
+                         _fmt(row["T RMS error"], 3) if has_t else "-",
+                         _fmt(row["T order"], 3) if has_t else "-"])
+    path = os.path.join(base, "bimetal_strip.csv")
+    if os.path.isfile(path):
+        table = pd.read_csv(path)
+        last = table.iloc[-1]
+        frames.append({"study": "bimetal strip curvature", "element": "Quad4",
+                       "mesh": f"{int(last['nx'])} x {int(last['ny'])}",
+                       "DOFs": int(last["num_dofs"]), "u RMS error": float(last["error[-]"]),
+                       "u order": float(last["order[-]"])})
+        rows.append(["bimetal strip (curvature error)", "Q4",
+                     f"{int(last['nx'])} x {int(last['ny'])}", _fmt(int(last["num_dofs"])),
+                     _fmt(float(last["error[-]"]), 3), _fmt(float(last["order[-]"]), 3),
+                     "-", "-", "-"])
+    path = os.path.join(base, "self_weight.csv")
+    if os.path.isfile(path):
+        table = pd.read_csv(path)
+        for element, sub in table.groupby("element", sort=False):
+            last = sub.iloc[-1]
+            grid = " x ".join(str(int(last[k])) for k in ("nx", "ny", "nz") if int(last[k]) > 0)
+            order = last["u_rms_order[-]"]
+            frames.append({"study": "hanging bar, self-weight", "element": str(element),
+                           "mesh": grid, "DOFs": int(last["num_dofs"]),
+                           "u RMS error": float(last["u_rms_error[-]"]),
+                           "u order": None if pd.isna(order) else float(order)})
+            rows.append(["hanging bar, self-weight", ELEMENT_LABELS.get(element, element), grid,
+                         _fmt(int(last["num_dofs"])), _fmt(float(last["u_rms_error[-]"]), 3),
+                         "exact" if element == "Tet10" else _fmt(float(order), 3),
+                         "-", "-", "-"])
+    if not rows:
+        return None
+    pd.DataFrame(frames).to_csv(os.path.join(_OUTPUT, "loads.csv"), index=False)
+    return _markdown_table(["study", "element", "finest mesh", "DOFs", "u RMS error", "order",
+                            "stress error", "T RMS error", "T order"], rows)
+
+
 _OUTPUT = "docs/results"
 
 
@@ -788,6 +864,19 @@ def main(argv=None) -> int:
          "cantilever against Timoshenko beam theory, and of the first buckling load "
          "factor of a clamped column against Euler with Engesser's shear correction, "
          "on the same grids for every element."),
+        ("Pressure, volume and thermal loads against exact solutions",
+         load_verification_table(args.results),
+         "From the `lame_cylinder`, `rotating_disk`, `thermal_cylinder`, "
+         "`bimetal_strip` and `self_weight` CSVs of `results/verification`. Errors "
+         "are RMS nodal errors relative to the RMS exact field (displacement; "
+         "temperature change for T), on the finest mesh, and the order is measured "
+         "between the two finest meshes; the element's order is 2 (3 for the Tet10). "
+         "The stress error is the largest error of sigma_r, sigma_theta, sigma_z at "
+         "element centroids over the largest exact stress. The Hex8 and Tet10 "
+         "sections are one cell deep with u_z = 0 (plane strain); the rotating Q4 and "
+         "Tri3 rows are a plane-stress disk, the Hex8 and Tet10 rows a plane-strain "
+         "cylinder. The bimetal row is the error of the curvature against "
+         "Timoshenko's formula; the Tet10 hanging bar is exact."),
         ("Cross-validation against independent codes", cross_validation_table(args.results),
          "Generated from `results/cross_validation/summary.json` by "
          "`python/scripts/cross_validate.py`: node-by-node comparison of the "
@@ -795,11 +884,22 @@ def main(argv=None) -> int:
          "CalculiX (C3D8, C3D4 and C3D10 are the same elements; CPS4 and CPS3 are "
          "plane elements CalculiX expands into a layer of solids, which matches "
          "plane stress only at nu = 0, so those rows at nu != 0 are INFO: recorded, "
-         "not judged). CalculiX results are read from its .frd output, which "
-         "carries six significant digits, so differences below 5e-6 relative are "
-         "its rounding. The `buckling` rows compare load factors mode by mode: "
-         "scikit-fem assembles the geometric stiffness of the same discrete "
-         "problem, CalculiX runs *BUCKLE with its own stress-stiffness evaluation."),
+         "not judged; the plane-strain expansion CPE4 is exact). CalculiX results "
+         "are read from its .frd output, which carries six significant digits, so "
+         "differences below 5e-6 relative are its rounding. The `buckling` rows "
+         "compare load factors mode by mode: scikit-fem assembles the geometric "
+         "stiffness of the same discrete problem, CalculiX runs *BUCKLE with its own "
+         "stress-stiffness evaluation. For the decks of the pressure, volume and "
+         "thermal loads, `scikit-fem loads` integrates those loads itself from the "
+         "exported deck, CalculiX integrates them from its own load cards, and "
+         "`calculix conduction` compares the temperatures of CalculiX's "
+         "*HEAT TRANSFER solution (relative to the temperature range). Where "
+         "CalculiX's own formulation differs from SparLab's - the element-average "
+         "temperature of a C3D8, the four-point centrifugal and three-point face "
+         "pressure rules of a C3D10 - the max rel diff shown is CalculiX against "
+         "scikit-fem solving CalculiX's problem, the judged number; SparLab's "
+         "difference to CalculiX is in cross_validation.csv "
+         "(`sparlab_vs_calculix`)."),
         ("Benchmark results", benchmark_table(args.results),
          "Generated from each `results/<case>/summary.json`. `stiffness gain` is "
          "the compliance of an equal-mass uniform plate divided by the optimised "

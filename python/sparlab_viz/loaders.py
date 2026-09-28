@@ -77,6 +77,8 @@ class Mesh:
     element_type: str
     prescribed: List[Dict[str, Any]] = field(default_factory=list)
     load_cases: List[Dict[str, Any]] = field(default_factory=list)
+    # Index into the summary's "materials" per element; None for one material.
+    element_materials: Optional[np.ndarray] = None
 
     @property
     def dim(self) -> int:
@@ -201,12 +203,18 @@ def load_mesh(directory: str) -> Mesh:
         raise ResultError("mesh.json: elements must be a rectangular array")
     if elements.size and (elements.min() < 0 or elements.max() >= nodes.shape[0]):
         raise ResultError("mesh.json: connectivity references a node outside the mesh")
+    materials = doc.get("element_materials")
+    if materials is not None:
+        materials = np.asarray(materials, dtype=int)
+        if materials.shape != (elements.shape[0],):
+            raise ResultError("mesh.json: element_materials must hold one index per element")
     return Mesh(
         nodes=nodes,
         elements=elements,
         element_type=doc.get("element_type", "Quad4"),
         prescribed=doc.get("prescribed_dofs", []),
         load_cases=doc.get("load_cases", []),
+        element_materials=materials,
     )
 
 
@@ -236,6 +244,9 @@ class CaseResults:
     # -- static fields -----------------------------------------------------
     def displacement(self, load_case: str) -> pd.DataFrame:
         return load_csv(self.path(f"displacement_{_safe(load_case)}.csv"))
+
+    def temperature(self, load_case: str) -> pd.DataFrame:
+        return load_csv(self.path(f"temperature_{_safe(load_case)}.csv"))
 
     def stress(self, load_case: str) -> pd.DataFrame:
         return load_csv(self.path(f"stress_{_safe(load_case)}.csv"))

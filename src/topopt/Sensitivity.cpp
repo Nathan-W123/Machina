@@ -141,8 +141,7 @@ ObjectiveEvaluation ComplianceObjective::evaluate(const Vector& x, bool need_gra
   out.load_case_compliance.reserve(loads.size());
 
   const int npe = model_.mesh().nodes_per_elem();
-  const int dim = model_.mesh().dim();
-  const int edofs = npe * dim;
+  const int edofs = npe * model_.dofs_per_node();
   out.element_strain_energy.setZero(ne);
   Vector dc_dphys = Vector::Zero(ne);
   const Vector dfactor = need_gradients
@@ -164,10 +163,7 @@ ObjectiveEvaluation ComplianceObjective::evaluate(const Vector& x, bool need_gra
     out.displacements.push_back(u);
 
     for (Index e = 0; e < ne; ++e) {
-      const Index* nodes = model_.mesh().element_nodes(e);
-      for (int a = 0; a < npe; ++a) {
-        for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
-      }
+      model_.dofs().gather(model_.mesh().element_nodes(e), npe, u, ue);
       // u_e^T K_e^0 u_e: the unit-density element strain energy times two.
       const Scalar quad = ue.dot(assembler_.element_stiffness(e) * ue);
       out.element_strain_energy(e) +=

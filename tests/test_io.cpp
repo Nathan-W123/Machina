@@ -21,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace sparlab;
 using namespace sparlab::testing;
@@ -590,7 +591,7 @@ TEST_CASE("CalculiX decks are written per load case with the matching element",
   REQUIRE(text.find("*NODE, NSET=NALL\n1, 0, 0, 0\n") != std::string::npos);
   // The thickness follows the section header; it is written with full
   // precision, so parse it back rather than matching its text.
-  const std::string section_header = "*SOLID SECTION, ELSET=EALL, MATERIAL=MAT\n";
+  const std::string section_header = "*SOLID SECTION, ELSET=EALL, MATERIAL=MAT1\n";
   const std::size_t section_at = text.find(section_header);
   REQUIRE(section_at != std::string::npos);
   const std::size_t thickness_at = section_at + section_header.size();
@@ -624,6 +625,136 @@ TEST_CASE("CalculiX decks are written per load case with the matching element",
                  StressState::ThreeDimensional, IntegrationOptions());
   REQUIRE(calculix_element_type(solid) == "C3D8");
   REQUIRE_THROWS_AS(write_calculix_decks(solid, "results/_test_tmp/ccx3", "x"), IoError);
+}
+
+namespace {
+
+std::string read_text(const std::string& path) {
+  std::ifstream in(path);
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+/// Lines of `text` after the card `card` up to the next card.
+std::vector<std::string> card_lines(const std::string& text, const std::string& card) {
+  std::vector<std::string> out;
+  std::istringstream lines(text);
+  std::string line;
+  bool inside = false;
+  while (std::getline(lines, line)) {
+    if (line.rfind("*", 0) == 0) {
+      inside = line == card;
+      continue;
+    }
+    if (inside) out.push_back(line);
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("CalculiX decks carry pressure, body, thermal and conduction loads natively",
+          "[io][writers][cross-validation]") {
+  ensure_directory("results/_test_tmp");
+  StructuredMeshSpec spec;
+  spec.nx = 2;
+  spec.ny = 2;
+  spec.nz = 2;
+  IsotropicMaterial steel(200.0e9, 0.3, 7850.0, "steel");
+  steel.set_thermal(1.2e-5, 293.15, 45.0);
+  FemModel model(make_structured_hex_mesh(spec), steel, 1.0, StressState::ThreeDimensional,
+                 IntegrationOptions());
+  IsotropicMaterial aluminium(70.0e9, 0.33, 2700.0, "aluminium");
+  aluminium.set_thermal(2.3e-5, 293.15, 167.0);
+  model.assign_material(aluminium, {0, 1});
+  DisplacementConstraint root;
+  Selector x0;
+  x0.kind = SelectorKind::Box;
+  x0.xmax = 0.0;
+  root.region.members.push_back(x0);
+  root.fix_x = root.fix_y = root.fix_z = true;
+  model.constraints().push_back(root);
+
+  LoadCaseSpec loads;
+  loads.name = "mixed";
+  PressureLoadSpec top;
+  Selector z1;
+  z1.kind = SelectorKind::Box;
+  z1.zmin = 1.0;
+  top.region.members.push_back(z1);
+  top.pressure = 1.0e5;
+  loads.pressures.push_back(top);
+  PressureLoadSpec bottom = top;
+  Selector z0;
+  z0.kind = SelectorKind::Box;
+  z0.zmax = 0.0;
+  bottom.region.members = {z0};
+  loads.pressures.push_back(bottom);
+  loads.gravity = Vector3(0.0, 0.0, -9.81);
+  loads.centrifugal.enabled = true;
+  loads.centrifugal.angular_velocity = 10.0;
+  loads.centrifugal.axis = Vector3(0.0, 0.0, 2.0);
+  loads.temperature.source = TemperatureSpec::Source::Conduction;
+  RegionValue hot;
+  hot.region.members.push_back(x0);
+  hot.value = 373.15;
+  loads.temperature.conduction.prescribed.push_back(hot);
+  ConvectionSpec film;
+  film.region.members.push_back(z1);
+  film.film_coefficient = 25.0;
+  film.ambient = 293.15;
+  loads.temperature.conduction.convection.push_back(film);
+  model.load_case_specs().push_back(loads);
+  model.finalize();
+
+  const std::vector<std::string> decks =
+      write_calculix_decks(model, "results/_test_tmp/native", "unit");
+  REQUIRE(decks.size() == 2);
+  REQUIRE(decks[1].find("_conduction.inp") != std::string::npos);
+
+  const std::string text = read_text(decks[0]);
+  // One material and section per material, on element sets.
+  REQUIRE(text.find("*ELSET, ELSET=M1") != std::string::npos);
+  REQUIRE(text.find("*ELSET, ELSET=M2\n1, 2\n") != std::string::npos);
+  REQUIRE(text.find("*SOLID SECTION, ELSET=M2, MATERIAL=MAT2") != std::string::npos);
+  REQUIRE(text.find("*DENSITY\n7850\n") != std::string::npos);
+  REQUIRE(text.find("*EXPANSION, ZERO=293.14999999999998\n2.3e-05\n") != std::string::npos);
+  REQUIRE(text.find("*INITIAL CONDITIONS, TYPE=TEMPERATURE\nNALL, 293.14999999999998") !=
+          std::string::npos);
+  // The pressure goes out as face loads: the top faces (z = 1) are CalculiX's
+  // face 2 of a C3D8, the bottom faces its face 1, four of each; no nodal
+  // force remains.
+  const std::vector<std::string> dload = card_lines(text, "*DLOAD");
+  int p1 = 0;
+  int p2 = 0;
+  for (const std::string& line : dload) {
+    if (line.find(", P1, ") != std::string::npos) ++p1;
+    if (line.find(", P2, ") != std::string::npos) ++p2;
+  }
+  REQUIRE(p1 == 4);
+  REQUIRE(p2 == 4);
+  REQUIRE(text.find("*CLOAD") == std::string::npos);
+  REQUIRE(text.find("EALL, GRAV, 9.8100000000000005, 0, 0, -1\n") != std::string::npos);
+  REQUIRE(text.find("EALL, CENTRIF, 100, 0, 0, 0, 0, 0, 1\n") != std::string::npos);
+  REQUIRE(card_lines(text, "*TEMPERATURE").size() ==
+          static_cast<std::size_t>(model.mesh().num_nodes()));
+
+  const std::string heat = read_text(decks[1]);
+  REQUIRE(heat.find("*ELEMENT, TYPE=DC3D8, ELSET=EALL") != std::string::npos);
+  REQUIRE(heat.find("*HEAT TRANSFER, STEADY STATE") != std::string::npos);
+  REQUIRE(heat.find("*CONDUCTIVITY\n167\n") != std::string::npos);
+  // Nine nodes on x = 0 held on DOF 11; four convecting faces, CalculiX's F2.
+  REQUIRE(card_lines(heat, "*BOUNDARY").size() == 9);
+  for (const std::string& line : card_lines(heat, "*BOUNDARY")) {
+    REQUIRE(line.find(", 11, 11, 373.") != std::string::npos);
+  }
+  const std::vector<std::string> films = card_lines(heat, "*FILM");
+  REQUIRE(films.size() == 4);
+  for (const std::string& line : films) {
+    REQUIRE(line.find(", F2, 293.14999999999998, 25") != std::string::npos);
+  }
+  for (const std::string& path : decks) std::remove(path.c_str());
 }
 
 TEST_CASE("path_join handles separators", "[io]") {

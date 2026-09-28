@@ -74,6 +74,12 @@ StressConstraint::StressConstraint(const FemModel& model, const Assembler& assem
         "stress constraints assume design-independent loads; non-zero prescribed "
         "displacements are not supported in a stress-constrained run");
   }
+  if (model_.dofs_per_node() != model_.dim()) {
+    throw ConfigError(
+        "the aggregated stress constraint is formulated on continuum elements; a shell "
+        "or beam model's stresses vary through the thickness or over the section, and "
+        "the constraint does not support them");
+  }
   v_ = von_mises_matrix(model_.stress_state(), model_.material().poisson_ratio());
   uniform_ = assembler_.uses_element_cache();
   if (uniform_) db_uniform_ = db_at_centre(0);
@@ -93,8 +99,8 @@ StressEvaluation StressConstraint::evaluate(ComplianceObjective& objective,
   const Mesh& mesh = model_.mesh();
   const Index ne = mesh.num_elements();
   const int npe = mesh.nodes_per_elem();
-  const int dim = mesh.dim();
-  const int edofs = npe * dim;
+  const int edofs = npe * model_.dofs_per_node();
+  const DofManager& dofs = model_.dofs();
   if (load_case >= eval.displacements.size()) {
     throw ConfigError("stress constraint asked for a load case the evaluation lacks");
   }
@@ -117,10 +123,7 @@ StressEvaluation StressConstraint::evaluate(ComplianceObjective& objective,
   std::vector<Vector> sigma(static_cast<std::size_t>(ne));
   Vector s(ne);
   for (Index e = 0; e < ne; ++e) {
-    const Index* nodes = mesh.element_nodes(e);
-    for (int a = 0; a < npe; ++a) {
-      for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
-    }
+    dofs.gather(mesh.element_nodes(e), npe, u, ue);
     const Matrix& db = uniform_ ? db_uniform_ : db_at_centre(e);
     sigma[static_cast<std::size_t>(e)] = db * ue;
     const Vector& sig = sigma[static_cast<std::size_t>(e)];
@@ -161,10 +164,7 @@ StressEvaluation StressConstraint::evaluate(ComplianceObjective& objective,
     const Vector& sig = sigma[static_cast<std::size_t>(e)];
     // d sigma_vm / d u_e = (V sigma)^T D B / sigma_vm, weighted.
     const Vector row = (dg_ds(e) * rq / (limit * vm)) * (db.transpose() * (v_ * sig));
-    const Index* nodes = mesh.element_nodes(e);
-    for (int a = 0; a < npe; ++a) {
-      for (int k = 0; k < dim; ++k) psi(nodes[a] * dim + k) += row(dim * a + k);
-    }
+    dofs.scatter_add(mesh.element_nodes(e), npe, row, psi);
   }
 
   // Adjoint solve with the factorisation of the current SIMP stiffness.
@@ -174,13 +174,8 @@ StressEvaluation StressConstraint::evaluate(ComplianceObjective& objective,
   Vector dgpn(ne);
   Vector le(edofs);
   for (Index e = 0; e < ne; ++e) {
-    const Index* nodes = mesh.element_nodes(e);
-    for (int a = 0; a < npe; ++a) {
-      for (int k = 0; k < dim; ++k) {
-        ue(dim * a + k) = u(nodes[a] * dim + k);
-        le(dim * a + k) = lambda(nodes[a] * dim + k);
-      }
-    }
+    dofs.gather(mesh.element_nodes(e), npe, u, ue);
+    dofs.gather(mesh.element_nodes(e), npe, lambda, le);
     const Scalar implicit = -dfactor(e) * le.dot(assembler_.element_stiffness(e) * ue);
     dgpn(e) = explicit_term(e) + implicit;
   }

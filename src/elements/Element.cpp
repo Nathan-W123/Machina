@@ -93,6 +93,43 @@ Matrix Element::geometric_stiffness(const Matrix& coords, const Matrix& d, const
   return kg;
 }
 
+Matrix Element::geometric_stiffness_of_stress(const Matrix& coords,
+                                              const std::vector<Vector>& stresses,
+                                              Scalar thickness,
+                                              const IntegrationOptions& opts) const {
+  if (dofs_per_node() != dim()) {
+    throw ModelError(to_string(type()) +
+                     " supplies its own geometric stiffness; the stress-field form is "
+                     "for continuum elements");
+  }
+  const std::vector<IntegrationPoint> rule = integration_rule(opts);
+  if (stresses.size() != rule.size()) {
+    std::ostringstream os;
+    os << to_string(type()) << " geometric stiffness received " << stresses.size()
+       << " point stresses for a rule of " << rule.size() << " points";
+    throw ModelError(os.str());
+  }
+  const int nd = dim();
+  const int nn = num_nodes();
+  const Scalar t = nd == 2 ? thickness : 1.0;
+  Matrix block = Matrix::Zero(nn, nn);
+  for (std::size_t q = 0; q < rule.size(); ++q) {
+    const IntegrationPoint& ip = rule[q];
+    const StrainOperator op = strain_operator(coords, ip.point);
+    const Matrix g = gradients_from_b(op.b, nd, nn);
+    block.noalias() +=
+        (t * ip.weight * op.detJ) * (g.transpose() * stress_tensor(stresses[q], nd) * g);
+  }
+  Matrix kg = Matrix::Zero(num_dofs(), num_dofs());
+  for (int a = 0; a < nn; ++a) {
+    for (int b = 0; b < nn; ++b) {
+      const Scalar value = 0.5 * (block(a, b) + block(b, a));
+      for (int k = 0; k < nd; ++k) kg(nd * a + k, nd * b + k) = value;
+    }
+  }
+  return kg;
+}
+
 Vector Element::geometric_stiffness_derivative(const Matrix& coords, const Matrix& d,
                                                const Vector& phi, Scalar stress_scale,
                                                Scalar thickness,
