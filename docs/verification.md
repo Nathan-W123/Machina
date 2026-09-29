@@ -1425,6 +1425,15 @@ were taken:
   effect), the surface keeping its size (kinematic) or growing (isotropic);
   with Voce saturation the stress solves `sigma = sigma_y(eps - sigma/E)` at
   three strains to `1e-11`;
+* *far outside the surface* (deviatoric trial increments of order one, as
+  the Newton iterates of a large-strain run reach, where one ulp of
+  `||xi_tr||` exceeds the multiplier's `1e-13`-of-the-radius tolerance and
+  the Voce return used to throw on up to 6 of 401 such strains): three Voce
+  laws, with and without Prager's modulus, from the virgin state at 401
+  strains `(ln 2.2, ln 1.3, e33)`, `e33` in `[-1, 1]`, and 41 isochoric ones
+  with shear, and a plane-stress step to `(ln 2.2, ln 1.3)` - every return
+  converges onto its yield surface, to `2.5e-13 sigma_y` (tolerance
+  `1e-12`), and the plane-stress one to its `sigma_33` tolerance;
 * *the consistent tangent* is the central difference of the returned stress
   to `1e-6` - in 3-D, plane strain and plane stress, with every hardening
   mechanism at once, on a non-proportional second step from a state with

@@ -29,7 +29,9 @@
 ///   \|\xi^{tr}\| - (2G + \tfrac{2}{3}H_{kin})\,\Delta\gamma
 ///   - \sqrt{2/3}\,\sigma_y(\bar\alpha_n + \sqrt{2/3}\,\Delta\gamma) = 0
 /// \f]
-/// (in closed form for linear hardening, by Newton with Voce saturation),
+/// (in closed form for linear hardening, by Newton with Voce saturation -
+/// to \f$10^{-13}\f$ of the radius, or to \f$8\epsilon\|\xi^{tr}\|\f$
+/// where that round-off floor is the larger, far outside the surface),
 /// and \f$\sigma = \sigma^{tr} - 2G\Delta\gamma\,n\f$. The consistent tangent
 /// is
 /// \f[

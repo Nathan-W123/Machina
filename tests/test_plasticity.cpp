@@ -258,6 +258,78 @@ TEST_CASE("Voce saturation is followed exactly on a uniaxial path", "[plasticity
   }
 }
 
+TEST_CASE("the Voce return converges at trial stresses far outside the yield surface",
+          "[plasticity][material]") {
+  // A deviatoric trial increment of order one - a large-strain Newton
+  // iterate reaches it (logarithmic kinematics) - puts |xi_trial| a
+  // thousand times beyond the radius sqrt(2/3) sigma_y, where one ulp of
+  // |xi_trial| exceeds 1e-13 of the radius: Newton sits on the root to
+  // round-off but cannot meet that tolerance, and the return used to throw.
+  // It must converge, onto the yield surface, in 3-D and in plane stress.
+  struct Law {
+    Scalar h, hk, q, delta;
+  };
+  const std::vector<Law> laws = {{1.0e9, 0.0, 60.0e6, 30.0},
+                                 {1.0e9, 2.0e9, 60.0e6, 30.0},
+                                 {0.5e9, 0.0, 150.0e6, 12.0}};
+  Scalar worst = 0.0;
+  int returns = 0;
+  for (const Law& law : laws) {
+    const IsotropicMaterial m = plastic_steel(law.h, law.hk, law.q, law.delta);
+    const PlasticityParameters& p = m.plasticity();
+    // | |dev(sigma) - beta| - sqrt(2/3) sigma_y(alpha) | relative to sigma_y.
+    const auto off_surface = [&](const PlasticResponse& r) {
+      Vector6 xi = r.stress - r.state.back_stress;
+      xi.head(3).array() -= (r.stress(0) + r.stress(1) + r.stress(2)) / 3.0;
+      const Scalar norm = std::sqrt(xi.head(3).squaredNorm() + 2.0 * xi.tail(3).squaredNorm());
+      const Scalar radius = std::sqrt(2.0 / 3.0) * p.yield(r.state.equivalent_plastic_strain);
+      return std::abs(norm - radius) / p.yield_stress;
+    };
+    std::vector<Vector6> strains;
+    for (int i = 0; i <= 400; ++i) {
+      Vector6 e = Vector6::Zero();
+      e(0) = std::log(2.2);
+      e(1) = std::log(1.3);
+      e(2) = -1.0 + 2.0 * i / 400.0;
+      strains.push_back(e);
+    }
+    for (int i = 0; i <= 40; ++i) {
+      const Scalar a = 0.5 + 0.025 * i;  // isochoric, with a shear
+      Vector6 e = Vector6::Zero();
+      e << a, -0.5 * a, -0.5 * a, 0.3 * a, 0.0, 0.0;
+      strains.push_back(e);
+    }
+    for (const Vector6& e : strains) {
+      INFO("h " << law.h << ", hk " << law.hk << ", strain " << e.transpose());
+      PlasticResponse r;
+      REQUIRE_NOTHROW(r = j2_return(m, StressState::ThreeDimensional, e, PlasticState()));
+      REQUIRE(r.yielding);
+      worst = std::max(worst, off_surface(r));
+      ++returns;
+    }
+    Vector6 sheet = Vector6::Zero();
+    sheet(0) = std::log(2.2);
+    sheet(1) = std::log(1.3);
+    PlasticResponse r;
+    REQUIRE_NOTHROW(r = j2_return(m, StressState::PlaneStress, sheet, PlasticState()));
+    REQUIRE(r.yielding);
+    // sigma_33 = 0 to 1e-12 of the stress of the first iterate, the 3-D
+    // return at the elastic thickness strain (whose volumetric stress,
+    // 1e11 Pa, sets the plane-stress iteration's scale).
+    Vector6 first = sheet;
+    first(2) = -m.lame_lambda() / (m.lame_lambda() + 2.0 * m.shear_modulus()) *
+               (sheet(0) + sheet(1));
+    const Scalar scale =
+        j2_return(m, StressState::ThreeDimensional, first, PlasticState()).stress.head(3)
+            .cwiseAbs()
+            .maxCoeff();
+    REQUIRE(std::abs(r.stress(2)) <= 1.0e-12 * scale);
+    worst = std::max(worst, off_surface(r));
+  }
+  INFO("worst |f| " << worst << " sigma_y over " << returns << " returns");
+  REQUIRE(worst <= 1.0e-12);
+}
+
 TEST_CASE("the consistent tangent is the derivative of the return", "[plasticity][material]") {
   // Every hardening mechanism at once, from a committed state with plastic
   // strain, back stress and accumulated strain, on a non-proportional

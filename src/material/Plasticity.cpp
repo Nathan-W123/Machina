@@ -120,6 +120,18 @@ PlasticResponse return_3d(const IsotropicMaterial& m, const Vector6& strain,
       dgamma += residual / (stiffness + 2.0 / 3.0 * p.yield_slope(alpha));
     }
     if (!converged) {
+      // Far outside the surface - |xi_trial| beyond about 450 radii, a
+      // deviatoric trial increment of order one, which large-strain Newton
+      // iterates reach - 1e-13 of the radius is below one ulp of
+      // |xi_trial|: Newton sits on the root to round-off but the residual
+      // cannot meet that tolerance. Accept it at that floor, a few ulps of
+      // |xi_trial|. (Every return that met the tolerance is unchanged.)
+      const Scalar alpha = alpha_n + kSqrt23 * dgamma;
+      const Scalar residual = xi_norm - stiffness * dgamma - kSqrt23 * p.yield(alpha);
+      converged =
+          std::abs(residual) <= 8.0 * std::numeric_limits<Scalar>::epsilon() * xi_norm;
+    }
+    if (!converged) {
       std::ostringstream os;
       os << "the J2 return of material '" << m.name()
          << "' did not converge for the plastic multiplier";

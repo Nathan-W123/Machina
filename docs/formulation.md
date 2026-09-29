@@ -979,7 +979,11 @@ change (radial return). The multiplier solves
 
 in closed form for linear hardening and by Newton for Voce saturation (`g`
 is convex and decreasing there, so Newton from `dg = 0` rises monotonically
-onto the root). Then `sigma = sigma_tr - 2 G dg n`,
+onto the root), to `1e-13` of the radius `sqrt(2/3) sigma_y` - or, far
+outside the surface, where one ulp of `||xi_tr||` exceeds that (beyond
+about 450 radii: a deviatoric trial increment of order one, which the
+Newton iterates of a large-strain run reach), to the round-off of
+`||xi_tr||` itself (`8 eps ||xi_tr||`). Then `sigma = sigma_tr - 2 G dg n`,
 `eps_p = eps_p,n + dg n`, `beta = beta_n + (2/3) H_kin dg n`. On a path along
 which `n` keeps its direction - uniaxial stress, for one - the return is
 exact for linear hardening and any step: the unit tests and the cycle study
