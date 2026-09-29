@@ -244,7 +244,8 @@ Scalar RigidTool::gap(const Vector3& x, const Vector3& c, int dim, Vector3& n, M
         std::ostringstream os;
         os << "a node lies " << d << " m from the " << to_string(shape) << "'s "
            << (shape == Shape::Sphere ? "centre" : "axis") << " (radius " << radius
-           << " m) of tool '" << name << "': the increment drove the tool through the surface";
+           << " m) of tool '" << name
+           << "', less than half the radius: the tool is through the surface";
         throw SolverError(os.str());
       }
       n = r / d;

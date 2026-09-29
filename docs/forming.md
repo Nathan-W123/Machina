@@ -81,7 +81,9 @@ the residual as `-f_N`, with the exact node-diagonal tangent
 
 A node closer than half the radius to a sphere's centre (or a cylinder's
 axis) means the increment drove the tool through the surface: the increment
-is cut.
+is cut. At the start of a step (a path that starts inside the part) it stops
+the analysis: the step is recorded, not completed, with the state it started
+from, and the reason.
 
 **Friction** is regularised Coulomb friction by an elastic-slip return map
 (backward Euler over the increment), with a history per slave node and tool:

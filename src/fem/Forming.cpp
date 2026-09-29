@@ -707,25 +707,31 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
     const Vector u_step = u;
 
     // The imbalance of the start state on the step's free DOFs, ramped out
-    // over the step.
+    // over the step. A start state that cannot be evaluated (a tool placed
+    // through the surface) stops the analysis there: the step is recorded,
+    // not completed, with the state it started from.
     Vector r0;
+    bool started = true;
     {
       contact.begin_increment(u, tb, tb, active, std::numeric_limits<Scalar>::infinity());
       Evaluation ev;
       ToolContactEvaluation cev;
       try {
         evaluate_residual(u, tb, ev, cev);
+        r0 = restrict(ev.residual + cev.residual, part.free);
+        sr.start_imbalance = r0.norm();
       } catch (const SolverError& ex) {
-        sr.termination = std::string("the start state cannot be evaluated: ") + ex.what();
-        result.steps.push_back(std::move(sr));
-        break;
+        std::ostringstream os;
+        os << "its start state (t = " << tb << " s) cannot be evaluated: " << ex.what();
+        sr.termination = os.str();
+        started = false;
       }
-      r0 = restrict(ev.residual + cev.residual, part.free);
-      sr.start_imbalance = r0.norm();
     }
-    log::info("forming ", label, " (", to_string(step.type), ", t = ", tb, " .. ", te, " s, ",
-              sr.tools.size(), " tool(s), ", part.fixed.size(), " prescribed DOF(s)): start "
-              "imbalance ", sr.start_imbalance, " N");
+    if (started) {
+      log::info("forming ", label, " (", to_string(step.type), ", t = ", tb, " .. ", te, " s, ",
+                sr.tools.size(), " tool(s), ", part.fixed.size(), " prescribed DOF(s)): start "
+                "imbalance ", sr.start_imbalance, " N");
+    }
 
     // Stations: the knots of the active tools inside the window, and its end.
     std::vector<Scalar> stations;
@@ -997,7 +1003,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
     std::size_t next_station = 0;
     int cuts_in_a_row = 0;
     bool done = false;
-    while (!done) {
+    while (started && !done) {
       if (static_cast<int>(sr.increments.size()) >= options_.max_increments) {
         sr.termination = "the increment budget (max_increments) ran out";
         break;

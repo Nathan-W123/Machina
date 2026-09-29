@@ -180,9 +180,13 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
     js.set("start_imbalance_N", num(s.start_imbalance));
     js.set("reference_force_N", num(s.reference_force));
     js.set("max_displacement_change_m", num(s.max_displacement_change));
+    // Every step the analysis records carries its displacement, a stopped
+    // one included; a hand-made result without it reports 0.
     Scalar max_u = 0.0;
-    for (Index n = 0; n < mesh.num_nodes(); ++n) {
-      max_u = std::max(max_u, s.displacement.segment(n * dim, dim).norm());
+    if (s.displacement.size() == model.dofs().num_dofs()) {
+      for (Index n = 0; n < mesh.num_nodes(); ++n) {
+        max_u = std::max(max_u, s.displacement.segment(n * dim, dim).norm());
+      }
     }
     js.set("max_displacement_m", num(max_u));
     steps.push_back(js);

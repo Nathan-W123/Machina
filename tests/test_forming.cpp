@@ -1234,3 +1234,52 @@ TEST_CASE("a forming run writes the result files of its output contract", "[form
   CHECK(steps.array_items()[2].find("type")->string_value() == "release");
   std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("a step whose start state cannot be evaluated stops the run with its state recorded",
+          "[forming][io]") {
+  // A sphere whose path starts with its centre on the top face: its first
+  // evaluation throws (a node closer than half the radius). The step is
+  // recorded, not completed, with the state it started from, and the result
+  // files of a stopped run are written (summary.json among them).
+  const Configuration c = parse_deck(forming_deck(R"({
+      "tools": [
+        {"name": "ball", "shape": "sphere", "radius": 0.003,
+         "surface": {"box": {"zmin": 0.002}},
+         "trajectory": {"times": [0, 1], "points": [[0.002, 0.002, 0.002],
+                                                      [0.002, 0.002, 0.003]]}}],
+      "steps": [
+        {"name": "press", "type": "form", "tools": ["ball"]},
+        {"name": "release", "type": "release"}]
+    })"));
+  FemModel model = build_model(c);
+  Assembler assembler(model);
+  const FormingResult r = FormingAnalysis(model, assembler, c.forming.options).run();
+  CHECK_FALSE(r.completed);
+  REQUIRE(r.steps.size() == 1);
+  const FormingStepResult& s = r.steps[0];
+  CHECK_FALSE(s.completed);
+  CHECK_THAT(s.termination, ContainsSubstring("start state (t = 0 s) cannot be evaluated") &&
+                                ContainsSubstring("tool 'ball'"));
+  CHECK_THAT(r.termination, ContainsSubstring("step 'press' (1 of 2)"));
+  CHECK(s.increments.empty());
+  REQUIRE(s.displacement.size() == model.dofs().num_dofs());
+  CHECK(s.displacement.cwiseAbs().maxCoeff() == 0.0);
+  CHECK(s.reactions.size() == model.dofs().num_dofs());
+  CHECK(s.element_von_mises.size() == model.mesh().num_elements());
+  CHECK(r.final_state.displacement.size() == model.dofs().num_dofs());
+
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "sparlab_test_forming_stopped";
+  std::filesystem::remove_all(dir);
+  ResultWriter writer(dir.string(), c);
+  const std::vector<std::string> files =
+      write_forming_results(writer, model, c.forming.options, r, true, true);
+  CHECK(files == std::vector<std::string>{"tool_forces.csv"});  // no completed step
+  const json::Value summary =
+      forming_summary_json(c, model, c.forming.options, r, 0.1, "test", files);
+  CHECK_FALSE(summary.find("completed")->bool_value());
+  const json::Value& steps = *summary.find("steps");
+  REQUIRE(steps.array_items().size() == 1);
+  CHECK(steps.array_items()[0].find("max_displacement_m")->number_value() == 0.0);
+  std::filesystem::remove_all(dir);
+}
