@@ -2549,7 +2549,8 @@ int main(int argc, char** argv) {
             "mesh-convergence-tet10 | buckling-euler | sensitivity-buckling | "
             "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
             "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
-            "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle"},
+            "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle | "
+            "transient-modal | rod-harmonic | rod-transient | nonlinear-oscillator"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
             "pass threshold on the max relative gradient error (default 1e-5)"},
@@ -2666,6 +2667,18 @@ int main(int argc, char** argv) {
     }
     if (all || study == "plastic-cycle") {
       outcomes.push_back(verify::study_plastic_cycle(out_dir, summary));
+    }
+    if (all || study == "transient-modal") {
+      outcomes.push_back(verify::study_transient_modal(out_dir, summary));
+    }
+    if (all || study == "rod-harmonic") {
+      outcomes.push_back(verify::study_rod_harmonic(out_dir, summary));
+    }
+    if (all || study == "rod-transient") {
+      outcomes.push_back(verify::study_rod_transient(out_dir, summary));
+    }
+    if (all || study == "nonlinear-oscillator") {
+      outcomes.push_back(verify::study_nonlinear_oscillator(out_dir, summary));
     }
     if (outcomes.empty()) {
       throw ConfigError("unknown study '" + study +

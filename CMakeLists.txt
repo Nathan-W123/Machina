@@ -153,7 +153,7 @@ if(SPARLAB_BUILD_APPS)
     target_link_libraries(${app} PRIVATE sparlab_app_support)
   endforeach()
   target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp
-                                     apps/verify_plasticity.cpp)
+                                     apps/verify_plasticity.cpp apps/verify_dynamics.cpp)
 endif()
 
 # ----------------------------------------------------------------------------
