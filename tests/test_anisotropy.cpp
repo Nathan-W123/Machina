@@ -20,8 +20,14 @@
 #include "TestSupport.hpp"
 
 #include "sparlab/core/Exceptions.hpp"
+#include "sparlab/core/Timer.hpp"
 #include "sparlab/fem/Elastoplastic.hpp"
+#include "sparlab/fem/ModelDiagnostics.hpp"
 #include "sparlab/fem/NonlinearStatic.hpp"
+#include "sparlab/io/CalculixWriter.hpp"
+#include "sparlab/io/Config.hpp"
+#include "sparlab/io/CsvWriter.hpp"
+#include "sparlab/io/ResultWriter.hpp"
 #include "sparlab/material/Plasticity.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -31,6 +37,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
 using namespace sparlab;
@@ -1206,3 +1213,186 @@ TEST_CASE("a homogeneous deformation of Hill48 with Chaboche hardening is exact 
   }
 }
 
+TEST_CASE("the Hill48 and Chaboche keys of a deck parse, validate, run and are reported",
+          "[plasticity][anisotropy][config]") {
+  // A plane-strain strip - a sheet section, normal y, so the model's z is
+  // the transverse direction - loaded and unloaded by a tip force, or a
+  // block of Hex8.
+  const auto deck = [](const std::string& plasticity, bool solid) {
+    const std::string mesh =
+        solid ? R"("mesh": { "type": "structured_hex", "nx": 4, "ny": 1, "nz": 1,
+                             "lx": 1.0, "ly": 0.1, "lz": 0.1 },)"
+              : R"("mesh": { "type": "structured_quad", "nx": 20, "ny": 2, "lx": 1.0,
+                             "ly": 0.1 },
+                   "model": { "thickness": 0.01, "stress_state": "plane_strain" },)";
+    return json::parse("{" + mesh + R"(
+      "material": { "youngs_modulus": 200e9, "poisson_ratio": 0.3,
+                    "plasticity": )" + plasticity + R"( },
+      "boundary_conditions": [ { "fix": )" + (solid ? R"(["x", "y", "z"])" : R"(["x", "y"])") +
+                       R"(, "region": { "box": { "xmax": 0.0 } } } ],
+      "load_cases": [ { "name": "tip", "point_loads": [ { "force": )" +
+                       (solid ? R"([0.0, -30000.0, 0.0])" : R"([0.0, -8000.0])") + R"(,
+            "region": { "box": { "xmin": 1.0 } } } ] } ],
+      "nonlinear": { "enabled": true, "kinematics": "small_strain", "steps": 4,
+                     "load_path": [1.0, 0.0] } })");
+  };
+  const std::string sheet = R"({ "yield_stress": 170e6, "saturation_stress": 90e6,
+      "saturation_rate": 12, "kinematic_hardening_modulus": 1e9,
+      "yield_criterion": "hill48",
+      "anisotropy": { "r0": 1.9, "r45": 1.5, "r90": 2.3, "out_of_plane_shear": [1.4, 1.6],
+                      "rolling_direction": [1, 0, 0], "sheet_normal": [0, 1, 0] },
+      "backstresses": [ { "modulus": 60e9, "recovery": 600 }, { "modulus": 8e9, "recovery": 60 },
+                        { "modulus": 1e9 } ],
+      "kinematic_integration": "backward_euler" })";
+  const Configuration config = parse_configuration(deck(sheet, false), "inline", true);
+  const PlasticityParameters& p = config.material().plasticity();
+  REQUIRE(p.criterion == YieldCriterion::Hill48);
+  REQUIRE(p.hill.calibration == HillCalibration::RValues);
+  REQUIRE(p.hill.G == Approx(1.0 / 2.9).epsilon(1e-15));
+  REQUIRE(p.hill.L == 1.4);
+  REQUIRE(p.hill.M == 1.6);
+  REQUIRE((p.hill.axes.row(2).transpose() - Vector3::UnitY()).norm() == 0.0);
+  REQUIRE((p.hill.axes.row(1).transpose() - Vector3(0.0, 0.0, -1.0)).norm() == 0.0);
+  REQUIRE(p.num_backstresses == 3);
+  REQUIRE(p.backstresses[0].modulus == 60.0e9);
+  REQUIRE(p.backstresses[1].recovery == 60.0);
+  REQUIRE(p.backstresses[2].recovery == 0.0);
+  REQUIRE(p.kinematic_terms() == 4);  // Prager's modulus as the fourth
+  REQUIRE(p.kinematic_integration == KinematicIntegration::BackwardEuler);
+  REQUIRE_FALSE(p.symmetric_tangent());
+
+  // The run loads the strip past yield and unloads it through the
+  // non-symmetric tangent.
+  {
+    FemModel model = build_model(config);
+    Assembler assembler(model);
+    const NonlinearResult r =
+        NonlinearStaticAnalysis(model, assembler, config.nonlinear.options).solve(0);
+    REQUIRE(r.completed);
+    REQUIRE(r.load_factor == 0.0);
+    REQUIRE(r.plastic_points > 0);
+    REQUIRE(r.displacement.cwiseAbs().maxCoeff() > 0.0);  // the permanent set
+    // Newton converges quadratically on the consistent, non-symmetric
+    // tangent: a few iterations per step.
+    int most = 0;
+    for (const NonlinearStep& s : r.steps) most = std::max(most, s.iterations);
+    REQUIRE(most <= 6);
+    // The summary reports the law.
+    TimingLedger timings;
+    const json::Value summary =
+        make_static_summary(config, model, diagnose_model(model), {}, {}, nullptr, timings);
+    const json::Value& plasticity = *summary.find("material")->find("plasticity");
+    REQUIRE(plasticity.find("yield_criterion")->string_value() == "hill48");
+    const json::Value& hill = *plasticity.find("anisotropy");
+    REQUIRE(hill.find("calibration")->string_value() == "r_values");
+    REQUIRE(hill.find("r90")->number_value() == 2.3);
+    REQUIRE(hill.find("coefficients")->find("F")->number_value() == Approx(p.hill.F));
+    REQUIRE(hill.find("sheet_normal")->array_items()[1].number_value() == 1.0);
+    REQUIRE(plasticity.find("backstresses")->array_items().size() == 3);
+    REQUIRE(plasticity.find("backstresses")->array_items()[0].find("recovery")->number_value() ==
+            600.0);
+    REQUIRE(plasticity.find("kinematic_integration")->string_value() == "backward_euler");
+    // CalculiX has no counterpart: the non-linear export is refused, with
+    // the reason.
+    REQUIRE(calculix_plasticity_obstacle(model.material()).find("Hill") != std::string::npos);
+    CalculixNonlinearExport nl;
+    nl.load_cases = {0};
+    nl.nlgeom = false;
+    ensure_directory("results/_test_tmp");
+    REQUIRE_THROWS_AS(write_calculix_decks(model, "results/_test_tmp/hill", "unit", &nl),
+                      IoError);
+    REQUIRE(write_calculix_decks(model, "results/_test_tmp/hill", "unit").size() == 1);
+  }
+  const auto obstacle = [&](const std::string& plasticity) {
+    return calculix_plasticity_obstacle(
+        parse_configuration(deck(plasticity, true), "inline", true).material());
+  };
+  REQUIRE(obstacle(R"({ "yield_stress": 250e6, "hardening_modulus": 1e9 })").empty());
+  REQUIRE(obstacle(R"({ "yield_stress": 250e6, "backstresses": [ { "modulus": 5e9,
+                        "recovery": 50 } ] })")
+              .find("recovery") != std::string::npos);
+  REQUIRE(obstacle(R"({ "yield_stress": 250e6, "backstresses": [ { "modulus": 5e9 } ] })")
+              .find("KINEMATIC") != std::string::npos);
+
+  // The other calibrations, and the rolling angle.
+  const Configuration ratios = parse_configuration(
+      deck(R"({ "yield_stress": 250e6, "yield_criterion": "hill48",
+                "anisotropy": { "stress_ratios": { "sigma_45": 1.05, "sigma_90": 1.02,
+                                                   "sigma_biaxial": 1.1 },
+                                "rolling_angle": 30 } })",
+           false),
+      "inline", true);
+  const Hill48Parameters& hr = ratios.material().plasticity().hill;
+  REQUIRE(hr.calibration == HillCalibration::StressRatios);
+  REQUIRE(hr.G + hr.H == Approx(1.0).epsilon(1e-15));
+  REQUIRE(hr.F + hr.G == Approx(1.0 / 1.21).epsilon(1e-15));
+  REQUIRE(hr.axes(0, 0) == Approx(std::sqrt(3.0) / 2.0).epsilon(1e-15));
+  REQUIRE(hr.axes(0, 1) == Approx(0.5).epsilon(1e-15));
+  REQUIRE(hr.axes(2, 2) == 1.0);
+  const Configuration coefficients = parse_configuration(
+      deck(R"({ "yield_stress": 250e6, "yield_criterion": "hill48",
+                "anisotropy": { "coefficients": { "F": 0.3, "G": 0.4, "H": 0.6, "L": 1.5,
+                                                  "M": 1.5, "N": 1.4 },
+                                "rolling_direction": [1, 1, 0], "sheet_normal": [0, 0, 2] },
+                "backstresses": [ { "modulus": 5e9, "recovery": 50 } ] })",
+           true),
+      "inline", true);
+  const PlasticityParameters& pc = coefficients.material().plasticity();
+  REQUIRE(pc.hill.calibration == HillCalibration::Coefficients);
+  REQUIRE(pc.hill.N == 1.4);
+  REQUIRE(pc.hill.axes(0, 1) == Approx(std::sqrt(0.5)).epsilon(1e-15));
+  REQUIRE(pc.kinematic_integration == KinematicIntegration::Exponential);  // the default
+
+  const auto refuses = [&](const std::string& plasticity, bool solid = true) {
+    INFO(plasticity);
+    REQUIRE_THROWS_AS(parse_configuration(deck(plasticity, solid), "inline", true), ConfigError);
+  };
+  const std::string y = R"("yield_stress": 250e6, )";
+  const std::string hill48 = y + R"("yield_criterion": "hill48", )";
+  refuses("{" + y + R"("yield_criterion": "hill48" })");  // no anisotropy block
+  refuses("{" + y + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2 } })");  // von Mises
+  refuses("{" + y + R"("yield_criterion": "tresca" })");
+  refuses("{" + hill48 + R"("anisotropy": { "rolling_angle": 10 } })");  // no calibration
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "coefficients": { "F": 0.3, "G": 0.4, "H": 0.6, "L": 1.5, "M": 1.5, "N": 1.4 } } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "stress_ratios": { "sigma_45": 1, "sigma_90": 1, "sigma_biaxial": 1 } } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r90": 2 } })");  // r45 missing
+  refuses("{" + hill48 + R"("anisotropy": { "r0": -2, "r45": 1, "r90": 2 } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "out_of_plane_shear": [1.5] } })");
+  refuses("{" + hill48 + R"("anisotropy": {
+      "coefficients": { "F": 0.3, "G": 0.4, "H": 0.6, "L": 1.5, "M": 1.5, "N": 1.4 },
+      "out_of_plane_shear": [1.5, 1.5] } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2, "rolling_angle": 10,
+      "rolling_direction": [1, 0, 0] } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "rolling_direction": [1, 0] } })");
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "sheet_normal": [1, 0, 0] } })");  // parallel to the default rolling direction
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2, "r_45": 1 } })");
+  // A plane model needs z along an axis of the frame.
+  refuses("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+      "rolling_direction": [1, 0, 1], "sheet_normal": [0, 1, 0] } })",
+          false);
+  REQUIRE_NOTHROW(parse_configuration(
+      deck("{" + hill48 + R"("anisotropy": { "r0": 2, "r45": 1, "r90": 2,
+           "rolling_direction": [0, 0, 1], "sheet_normal": [0, 1, 0] } })",
+           false),
+      "inline", true));
+  const std::string four =
+      R"({ "modulus": 1e9, "recovery": 10 }, { "modulus": 1e9, "recovery": 10 },
+         { "modulus": 1e9, "recovery": 10 }, { "modulus": 1e9, "recovery": 10 })";
+  refuses("{" + y + R"("backstresses": [ )" + four + R"(, { "modulus": 1e9 } ] })");
+  refuses("{" + y + R"("kinematic_hardening_modulus": 1e9, "backstresses": [ )" + four +
+          " ] }");
+  REQUIRE_NOTHROW(
+      parse_configuration(deck("{" + y + R"("backstresses": [ )" + four + " ] }", true),
+                          "inline", true));
+  refuses("{" + y + R"("backstresses": [ { "recovery": 10 } ] })");  // no modulus
+  refuses("{" + y + R"("backstresses": [ { "modulus": 1e9, "recovery": -1 } ] })");
+  refuses("{" + y + R"("backstresses": [ { "modulus": 0 } ] })");
+  refuses("{" + y + R"("backstresses": [ { "modulus": 1e9, "rate": 1 } ] })");  // unknown key
+  refuses("{" + y + R"("backstresses": [ { "modulus": 1e9 } ], "kinematic_integration": "rk4" })");
+  refuses(R"({ "backstresses": [ { "modulus": 1e9 } ] })");  // no yield stress
+}

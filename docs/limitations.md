@@ -28,19 +28,32 @@ for visibility. `sparlab_solve` adds a non-linear static analysis
 displacement and rotation, with the Saint Venant-Kirchhoff law (small strain)
 or a compressible neo-Hookean law (large strain), follower pressures, a
 centrifugal load at the deformed position, the finite-strain thermal split,
-J2 plasticity with isotropic (linear and Voce) and kinematic (Prager)
+J2 or Hill48 (anisotropic) plasticity with isotropic (linear and Voce) and
+kinematic (Prager, and Chaboche's sum of Armstrong-Frederick backstresses)
 hardening in small strain or in the Green-Lagrange strain at large rotation,
 load paths that unload and reverse, load control that stops at limit and
 bifurcation points and at a plastic collapse and says so, and the arc-length
 method through limit points. What it does not do:
 
-* plasticity is rate-independent J2 at small strain: no finite-strain
-  plasticity (with `finite` kinematics the J2 return in the Green-Lagrange
+* plasticity is rate-independent and at small strain: no finite-strain
+  plasticity (with `finite` kinematics the return in the Green-Lagrange
   strain is sound for large rotation with small strains, and the run warns
   beyond a strain of 0.05), no creep, viscoplasticity, damage, fracture,
-  non-associative or pressure-dependent yield, nonlinear (Armstrong-Frederick)
-  kinematic hardening, anisotropy or temperature-dependent properties; the
-  elastic part of the neo-Hookean law cannot be combined with plasticity;
+  non-associative or pressure-dependent yield, or temperature-dependent
+  properties; the elastic part of the neo-Hookean law cannot be combined
+  with plasticity. The anisotropy is Hill's quadratic 1948 criterion only
+  (no Yld2000-2d or other non-quadratic criterion, which fit aluminium's
+  yield locus better), with isotropic elasticity and a fixed material
+  frame; its out-of-plane shear coefficients L and M are not measured by the
+  r-values and default to the isotropic 1.5. The kinematic hardening is
+  Chaboche's sum of at most four Armstrong-Frederick backstresses (no
+  ratcheting refinements such as Ohno-Wang, no cyclic isotropic
+  softening or plastic-strain-range memory, no Yoshida-Uemori), and a
+  recovering backstress makes the tangent non-symmetric: the solver then
+  uses LU, and load control's test for an unstable tangent from its inertia
+  is off. The backward-Euler return is first-order accurate on a
+  non-proportional path, whatever the law; such materials are not exported
+  to CalculiX, which has no counterpart;
 * constant-strain elements (Tri3, Tet4) can lock under the isochoric flow of
   a fully plastic state in plane strain and 3-D, depending on the mesh
   pattern, and fully integrated Q4 and Hex8 lock without the mean

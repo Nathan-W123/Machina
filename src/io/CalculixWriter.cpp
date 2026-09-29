@@ -536,11 +536,33 @@ std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
       return "CalculiX's NEO HOOKE is a different strain energy from SparLab's neo-Hookean law";
     }
     for (const IsotropicMaterial& m : model.materials()) {
-      if (m.plasticity().kinematic_hardening_modulus > 0.0) {
-        return "CalculiX's HARDENING=KINEMATIC does not reproduce Prager's linear kinematic "
-               "hardening";
-      }
+      const std::string obstacle = calculix_plasticity_obstacle(m);
+      if (!obstacle.empty()) return obstacle;
     }
+  }
+  return "";
+}
+
+std::string calculix_plasticity_obstacle(const IsotropicMaterial& material) {
+  const PlasticityParameters& p = material.plasticity();
+  if (!p.enabled()) return "";
+  if (p.criterion == YieldCriterion::Hill48) {
+    return "material '" + material.name() +
+           "' yields by Hill's 1948 anisotropic criterion, and CalculiX's *PLASTIC is von "
+           "Mises (its anisotropic plasticity is a user material)";
+  }
+  for (int i = 0; i < p.num_backstresses; ++i) {
+    if (p.backstresses[static_cast<std::size_t>(i)].recovery > 0.0) {
+      return "material '" + material.name() +
+             "' has Armstrong-Frederick (Chaboche) backstresses with dynamic recovery, which "
+             "CalculiX's *PLASTIC does not model";
+    }
+  }
+  if (p.kinematic_hardening_modulus > 0.0 || p.num_backstresses > 0) {
+    return "material '" + material.name() +
+           "' has linear kinematic hardening, and CalculiX's HARDENING=KINEMATIC does not "
+           "reproduce Prager's linear kinematic hardening (a single element in uniaxial "
+           "tension softens)";
   }
   return "";
 }
@@ -580,6 +602,13 @@ std::vector<std::string> write_calculix_decks(const FemModel& model, const std::
     if (nonlinear != nullptr && std::find(nonlinear->load_cases.begin(),
                                           nonlinear->load_cases.end(),
                                           l) != nonlinear->load_cases.end()) {
+      for (const IsotropicMaterial& m : model.materials()) {
+        const std::string obstacle = calculix_plasticity_obstacle(m);
+        if (!obstacle.empty()) {
+          throw IoError("the non-linear analysis of load case '" + specs[l].name +
+                        "' cannot be exported to CalculiX: " + obstacle);
+        }
+      }
       write(base + (nonlinear->nlgeom ? "_nlgeom.inp" : "_small_strain.inp"),
             [&](std::ostream& out) {
               write_static_deck(out, model, l, case_name, boundary, nonlinear);

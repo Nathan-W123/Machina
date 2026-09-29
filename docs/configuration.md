@@ -134,23 +134,86 @@ is reported as `sigma_zz`), and `alpha dT {1, 1, 1, 0, 0, 0}` in 3-D.
                 "kinematic_hardening_modulus": 3e9 }
 ```
 
-J2 (von Mises) plasticity, which the non-linear analysis models (`nonlinear`,
-below; `docs/formulation.md`, section 7d). The yield stress after an
-accumulated plastic strain `alpha` is
+Rate-independent plasticity, which the non-linear analysis models (`nonlinear`,
+below; `docs/formulation.md`, section 7d): von Mises (J2) or Hill's 1948
+anisotropic yield criterion, with isotropic and kinematic hardening. The yield
+stress after an accumulated plastic strain `alpha` is
 `sigma_y(alpha) = yield_stress + hardening_modulus alpha + saturation_stress (1 - exp(-saturation_rate alpha))`
 (linear isotropic hardening plus Voce saturation), and the yield surface
 moves with the back stress of Prager's linear kinematic hardening,
-`d beta = (2/3) kinematic_hardening_modulus d eps_p`. In uniaxial tension the
+`d beta = (2/3) kinematic_hardening_modulus d eps_p`, and/or of Chaboche
+backstresses (below). In uniaxial tension the
 plastic slope of the stress against the plastic strain is
 `hardening_modulus + kinematic_hardening_modulus` (plus the Voce part).
 
 | Key | Type | Default | Constraint |
 |-----|------|---------|------------|
-| `yield_stress` | number [Pa] | required | `> 0`: the initial uniaxial yield stress `sigma_y0` |
+| `yield_stress` | number [Pa] | required | `> 0`: the initial uniaxial yield stress `sigma_y0` (with Hill48, the equivalent stress at yield: the uniaxial yield stress along the rolling direction for the r-value and stress-ratio calibrations) |
 | `hardening_modulus` | number [Pa] | `0` | `>= 0`, `H`: linear isotropic hardening (`0` with the others `0` is perfect plasticity) |
 | `saturation_stress` | number [Pa] | `0` | `>= 0`, `Q`: the Voce saturation increment of the yield stress |
 | `saturation_rate` | number [-] | `0` | `> 0` when `saturation_stress` is given, `delta` |
 | `kinematic_hardening_modulus` | number [Pa] | `0` | `>= 0`, `H_kin`: Prager's linear kinematic hardening |
+| `yield_criterion` | string | `von_mises` | `von_mises` or `hill48`; `hill48` needs the `anisotropy` block and the block needs `hill48` |
+| `anisotropy` | object | - | the Hill48 calibration and material frame (below) |
+| `backstresses` | array | `[]` | at most 4 Armstrong-Frederick backstresses `{ "modulus": C_i, "recovery": gamma_i }` (below) |
+| `kinematic_integration` | string | `exponential` | how a backstress is integrated over a step: `exponential` or `backward_euler` |
+
+**Hill48 anisotropy** (`"yield_criterion": "hill48"`). Sheet metal rolled
+along RD, with transverse direction TD and normal ND, yields when
+`F (s_TT - s_NN)^2 + G (s_NN - s_RR)^2 + H (s_RR - s_TT)^2 + 2 L s_TN^2 + 2 M s_NR^2 + 2 N s_RT^2 = sigma_y(alpha)^2`
+of the relative stress in that frame, with associative (isochoric) flow.
+
+```json
+"plasticity": { "yield_stress": 170e6, "saturation_stress": 90e6, "saturation_rate": 12,
+  "yield_criterion": "hill48",
+  "anisotropy": { "r0": 1.9, "r45": 1.5, "r90": 2.3, "out_of_plane_shear": [1.5, 1.5],
+                  "rolling_direction": [1, 0, 0], "sheet_normal": [0, 0, 1] },
+  "backstresses": [ { "modulus": 60e9, "recovery": 600 }, { "modulus": 8e9, "recovery": 60 },
+                    { "modulus": 1e9, "recovery": 0 } ],
+  "kinematic_integration": "exponential" }
+```
+
+| `anisotropy` key | Type | Default | Meaning |
+|------------------|------|---------|---------|
+| `r0`, `r45`, `r90` | numbers [-] | - | Lankford coefficients at 0, 45 and 90 deg to RD, `> 0`: `F = r0 / (r90 (1 + r0))`, `G = 1 / (1 + r0)`, `H = r0 / (1 + r0)`, `N = (r0 + r90)(1 + 2 r45) / (2 r90 (1 + r0))`, so that `sigma_y` is the yield stress along RD |
+| `stress_ratios` | object | - | `{ "sigma_45": s45, "sigma_90": s90, "sigma_biaxial": sb }`, the yield stresses at 45 and 90 deg and in equibiaxial tension over the one along RD, `> 0`: `G + H = 1`, `F + H = 1 / s90^2`, `F + G = 1 / sb^2`, `2 N = 4 / s45^2 - F - G` |
+| `coefficients` | object | - | `{ "F", "G", "H", "L", "M", "N" }` directly (the yield stress along RD is then `yield_stress / sqrt(G + H)`) |
+| `out_of_plane_shear` | `[L, M]` | `[1.5, 1.5]` | the out-of-plane shear coefficients of the r-value and stress-ratio calibrations (in-plane tests do not measure them; `1.5` is isotropic) |
+| `rolling_direction` | `[x, y, z]` | `[1, 0, 0]` | RD in global axes, projected normal to ND |
+| `sheet_normal` | `[x, y, z]` | `[0, 0, 1]` | ND in global axes; TD = ND x RD |
+| `rolling_angle` | number [deg] | - | RD in the x-y plane at this angle from x, ND = z (instead of the two vectors) |
+
+Exactly one of the r-values, `stress_ratios` and `coefficients` is given
+(`r = 1`, or all ratios `1`, is von Mises). The coefficients must make a
+convex surface: `L, M, N > 0`, `F + H > 0` and `FG + GH + HF > 0`. The frame
+directions always have three components, in a plane model too, whose `z`
+must then be one of RD, TD, ND (a plane model has no out-of-plane shear
+strain): for a sheet in the model plane (plane stress) ND = z, for a
+section through the thickness (plane strain) for instance ND = y and TD = z.
+With finite kinematics the frame is the reference one and turns with the
+material. Hill48 in uniaxial tension at `theta` from RD yields at
+`sigma_y [F sin^4 + G cos^4 + H cos^2 2theta + 2 N sin^2 cos^2]^(-1/2)` with the
+r-value `[H + (2N - F - G - 4H) sin^2 cos^2] / [F sin^2 + G cos^2]` - both
+verified to round-off (`--study hill-directional`).
+
+**Chaboche backstresses** (`backstresses`). The back stress is the sum of up
+to four Armstrong-Frederick terms,
+`d alpha_i = (2/3) C_i d eps_p - gamma_i alpha_i d alpha` (with Prager's
+`kinematic_hardening_modulus` as one more, without recovery - at most four in
+all), each saturating at `C_i / gamma_i` in uniaxial tension:
+`sigma = sigma_y(alpha) + sum_i (C_i / gamma_i)(1 - exp(-gamma_i alpha))` on a
+monotonic path. `modulus` is required and `> 0`, `recovery` defaults to `0`
+(Prager) and is `>= 0`. With any `recovery > 0` the consistent tangent is not
+symmetric: the non-linear analysis then factorises it by LU, and its
+stability test on the inertia of the tangent is off. `exponential`
+integrates each backstress exactly for a flow direction fixed over the step
+(so a uniaxial path is exact at any step size); `backward_euler` is
+first-order accurate.
+
+The CalculiX export writes no non-linear or transient deck for a Hill48
+material, for backstresses or for Prager's rule, and says why: CalculiX's
+`*PLASTIC` is von Mises, has no Armstrong-Frederick rule, and its
+`HARDENING=KINEMATIC` does not reproduce Prager's linear rule.
 
 The linear analyses - static, modal, buckling - and the topology
 optimisation treat the material as elastic; `sparlab_solve` says so when a

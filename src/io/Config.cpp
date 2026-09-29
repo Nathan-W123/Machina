@@ -183,8 +183,87 @@ SelectorGroup parse_region(const ConfigNode& node, const std::string& default_na
 
 namespace {
 
-/// A material section: elastic constants, density and the thermal properties.
-IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& default_name) {
+/// A three-component direction of the material frame (in 2-D too: the
+/// transverse direction may be the model's z).
+Vector3 frame_vector(const ConfigNode& node) {
+  const std::vector<Scalar> v = node.number_list();
+  if (v.size() != 3) {
+    throw ConfigError("'" + node.path() + "' must be a direction of three numbers [x, y, z]");
+  }
+  return Vector3(v[0], v[1], v[2]);
+}
+
+/// The Hill48 block of a plasticity section: one calibration (r-values,
+/// stress ratios or coefficients) and the material frame.
+Hill48Parameters parse_anisotropy(const ConfigNode& node) {
+  Hill48Parameters h;
+  const bool r_values = node.child("r0").exists() || node.child("r45").exists() ||
+                        node.child("r90").exists();
+  const ConfigNode ratios = node.child("stress_ratios");
+  const ConfigNode coefficients = node.child("coefficients");
+  const int forms =
+      (r_values ? 1 : 0) + (ratios.exists() ? 1 : 0) + (coefficients.exists() ? 1 : 0);
+  if (forms != 1) {
+    throw ConfigError("'" + node.path() + "' needs exactly one calibration of the Hill48 "
+                      "criterion: the r-values \"r0\", \"r45\", \"r90\", or "
+                      "\"stress_ratios\", or \"coefficients\" (got " +
+                      std::to_string(forms) + ")");
+  }
+  if (r_values) {
+    h.calibration = HillCalibration::RValues;
+    h.r0 = node.require("r0").number();
+    h.r45 = node.require("r45").number();
+    h.r90 = node.require("r90").number();
+  } else if (ratios.exists()) {
+    h.calibration = HillCalibration::StressRatios;
+    h.sigma45 = ratios.require("sigma_45").number();
+    h.sigma90 = ratios.require("sigma_90").number();
+    h.sigma_biaxial = ratios.require("sigma_biaxial").number();
+  } else {
+    h.calibration = HillCalibration::Coefficients;
+    h.F = coefficients.require("F").number();
+    h.G = coefficients.require("G").number();
+    h.H = coefficients.require("H").number();
+    h.L = coefficients.require("L").number();
+    h.M = coefficients.require("M").number();
+    h.N = coefficients.require("N").number();
+  }
+  const ConfigNode shear = node.child("out_of_plane_shear");
+  if (shear.exists()) {
+    if (coefficients.exists()) {
+      throw ConfigError("'" + shear.path() + "' is given by L and M of the \"coefficients\"");
+    }
+    const std::vector<Scalar> lm = shear.number_list();
+    if (lm.size() != 2) {
+      throw ConfigError("'" + shear.path() + "' must be the two numbers [L, M]");
+    }
+    h.shear_l = lm[0];
+    h.shear_m = lm[1];
+  }
+  const ConfigNode angle = node.child("rolling_angle");
+  if (angle.exists()) {
+    if (node.child("rolling_direction").exists() || node.child("sheet_normal").exists()) {
+      throw ConfigError("'" + angle.path() + "' excludes \"rolling_direction\" and "
+                        "\"sheet_normal\": it rolls the sheet in the x-y plane, normal z");
+    }
+    const Scalar a = angle.number() * 3.14159265358979323846 / 180.0;
+    h.rolling_direction = Vector3(std::cos(a), std::sin(a), 0.0);
+    h.sheet_normal = Vector3::UnitZ();
+  } else {
+    if (node.child("rolling_direction").exists()) {
+      h.rolling_direction = frame_vector(node.child("rolling_direction"));
+    }
+    if (node.child("sheet_normal").exists()) {
+      h.sheet_normal = frame_vector(node.child("sheet_normal"));
+    }
+  }
+  return h;
+}
+
+/// A material section: elastic constants, density, the thermal properties
+/// and the plasticity. `dim` is the mesh dimension (a plane model needs z
+/// along an axis of the Hill48 frame).
+IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& default_name, int dim) {
   IsotropicMaterial material(mat.positive_number("youngs_modulus"),
                              mat.require("poisson_ratio").number(),
                              mat.number_or("density", 0.0),
@@ -201,10 +280,60 @@ IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& defau
     p.kinematic_hardening_modulus = plastic.number_or("kinematic_hardening_modulus", 0.0);
     p.saturation_stress = plastic.number_or("saturation_stress", 0.0);
     p.saturation_rate = plastic.number_or("saturation_rate", 0.0);
+    const std::string criterion = plastic.string_or("yield_criterion", "von_mises");
+    const ConfigNode anisotropy = plastic.child("anisotropy");
+    if (criterion == "hill48") {
+      if (!anisotropy.exists()) {
+        throw ConfigError("'" + plastic.path() + "' has \"yield_criterion\": \"hill48\" but no "
+                          "\"anisotropy\" block to calibrate it");
+      }
+      p.criterion = YieldCriterion::Hill48;
+      p.hill = parse_anisotropy(anisotropy);
+    } else if (criterion == "von_mises") {
+      if (anisotropy.exists()) {
+        throw ConfigError("'" + anisotropy.path() + "' needs \"yield_criterion\": \"hill48\"");
+      }
+    } else {
+      throw ConfigError("'" + plastic.path() + ".yield_criterion' is \"" + criterion +
+                        "\"; expected \"von_mises\" or \"hill48\"");
+    }
+    const std::vector<ConfigNode> backstresses = plastic.array("backstresses");
+    if (backstresses.size() > static_cast<std::size_t>(kMaxBackstresses)) {
+      throw ConfigError("'" + plastic.path() + ".backstresses' has " +
+                        std::to_string(backstresses.size()) + " entries; at most " +
+                        std::to_string(kMaxBackstresses) + " are supported");
+    }
+    p.num_backstresses = static_cast<int>(backstresses.size());
+    for (std::size_t i = 0; i < backstresses.size(); ++i) {
+      p.backstresses[i].modulus = backstresses[i].require("modulus").number();
+      p.backstresses[i].recovery = backstresses[i].number_or("recovery", 0.0);
+    }
+    const std::string integration = plastic.string_or("kinematic_integration", "exponential");
+    if (integration == "exponential") {
+      p.kinematic_integration = KinematicIntegration::Exponential;
+    } else if (integration == "backward_euler") {
+      p.kinematic_integration = KinematicIntegration::BackwardEuler;
+    } else {
+      throw ConfigError("'" + plastic.path() + ".kinematic_integration' is \"" + integration +
+                        "\"; expected \"exponential\" or \"backward_euler\"");
+    }
     try {
       material.set_plasticity(p);
     } catch (const ConfigError& e) {
       throw ConfigError("'" + plastic.path() + "': " + e.what());
+    }
+    if (dim == 2 && p.criterion == YieldCriterion::Hill48) {
+      // A plane model has no out-of-plane shear strain, which only a frame
+      // with z along one of its axes leaves uncoupled from the in-plane flow.
+      const Matrix3& axes = material.plasticity().hill.axes;
+      bool aligned = false;
+      for (int r = 0; r < 3; ++r) {
+        aligned = aligned || std::abs(std::abs(axes(r, 2)) - 1.0) <= 1.0e-12;
+      }
+      if (!aligned) {
+        throw ConfigError("'" + anisotropy.path() + "': in a plane model the out-of-plane axis z "
+                          "must be the rolling, transverse or normal direction of the sheet");
+      }
     }
   }
   return material;
@@ -579,13 +708,13 @@ Configuration parse_configuration(const json::Value& document, const std::string
   // --- material -----------------------------------------------------------
   {
     const ConfigNode mat = root.require("material");
-    config.set_material(parse_material(mat, "material"));
+    config.set_material(parse_material(mat, "material", dim));
     int index = 0;
     for (const ConfigNode& mr : root.array("material_regions")) {
       const std::string name = mr.string_or("name", "material_region" + std::to_string(index++));
       config.material_regions.push_back(
           {name, parse_region(mr.require("region"), name, dim),
-           parse_material(mr.require("material"), name)});
+           parse_material(mr.require("material"), name, dim)});
     }
   }
 

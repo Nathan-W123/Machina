@@ -259,6 +259,61 @@ json::Value material_json(const IsotropicMaterial& m, StressState state) {
           json::Value::make_number(p.kinematic_hardening_modulus));
     j.set("saturation_stress_Pa", json::Value::make_number(p.saturation_stress));
     j.set("saturation_rate", json::Value::make_number(p.saturation_rate));
+    j.set("yield_criterion", json::Value::make_string(
+                                 p.criterion == YieldCriterion::Hill48 ? "hill48" : "von_mises"));
+    const auto vector_json = [](const Vector3& v) {
+      json::Value a = json::Value::make_array();
+      for (int k = 0; k < 3; ++k) a.push_back(json::Value::make_number(v(k)));
+      return a;
+    };
+    if (p.criterion == YieldCriterion::Hill48) {
+      const Hill48Parameters& h = p.hill;
+      json::Value hill = json::Value::make_object();
+      switch (h.calibration) {
+        case HillCalibration::RValues:
+          hill.set("calibration", json::Value::make_string("r_values"));
+          hill.set("r0", json::Value::make_number(h.r0));
+          hill.set("r45", json::Value::make_number(h.r45));
+          hill.set("r90", json::Value::make_number(h.r90));
+          break;
+        case HillCalibration::StressRatios:
+          hill.set("calibration", json::Value::make_string("stress_ratios"));
+          hill.set("sigma_45", json::Value::make_number(h.sigma45));
+          hill.set("sigma_90", json::Value::make_number(h.sigma90));
+          hill.set("sigma_biaxial", json::Value::make_number(h.sigma_biaxial));
+          break;
+        case HillCalibration::Coefficients:
+          hill.set("calibration", json::Value::make_string("coefficients"));
+          break;
+      }
+      json::Value c = json::Value::make_object();
+      c.set("F", json::Value::make_number(h.F));
+      c.set("G", json::Value::make_number(h.G));
+      c.set("H", json::Value::make_number(h.H));
+      c.set("L", json::Value::make_number(h.L));
+      c.set("M", json::Value::make_number(h.M));
+      c.set("N", json::Value::make_number(h.N));
+      hill.set("coefficients", c);
+      hill.set("rolling_direction", vector_json(h.axes.row(0).transpose()));
+      hill.set("transverse_direction", vector_json(h.axes.row(1).transpose()));
+      hill.set("sheet_normal", vector_json(h.axes.row(2).transpose()));
+      j.set("anisotropy", hill);
+    }
+    if (p.num_backstresses > 0) {
+      json::Value list = json::Value::make_array();
+      for (int i = 0; i < p.num_backstresses; ++i) {
+        const Backstress& b = p.backstresses[static_cast<std::size_t>(i)];
+        json::Value item = json::Value::make_object();
+        item.set("modulus_Pa", json::Value::make_number(b.modulus));
+        item.set("recovery", json::Value::make_number(b.recovery));
+        list.push_back(item);
+      }
+      j.set("backstresses", list);
+      j.set("kinematic_integration",
+            json::Value::make_string(p.kinematic_integration == KinematicIntegration::Exponential
+                                         ? "exponential"
+                                         : "backward_euler"));
+    }
     out.set("plasticity", j);
   }
   return out;
