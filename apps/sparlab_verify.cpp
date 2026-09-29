@@ -2550,6 +2550,7 @@ int main(int argc, char** argv) {
             "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
             "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
             "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle | "
+            "chaboche-cycle | hill-directional | "
             "transient-modal | rod-harmonic | rod-transient | nonlinear-oscillator"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
@@ -2667,6 +2668,12 @@ int main(int argc, char** argv) {
     }
     if (all || study == "plastic-cycle") {
       outcomes.push_back(verify::study_plastic_cycle(out_dir, summary));
+    }
+    if (all || study == "chaboche-cycle") {
+      outcomes.push_back(verify::study_chaboche_cycle(out_dir, summary));
+    }
+    if (all || study == "hill-directional") {
+      outcomes.push_back(verify::study_hill_directional(out_dir, summary));
     }
     if (all || study == "transient-modal") {
       outcomes.push_back(verify::study_transient_modal(out_dir, summary));

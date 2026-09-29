@@ -61,6 +61,8 @@ StudyOutcome study_arch_snap_through(const std::string& out_dir, json::Value& su
 StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_plastic_bending(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_plastic_cycle(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_chaboche_cycle(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_hill_directional(const std::string& out_dir, json::Value& summary);
 /// \}
 
 /// Studies of the transient and harmonic analyses (verify_dynamics.cpp).
