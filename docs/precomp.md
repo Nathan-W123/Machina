@@ -20,8 +20,8 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 133 tests (42 for precomp.ml), ~150 s; the 4 integration tests
-                                     # (~2 min more) skip without build/bin/sparlab_form
+python3 -m pytest python/tests -q    # 134 tests (42 for precomp.ml), ~90 s; the 4 integration tests
+                                     # (~100 s more) skip without build/bin/sparlab_form
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
@@ -422,6 +422,17 @@ by default).
 Predictors: `FEAPredictor(setup, work_dir)` simulates (through the cache);
 `SurrogatePredictor(model, setup)` and `CompositePredictor(base, model, setup)`
 use any object with `predict_deviation(commanded, setup) -> (mean, std)`.
+
+With `sparlab_form` as the predictor (`benchmarks/fea_da_cone`, made by
+`python/scripts/fea_da_demo.py`): a 3 mm deep, 45 deg cone on a 40 x 40 x
+1 mm AA5754-O blank (20 x 20 x 2 Hex8, 4 mm tool) formed with a clamp as
+close as a backing plate came out 0.465 mm RMS (0.970 mm at most) from the
+target over the part, and 0.405 mm (0.833 mm) after one DA step; with a
+wider clamp 0.739 mm (1.392 mm) and 0.630 mm (1.196 mm). Each simulation
+took 2-4 minutes on one thread. DA converges slowly here: the rim sags
+where the command cannot rise above the sheet plane, the unswept floor
+follows the command by about half, and the response is not local (the
+record's README).
 
 ## Robot compliance
 
