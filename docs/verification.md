@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 235 cases, 14 696 assertions
+make test              # the Catch2 suite: 255 cases, 17 971 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -54,6 +54,9 @@ All numbers in this document come from `results/verification/summary.json`,
 | Large-deflection cantilever vs Euler's elastica (Tet10, `k <= 10`) | verification + validation | largest tip-displacement error on the finest mesh, in `L` (observed order `>= 2.7` also required) | `1.36e-04` | `1e-3` | PASS |
 | Thick tube at finite strain vs exact: follower pressure, spin, heating (Q4, Tri3, Hex8, Tet10) | verification | largest shortfall of the RMS displacement order below the element's | `9.0e-04` | `0.3` | PASS |
 | Shallow-arch snap-through: arc length vs displacement control | verification | largest crown-force difference at equal deflection / limit force (inertia and the load-control bracket also required) | `2.82e-11` | `1e-6` | PASS |
+| Thick tube to plastic collapse vs the exact limit load (Q4, Hex8, Tet10; mean dilatation and locking) | verification | largest collapse-pressure error of the default elements, finest mesh (order `>= 1.8` and the fully plastic stress field also required) | `4.82e-04` | `1e-3` | PASS |
+| Pure bending: moment-curvature and residual stress vs exact (plane-stress Q4) | verification | largest moment error over `M_p` on the loading branch, finest mesh (order, residual moment and residual stress also required) | `6.17e-04` | `1e-3` | PASS |
+| Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -69,6 +72,8 @@ Supporting measurements from the same runs:
 | Elastica: observed Tet10 order, continuum-elastica gap | deflection `3.01 -> 3.49`, shortening `3.06 -> 3.65` from `k = 1` to 10; gap `2.2e-05 L -> 1.46e-04 L` |
 | Finite-strain tube: exact bore hoop stretch, reference checks | `1.48077` (inflation), `1.17256` (spin), `1.02502` (heating); equilibrium `<= 3.7e-7`, Lame limit `3.2e-11` |
 | Arch: limit force, load-control bracket | `1588.2464 N`; load control stops at `1588.135 N` and rejects `1588.257 N` |
+| Plastic tube: collapse-pressure error, finest mesh (order) | Q4 mean dilatation `1.20e-04` (2.00), Hex8 `4.82e-04` (2.00), Tet10 `2.99e-06` (3.02); fully integrated Q4 `1.20e-02` with a rising plateau, Tet10 with mean dilatation `-7.12e-04` (2.05, from below) |
+| Plastic bending: moment error order, residual moment, residual stress | `1.94`; `1.63e-04 M_p`; `2.33e-03 sigma_y` (order `1.65`) |
 
 And from the cross-validation against two independent codes (section 14):
 
@@ -101,6 +106,11 @@ And from the cross-validation against two independent codes (section 14):
 | The same plates, conducted temperature | CalculiX `*HEAT TRANSFER` (temperature, relative to its range) | `3.17e-05` / `3.47e-05` / `1.12e-05` | `1e-4` | PASS |
 | Gmsh engine mount, 13 918 curved Tet10: bore pressure, self-weight, rotation, conduction | scikit-fem integrating the loads itself | `<= 8.92e-12` | `1e-7` | PASS |
 | The same | CalculiX `C3D10`; conduction `*HEAT TRANSFER` | `<= 2.45e-06`; `5.21e-06` | `1e-5`; `1e-4` | PASS |
+| Elastoplastic, small strain: a Hex8 cantilever loaded past yield and unloaded / a plane-strain Q4 strip / a Tet10 punch partly relieved / a Tet10 plate heated past yield and cooled | scikit-fem, an independent J2 solve | `5.00e-13` / `3.90e-15` / `9.94e-13` / `6.85e-12` | `1e-7` | PASS |
+| The same four | CalculiX `*PLASTIC`, `C3D8` / `CPE4` / `C3D10` / `C3D10` | `1.76e-06` / `1.94e-06` / `3.15e-06` / `3.25e-06` | `1e-5` | PASS |
+| Elastoplastic cycles: Hex8 with mean dilatation and combined hardening / plane-stress Q4 with kinematic and Voce hardening | scikit-fem, an independent J2 solve | `3.24e-14` / `6.45e-15` | `1e-7` | PASS |
+| Elastoplastic, finite kinematics: a 960-Tet10 cantilever deflected a tenth of its span / a beam clamped at both ends, driven into membrane action and back with combined hardening, 320 Hex8 with E-bar / 160 Q4 plane strain with E-bar / 160 Q4 plane stress | scikit-fem, an independent finite-kinematics J2 solve | `1.58e-14` / `3.42e-13` / `3.37e-13` / `2.28e-13` | `1e-7` | PASS |
+| Elastoplastic large deflection, 960 Tet10 | CalculiX `*PLASTIC` under `NLGEOM` (a different finite-strain model) | `1.81e-04` | - | INFO |
 
 And the linear buckling load factors of the same three columns, four modes
 each (section 20):
@@ -114,10 +124,12 @@ each (section 20):
 | 480 Tet10 | scikit-fem | `8.41e-10` | `1e-7` | PASS |
 | 480 Tet10 | CalculiX `*BUCKLE`, `C3D10` | `6.70e-05` | `1e-4` | PASS |
 
-The two `INFO` rows are not a disagreement between codes but between
-idealisations: CalculiX expands its plane elements into a layer of solid
+The `INFO` rows are not a disagreement between codes but between
+idealisations or models: CalculiX expands its plane elements into a layer of solid
 elements, which reproduces plane stress only at `nu = 0` - the same mesh at
-`nu = 0` agrees to the `.frd` rounding floor (section 14). Where CalculiX's own
+`nu = 0` agrees to the `.frd` rounding floor (section 14); the elastoplastic
+large-deflection row sets SparLab's J2 return in the Green-Lagrange strain
+against CalculiX's finite-strain plasticity (section 24). Where CalculiX's own
 formulation of a load differs from SparLab's, its row is judged against
 scikit-fem solving CalculiX's problem (section 22); SparLab's own loads are
 judged by scikit-fem integrating them independently, to `1e-12`.
@@ -579,10 +591,16 @@ node (`python/scripts/cross_validate.py`, `make cross-validation`):
   same integration order - the 4-point rule for the Tet10. It is the *same
   element formulation* in an independent implementation, so the only
   expected difference is linear-solver round-off - and that is what is
-  measured, from `8.7e-14` to `1.5e-10` relative over twenty of the
-  twenty-one problems, and `8.0e-9` on the slender cantilever of the
-  elastica deck, whose conditioning amplifies the round-off (formulation,
-  section 5).
+  measured: from `2.4e-14` to `1.5e-10` relative on 53 of the 56 load
+  cases, and `1.4e-9`, `8.0e-9` and `2.2e-8` on the three worst-conditioned
+  systems, a plane-strain strip and the two slender Tet10 cantilevers
+  (formulation, section 5). Each comparison records the round-off scale of
+  its system, `kappa_1(K) eps` - the 1-norm condition number of the free
+  stiffness matrix (Hager and Higham's estimate, equal to the exact value on
+  the four decks also checked densely) times machine epsilon, about the most
+  two backward-stable solutions of the system can differ by - and every
+  difference lies below it: at most `0.47` of it, and the three largest at
+  `0.12`, `0.008` and `0.015` of theirs (`1.1e-8`, `1.1e-6`, `1.5e-6`).
   scikit-fem's Tet10 node order is checked against SparLab's cell by cell
   before anything is solved;
 * **CalculiX 2.21** (`ccx`) runs the exported `.inp` decks. `C3D8`, `C3D4`
@@ -639,10 +657,11 @@ Tolerances are `1e-7` for scikit-fem (displacements, load factors and
 non-linear states) and `1e-5` for CalculiX displacements, linear and
 non-linear, `1e-4` for its load factors, all recorded in the summary with
 the `.frd` floor. The comparison exits non-zero if any judged pair exceeds
-its tolerance, or if a non-linear run stopped short of its load. Of the 137
-comparisons on 21 decks and 46 load cases, 135 pass and 2 are
-informational. CI runs the scikit-fem half - displacements, load factors and
-the dead-load non-linear states - on every push.
+its tolerance, or if a non-linear run stopped short of its load. Of the 173
+comparisons on 31 decks and 56 load cases, 168 pass and 5 are
+informational. CI runs the scikit-fem half - displacements, load factors,
+the dead-load non-linear states and the elastoplastic states - on every
+push.
 
 ## 15. The linear simplices (Tri3, Tet4)
 
@@ -1364,16 +1383,235 @@ were taken:
   cube loses stability at 4.6 % of that pressure. This is physics, not a
   defect, and it became the test of load control's stop.
 
+## 24. Plasticity
+
+**Unit tests against exact answers** (`tests/test_plasticity.cpp`, 20 cases):
+
+* *the hardening laws*: `sigma_y'` is the derivative of `sigma_y` and the
+  stored hardening energy its integral (`1e-6`); parameters are validated
+  (a negative or non-finite one, a saturation stress without a rate,
+  hardening without a yield stress);
+* *uniaxial stress*, the lateral strains found by Newton at the point: with
+  linear isotropic, kinematic or combined hardening the stress at 8 times
+  the yield strain is `E (sigma_y0 + (H + H_kin) eps) / (E + H + H_kin)` to
+  `1e-12`, in one step or forty, with the plastic strain, its lateral
+  components `-eps_p / 2` and the stored energy exact; reversed to `-eps` it
+  follows the isotropic `E (H eps - sigma_y0 - 2 H eps_p1) / (E + H)` and the
+  kinematic `E (H_kin eps - sigma_y0) / (E + H_kin)` (the Bauschinger
+  effect), the surface keeping its size (kinematic) or growing (isotropic);
+  with Voce saturation the stress solves `sigma = sigma_y(eps - sigma/E)` at
+  three strains to `1e-11`;
+* *the consistent tangent* is the central difference of the returned stress
+  to `1e-6` - in 3-D, plane strain and plane stress, with every hardening
+  mechanism at once, on a non-proportional second step from a state with
+  plastic strain, back stress and accumulated strain, and on an elastic step
+  back - and is symmetric; after a plastic step a zero increment gives the
+  continuum elastoplastic tangent, which a further increment of `1e-9`
+  along the flow follows to `1e-4`;
+* *plane stress* leaves `sigma_33` below `1e-11` of the stress and returns
+  the 3-D state at the `eps_33` it found; below yield its condensed tangent
+  is the plane-stress elasticity matrix;
+* *temperature*: free expansion is stress-free at any temperature; a bar
+  held axially carries `-E alpha dT` and then `-sigma_y`, cools to a
+  residual `E alpha dT - sigma_y`, or yields back to `+sigma_y` when
+  `E alpha dT > 2 sigma_y`;
+* *the element*, small strain: on all five element types (plane strain,
+  plane stress, 3-D), with and without mean dilatation, the tangent is the
+  central difference of the internal force at a plastic state to `1e-6`,
+  and the thermal load rate the derivative with respect to the load factor;
+  an elastic element is the linear one (stiffness and energy to `1e-12`),
+  and mean dilatation leaves a constant dilatation alone;
+* *the element*, finite kinematics: the same derivative checks at a state
+  turned by 0.5 rad, with the geometric stiffness and the Green-strain mean
+  dilatation, and the thermal load rate with the Green strain of the thermal
+  stretch; a rigidly rotated deformed state keeps its plastic state and
+  energy and turns its forces; at zero displacement the tangent is the
+  linear stiffness;
+* *a bar pulled and pushed back* on distorted Q4, Hex8 and Tet10 meshes
+  along the load path `1 -> -1` matches the exact cyclic curve at every step
+  - the end force and every element's stress to `1e-9`, the accumulated
+  plastic strain to `1e-8`;
+* *a homogeneous finite elastoplastic deformation* (3 % stretch, shear and a
+  rigid turn) prescribed on the boundary of distorted Q4, Hex8 and Tet10
+  meshes is reproduced at every node to `1e-10` m, and every element holds
+  the point history of the same Green strains in the solver's steps;
+* *heating with finite kinematics*: a body on statically determinate
+  supports heated by `alpha dT = 6e-3` expands to `u = alpha dT x` at every
+  node to `1e-12` m, without stress or yielding (a linear thermal strain in
+  the Green-strain return would stretch it `1.8e-5` short), and the
+  homogeneous deformation above, heated as it is loaded, holds at every
+  element the return of the Green strain less the thermal stretch's
+  `alpha dT (1 + alpha dT / 2)`;
+* *plastic collapse*: a perfectly plastic bar under `1.2 sigma_y` stops
+  within 1 % below `lambda = 1/1.2` with the collapse bracketed; with
+  hardening, arc length and load control end in the same state (`1e-9`) and
+  the exact plastic strain;
+* *small-strain kinematics with elastic materials* is the linear analysis
+  (`1e-10`, one iteration per step), reports its neglected rotation, and
+  refuses the neo-Hookean law;
+* *the deck* parses the `plasticity` block and the `kinematics`,
+  `mean_dilatation` and `load_path` keys, a plastic strip loaded and unloaded
+  keeps a permanent set, and thirteen malformed blocks are refused; *the
+  CalculiX export* writes one fixed-increment step per leg and a hardening
+  table whose chords stay within `1e-4 Q` of the Voce curve.
+
+**Studies** (`apps/verify_plasticity.cpp`; `docs/results/README.md` has the
+full tables).
+
+*A thick tube to plastic collapse* (`--study plastic-cylinder`). A quarter
+section of a tube `a = 0.1 m`, `b = 0.2 m` in plane strain (`E = 200 GPa`,
+`nu = 0.3`, `sigma_y = 250 MPa`, no hardening), small strain, is loaded by its
+bore pressure along the arc-length path past its collapse. The exact
+collapse pressure of a von Mises tube in plane strain,
+`p_L = (2/sqrt 3) sigma_y ln(b/a) = 200.094 MPa`, holds for any Poisson
+ratio - at collapse the elastic strain rates vanish and the flow is
+isochoric, so `sigma_z = (sigma_r + sigma_theta)/2` - and on the plateau the
+whole wall carries the exact fully plastic field,
+`sigma_r = (2/sqrt 3) sigma_y ln(r/b)`,
+`sigma_theta = sigma_r + 2 sigma_y / sqrt 3`. First yield is at
+`0.540 p_L` (Lame's field with `sigma_z = 2 nu A`). The largest load factor
+of the path is a lower bound on the discrete collapse load (every converged
+state is an equilibrium within yield) which the plateau attains; the study
+also records how much the load factor rose over the last ten steps, zero on
+a true collapse plateau.
+
+| Element | Collapse error, finest mesh | Order | Plateau rise | Plateau stress error / `sigma_y` (order) |
+|---------|---------------------------:|------:|-------------:|------------------------------------------|
+| Q4, mean dilatation (the default), `n_r = 32` | `1.20e-04` | 2.00 | `9e-10` | `1.49e-04` (2.01) |
+| Hex8, mean dilatation (the default), `n_r = 16` | `4.82e-04` | 2.00 | `9e-10` | `6.00e-04` (2.00) |
+| Tet10 (the default, no mean dilatation), `n_r = 8` | `2.99e-06` | 3.02 | `2e-07` | `2.33e-03` (0.96) |
+| Q4 fully integrated, `n_r = 16` | `1.20e-02` | 1.99 | `2.0e-03` | `1.21e-02` (1.98) |
+| Tet10 with mean dilatation, `n_r = 8` | `-7.12e-04` (below) | 2.05 | `4e-08` | `2.37e-02` (0.85) |
+| Tri3 (checkerboard split), `n_r = 16` | `3.93e-04` | 2.00 | `1.5e-09` | `9.03e-03` (1.01) |
+
+The one-cell-deep Hex8 section held at `u_z = 0` is exactly plane strain and
+reproduces the Q4 to the last digit. With mean dilatation the Q4 converges
+to the exact collapse pressure at second order and its plateau is flat;
+fully integrated it locks - 18 % high on the coarsest mesh, still 1.2 % at
+16 cells, its plateau rising - as Nagtegaal, Parks and Rice (1974) predict.
+The measurement also settled the default for Tet10: its four-point element
+converges at third order without mean dilatation, while with it the
+collapse load converges at second order from below and the constant element
+pressure oscillates (the stress error converging at order 0.85). The
+checkerboard split of the structured Tri3 mesh - the crossed pattern whose
+triangles, unlike a single diagonal's, leave divergence-free fields enough
+freedom - does not lock here. The pass criteria judge the defaults: the
+collapse error below `1e-3` at order `>= 1.8` and the plateau stress within
+`0.01 sigma_y`.
+
+*Pure bending* (`--study plastic-bending`). A beam `0.2 m x 0.05 m`, `0.01 m`
+thick, in plane stress (`sigma_y = 250 MPa`, no hardening) is bent by end
+displacements `u_x = -k (x - L/2)(y - h/2)` on square Q4 cells (4 to 32
+through the depth). The section is in uniaxial stress, which plane stress
+makes compatible with the free transverse strain, so the exact moment is
+`E I k` up to `k_y = 2 sigma_y / (E h)` and `M_p (1 - (k_y/k)^2 / 3)` beyond.
+The moment from the end reactions at `k = 0.5, 1, 1.5, 2, 3 k_y` converges at
+order 1.94 to `6.17e-04 M_p`. Loaded to `3 k_y` and unloaded along the load
+path to `k_res = 1.5556 k_y`, where the exact moment vanishes, the beam keeps
+`1.63e-04 M_p` and the residual stress - the loaded profile less the elastic
+unloading, which stays short of reverse yield - to `2.33e-03 sigma_y`
+(order 1.65).
+
+*A uniaxial cycle* (`--study plastic-cycle`). A bar on a distorted
+`4 x 2 x 2` Hex8 mesh (mean dilatation) is strained through
+`0 -> 1 % -> -1 % -> 1 %` in 60 steps, with linear isotropic hardening
+(1 GPa), a Voce saturation (100 MPa at rate 30) and Prager kinematic
+hardening (4 GPa). The end force over the area matches the exact uniaxial
+response - the algebraic equations of the uniaxial state, solved at every
+step - to `1.98e-14 sigma_y`: the reversal yields early (the Bauschinger
+effect) and the loop grows as the isotropic hardening accumulates.
+
+**Cross-validation** (`python/scripts/cross_validate.py`, the ten
+`plastic_*` decks). scikit-fem solves every deck with an independent J2
+implementation - the radial return in 3 x 3 tensor form (Newton on the
+multiplier for Voce, on the thickness strain in plane stress), a material
+tangent by central differences of that return so that no tangent formula is
+shared, the mean dilatation where SparLab applied it, Newton converged at
+each of SparLab's load factors with the internal variables committed there;
+with finite kinematics the return in the Green-Lagrange strain
+`E = (H + H^T + H^T H) / 2`, the internal force `int dE : S dV_0` with the
+displacement-dependent strain operator `sym(F^T grad du)`, the geometric
+stiffness and, where SparLab applied it, E-bar with its geometric term. On
+the six small-strain decks it agrees to `3.9e-15` - `6.8e-12`; with finite
+kinematics to `1.6e-14` on a slender Tet10 cantilever deflected a tenth of
+its span, and to `3.4e-13`, `3.4e-13` and `2.3e-13` on a steel beam clamped
+at both ends whose mid-span section is driven 20 mm down - ten times its
+first-yield deflection, into membrane action (a 150 kN end tension on
+Hex8) - and back to zero, which pushes the plastically stretched beam into
+compression and reversed yielding, with isotropic, Voce and kinematic
+hardening: on Hex8 and plane-strain Q4 with E-bar, and on plane-stress Q4
+(its thickness strain from the Green-strain return). These comparisons
+discriminate: switched off in the reference, E-bar moves the result by
+`1.2` (Hex8) and `1.0` (Q4) of the largest residual displacement, and
+small-strain kinematics by `0.09` to `0.12`. CalculiX's `*PLASTIC` (an
+isotropic hardening table, without `NLGEOM`, the same fixed increments, one
+`*STEP` per leg of the load path) agrees to `1.8e-06` - `3.3e-06`, within
+its `.frd` rounding, on a Hex8 cantilever loaded past yield and unloaded, a
+plane-strain strip, a Tet10 punch partly relieved and a Tet10 plate heated
+past yield and cooled (its ramped `*TEMPERATURE` and the additive thermal
+strain). Against CalculiX's finite-strain plasticity under `NLGEOM` the
+Tet10 cantilever differs by `1.8e-04` - two different models, which agree
+to the order of the plastic strain (up to `2.7e-3` here); informational.
+
+What CalculiX was found to do: its `HARDENING=KINEMATIC`, given the table of
+a linear rule (250 MPa at zero plastic strain, 2 250 MPa at 0.1), softens a
+single `C3D8` in uniaxial tension at `-E H_kin / (E - H_kin)` - the rate at
+which Prager's rule hardens, with the opposite sign - and `COMBINED`
+saturates; its users report similar anomalies
+(https://calculix.discourse.group/t/isotropic-hardening-kinematic-hardening/790).
+Its isotropic hardening reproduces the exact reversed curve to its printed
+digits (409.0909, -516.5289 and -698.3471 MPa). Kinematic hardening is
+therefore not exported, and the two decks with it are compared with
+scikit-fem only.
+
+**What writing these checks found**, each fixed before the numbers above
+were taken:
+
+* *load control "converged" past the collapse load.* Driven to 1.05 `p_L`,
+  the perfectly plastic tube reported completion at strains of `1e11`: as
+  the displacement ran away, the round-off floor `64 eps || |K||u| ||` grew
+  with it past the load itself, and every residual passed. A floor now
+  counts only below `1e-6` of the residual's scale (formulation, section
+  7c), and the run stops with the collapse bracketed. The same run exposed
+  that successes short of a collapse reset the halving count, so load
+  control crept towards it until the step budget ran out; the nearest load
+  factor no step reached is now tracked like a critical point
+  (`unreached_load_factor`);
+* *the default mean dilatation was wrong for Tet10*: it was on for every
+  multi-point element until the tube showed the Tet10 better without it;
+* *a linear static summary reported a force-balance error of `6.8e21`* for
+  a case driven by prescribed displacements alone, dividing by an applied
+  force of zero; such a case is now measured against its reactions (formulation,
+  section 4);
+* *a homogeneous finite-deformation test with a rigid turn of 0.5 rad
+  failed*, correctly: prescribing `lambda (F - I) X` runs along the chord of
+  the rotation and compresses the body by 3 % at mid-path, a pressure of
+  5 GPa whose geometric stiffness outweighs the plastic tangent, and the
+  homogeneous state loses stability. The test uses 0.1 rad;
+* *the independent J2 solver diverged* on a prescribed tip displacement,
+  whose jump strains the next row of elements far past yield, until it was
+  given the tangent predictor SparLab uses; a comparison against a
+  `summary.json` without the materials' plasticity parameters (written
+  before they were recorded) compared a plastic run with an elastic one,
+  which the script now refuses;
+* *the independent finite-kinematics solver stalled* on the slender Tet10
+  cantilever at `3e-11` of the load - below the rounding of `u` itself,
+  `eps || |K||u| || = 7.2e-7 N`, and above its `1e-11` tolerance, the same
+  floor SparLab's run sat on (`3.4e-11`, within its `1e-10`). It now accepts,
+  as SparLab does, a residual at its round-off floor, once Newton has
+  stopped reducing it.
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
 
 * **no comparison against experiment**;
-* the cross-validation covers linear static displacements on twenty-one
+* the cross-validation covers linear static displacements on thirty-one
   problems, five of them on the three meshes read from files - six of them
   under pressure, body and thermal loads, with conducted temperatures on four
-  - linear buckling load factors on three, and the final large-deflection
-  states of four, eight comparisons in all. Stresses, natural frequencies,
+  - linear buckling load factors on three, the final large-deflection
+  states of four, eight comparisons in all, and the final elastoplastic
+  states of ten, fifteen comparisons. Stresses, natural frequencies,
   the non-linear load paths (only the final states are compared) and the
   optimised designs are not compared with another code, and CalculiX's
   `*BUCKLE` factors for
@@ -1383,6 +1621,20 @@ Stated plainly, since the absence matters as much as the presence:
   models only buckle in their plane. The non-linear analysis has no branch
   switching, so a post-buckling path is computed only from an imperfect mesh,
   and none is verified;
+* plasticity is small-strain J2 with rate-independent linear, Voce and
+  Prager hardening: no finite-strain plasticity (with `finite` kinematics
+  the return works in the Green-Lagrange strain, sound for large rotation
+  with small strain; it is cross-validated against an independent
+  implementation of that model, and against CalculiX's finite-strain model
+  only as an informational comparison), no rate dependence, creep, damage,
+  fracture or non-associative flow, no nonlinear kinematic hardening
+  (Armstrong-Frederick), no anisotropic yield. The exact solutions cover the
+  collapse load and fully plastic field of a tube, pure bending with
+  unloading and a uniaxial cycle; locking was measured on the tube only, so
+  the Tri3 result there (no locking with the checkerboard split) does not
+  carry to other meshes. Kinematic hardening is not cross-validated against
+  CalculiX (its implementation does not reproduce Prager's rule), only
+  against scikit-fem and the exact uniaxial solutions;
 * the non-linear analysis is verified against exact solutions of a beam
   theory (the elastica, small strain), of plane-strain finite elasticity
   (the tube: inflation, spin, heating) and by the consistency of three

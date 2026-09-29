@@ -192,6 +192,20 @@ IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& defau
   const Scalar t_ref = mat.number_or("reference_temperature", 0.0);
   const Scalar conductivity = mat.number_or("conductivity", 0.0);
   material.set_thermal(alpha, t_ref, conductivity);
+  const ConfigNode plastic = mat.child("plasticity");
+  if (plastic.exists()) {
+    PlasticityParameters p;
+    p.yield_stress = plastic.positive_number("yield_stress");
+    p.hardening_modulus = plastic.number_or("hardening_modulus", 0.0);
+    p.kinematic_hardening_modulus = plastic.number_or("kinematic_hardening_modulus", 0.0);
+    p.saturation_stress = plastic.number_or("saturation_stress", 0.0);
+    p.saturation_rate = plastic.number_or("saturation_rate", 0.0);
+    try {
+      material.set_plasticity(p);
+    } catch (const ConfigError& e) {
+      throw ConfigError("'" + plastic.path() + "': " + e.what());
+    }
+  }
   return material;
 }
 
@@ -820,6 +834,17 @@ Configuration parse_configuration(const json::Value& document, const std::string
     c.enabled = nl.boolean_or("enabled", false);
     NonlinearOptions& o = c.options;
     o.law = parse_hyperelastic_model(nl.string_or("material_model", "saint_venant_kirchhoff"));
+    o.kinematics = parse_kinematics(nl.string_or("kinematics", "finite"));
+    {
+      // "auto" (Q4 and Hex8), "all" or "none"; true and false stand for
+      // "all" and "none".
+      const ConfigNode md = nl.child("mean_dilatation");
+      if (md.exists()) {
+        o.mean_dilatation = md.raw()->is_bool()
+                                ? (md.boolean() ? MeanDilatation::All : MeanDilatation::None)
+                                : parse_mean_dilatation(md.string());
+      }
+    }
     o.method = parse_nonlinear_method(nl.string_or("method", "load_control"));
     o.steps = nl.integer_or("steps", o.steps);
     o.max_steps = nl.integer_or("max_steps", o.max_steps);
@@ -847,6 +872,7 @@ Configuration parse_configuration(const json::Value& document, const std::string
       o.monitors.push_back(std::move(monitor));
     }
     for (const ConfigNode& f : nl.array("load_factors")) o.load_factors.push_back(f.number());
+    for (const ConfigNode& f : nl.array("load_path")) o.load_path.push_back(f.number());
     c.load_cases = string_list(nl, "load_cases");
     if (c.enabled) {
       if (o.steps < 1 || o.max_steps < 1 || o.max_iterations < 1 || o.max_cuts < 0 ||
@@ -865,6 +891,45 @@ Configuration parse_configuration(const json::Value& document, const std::string
       if (!o.load_factors.empty() && o.method == NonlinearOptions::Method::ArcLength) {
         throw ConfigError("'nonlinear.load_factors' fixes the load levels of load control; "
                           "the arc-length method chooses its own");
+      }
+      if (!o.load_path.empty()) {
+        if (o.method == NonlinearOptions::Method::ArcLength) {
+          throw ConfigError("'nonlinear.load_path' is followed by load control; the "
+                            "arc-length method follows the equilibrium path and cannot "
+                            "unload");
+        }
+        if (!o.load_factors.empty()) {
+          throw ConfigError("'nonlinear' gives both 'load_path' and 'load_factors'; give one");
+        }
+        Scalar previous = 0.0;
+        for (Scalar f : o.load_path) {
+          if (!std::isfinite(f) || f == previous) {
+            throw ConfigError("'nonlinear.load_path' needs finite load factors, each different "
+                              "from the one before it (the path starts at 0)");
+          }
+          previous = f;
+        }
+      }
+      if (o.kinematics == Kinematics::SmallStrain) {
+        if (o.law == HyperelasticModel::NeoHookean) {
+          throw ConfigError("'nonlinear.kinematics' \"small_strain\" is linear elasticity; "
+                            "the \"neo_hookean\" material_model needs \"finite\" kinematics");
+        }
+        if (nl.child("follower_pressure").exists() && o.follower_pressure) {
+          throw ConfigError("'nonlinear.follower_pressure' is a large-deflection effect; with "
+                            "\"small_strain\" kinematics pressures act on the undeformed "
+                            "faces - remove the key or use \"finite\" kinematics");
+        }
+      }
+      if (o.law == HyperelasticModel::NeoHookean) {
+        const auto plastic = [](const IsotropicMaterial& m) { return m.plasticity().enabled(); };
+        bool any = plastic(config.material());
+        for (const MaterialRegion& r : config.material_regions) any = any || plastic(r.material);
+        if (any) {
+          throw ConfigError("'nonlinear.material_model' \"neo_hookean\" cannot be combined "
+                            "with a plastic material, which takes the Saint Venant-Kirchhoff "
+                            "form");
+        }
       }
       Scalar previous = 0.0;
       for (Scalar f : o.load_factors) {

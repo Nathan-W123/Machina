@@ -250,6 +250,17 @@ json::Value material_json(const IsotropicMaterial& m, StressState state) {
     out.set("reference_temperature_K", json::Value::make_number(m.reference_temperature()));
     out.set("conductivity_W_per_mK", json::Value::make_number(m.conductivity()));
   }
+  if (m.plasticity().enabled()) {
+    const PlasticityParameters& p = m.plasticity();
+    json::Value j = json::Value::make_object();
+    j.set("yield_stress_Pa", json::Value::make_number(p.yield_stress));
+    j.set("hardening_modulus_Pa", json::Value::make_number(p.hardening_modulus));
+    j.set("kinematic_hardening_modulus_Pa",
+          json::Value::make_number(p.kinematic_hardening_modulus));
+    j.set("saturation_stress_Pa", json::Value::make_number(p.saturation_stress));
+    j.set("saturation_rate", json::Value::make_number(p.saturation_rate));
+    out.set("plasticity", j);
+  }
   return out;
 }
 
@@ -745,6 +756,10 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     std::vector<std::string> header{"step",          "load_factor[-]",     "iterations[-]",
                                     "cuts[-]",       "residual[-]",        "arc_length[m]",
                                     "negative_pivots[-]", "max_displacement[m]"};
+    if (result.plastic) {
+      header.push_back("yielding_points[-]");
+      header.push_back("max_plastic_strain[-]");
+    }
     for (std::size_t i = 0; i < result.monitor_names.size(); ++i) {
       header.push_back(result.monitor_names[i] + "[" + result.monitor_units[i] + "]");
     }
@@ -753,6 +768,10 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
       std::vector<Scalar> row{s.load_factor, static_cast<Scalar>(s.iterations),
                               static_cast<Scalar>(s.cuts), s.residual, s.arc_length,
                               static_cast<Scalar>(s.negative_pivots), s.max_displacement};
+      if (result.plastic) {
+        row.push_back(static_cast<Scalar>(s.yielding_points));
+        row.push_back(s.max_plastic_strain);
+      }
       row.insert(row.end(), s.monitors.begin(), s.monitors.end());
       csv.row(s.index, row);
     }
@@ -778,6 +797,7 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     if (plane_strain) header.push_back("szz[Pa]");
     header.push_back("von_mises[Pa]");
     for (const std::string& p : pairs) header.push_back("pk2_" + p + "[Pa]");
+    if (result.plastic) header.push_back("equivalent_plastic_strain[-]");
     CsvWriter csv(file("nonlinear_stress_" + lc + ".csv"), header);
     for (Index e = 0; e < ne; ++e) {
       const Vector3 c = mesh.element_centroid(e);
@@ -792,6 +812,7 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
       for (Eigen::Index i = 0; i < result.element_piola_kirchhoff.rows(); ++i) {
         row.push_back(result.element_piola_kirchhoff(i, e));
       }
+      if (result.plastic) row.push_back(result.element_plastic_strain(e));
       csv.row(e, row);
     }
     csv.close();
@@ -814,6 +835,9 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     }
     if (plane_strain) writer.add_cell_scalars("cauchy_zz", result.element_cauchy_zz);
     writer.add_cell_scalars("von_mises", result.element_von_mises);
+    if (result.plastic) {
+      writer.add_cell_scalars("equivalent_plastic_strain", result.element_plastic_strain);
+    }
     writer.write(file("nonlinear_" + lc + ".vtk"));
   }
 }
@@ -1225,22 +1249,50 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
                            const NonlinearOptions& options, const FemModel& model,
                            const std::vector<StaticSolution>& linear) {
   const bool arc = options.method == NonlinearOptions::Method::ArcLength;
+  const bool small = options.kinematics == Kinematics::SmallStrain;
   const bool svk = options.law == HyperelasticModel::SaintVenantKirchhoff;
+  bool plastic = false;
+  for (Index e = 0; e < model.mesh().num_elements(); ++e) {
+    if (model.material_of(e).plasticity().enabled()) plastic = true;
+  }
   json::Value out = json::Value::make_object();
-  out.set("formulation",
-          json::Value::make_string(
-              "geometrically non-linear statics, total Lagrangian: second Piola-Kirchhoff "
+  std::string formulation =
+      small ? "small-strain statics: linear strain on the undeformed geometry, Newton's method "
+              "with the consistent tangent"
+            : "geometrically non-linear statics, total Lagrangian: second Piola-Kirchhoff "
               "stress and Green-Lagrange strain on the reference configuration, consistent "
-              "tangent (material plus initial-stress part), Newton's method"));
-  out.set("material_model", json::Value::make_string(to_string(options.law)));
+              "tangent (material plus initial-stress part), Newton's method";
+  if (plastic) {
+    formulation += small ? "; J2 plasticity by the backward-Euler radial return"
+                         : "; J2 plasticity in the Green-Lagrange strain and second "
+                           "Piola-Kirchhoff stress (small strain, large rotation) by the "
+                           "backward-Euler radial return";
+  }
+  out.set("formulation", json::Value::make_string(formulation));
+  out.set("kinematics", json::Value::make_string(to_string(options.kinematics)));
+  out.set("material_model", json::Value::make_string(small ? "linear_elastic"
+                                                           : to_string(options.law)));
   out.set("method", json::Value::make_string(to_string(options.method)));
-  out.set("follower_pressure", json::Value::make_bool(options.follower_pressure));
+  out.set("follower_pressure", json::Value::make_bool(!small && options.follower_pressure));
   out.set("load_scaling",
           json::Value::make_string(
-              "every load of the case - forces, pressures, body forces, the rotation's "
-              "centrifugal load, a temperature change and prescribed displacements - scales "
-              "with the load factor lambda; pressures follow the deformed faces when "
-              "follower_pressure is set, a rotation acts at the deformed position"));
+              small ? "every load of the case - forces, pressures, body forces, the rotation's "
+                      "centrifugal load, a temperature change and prescribed displacements - "
+                      "scales with the load factor lambda and acts on the undeformed geometry"
+                    : "every load of the case - forces, pressures, body forces, the rotation's "
+                      "centrifugal load, a temperature change and prescribed displacements - "
+                      "scales with the load factor lambda; pressures follow the deformed faces "
+                      "when follower_pressure is set, a rotation acts at the deformed "
+                      "position"));
+  if (plastic) {
+    json::Value p = json::Value::make_object();
+    p.set("law", json::Value::make_string(
+                     "J2 (von Mises) with linear and Voce isotropic hardening and Prager's "
+                     "linear kinematic hardening; backward-Euler radial return with the "
+                     "consistent tangent"));
+    p.set("mean_dilatation", json::Value::make_string(to_string(options.mean_dilatation)));
+    out.set("plasticity", p);
+  }
   json::Value opts = json::Value::make_object();
   opts.set("steps", json::Value::make_number(options.steps));
   opts.set("max_steps", json::Value::make_number(options.max_steps));
@@ -1249,6 +1301,7 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
   opts.set("residual_tolerance", json::Value::make_number(options.residual_tolerance));
   opts.set("displacement_tolerance", json::Value::make_number(options.displacement_tolerance));
   opts.set("line_search", json::Value::make_bool(options.line_search));
+  if (!options.load_path.empty()) opts.set("load_path", json::array_of(options.load_path));
   if (arc) {
     opts.set("target_load_factor", json::Value::make_number(options.target_load_factor));
     opts.set("desired_iterations", json::Value::make_number(options.desired_iterations));
@@ -1271,6 +1324,9 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
       bracket.push_back(json::Value::make_number(r.critical_bound));
       c.set("critical_load_factor_bracket", bracket);
     }
+    if (!std::isnan(r.unreached_load_factor)) {
+      c.set("unreached_load_factor", json::Value::make_number(r.unreached_load_factor));
+    }
     c.set("steps", json::Value::make_number(static_cast<Scalar>(r.steps.size())));
     c.set("iterations", json::Value::make_number(r.total_iterations));
     c.set("cuts", json::Value::make_number(r.total_cuts));
@@ -1286,8 +1342,42 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
             json::Value::make_number(r.load_factor * s.max_displacement_magnitude));
     }
     c.set("strain_energy_J", json::Value::make_number(r.strain_energy));
-    c.set("max_green_strain", json::Value::make_number(r.max_green_strain));
-    c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
+    if (small) {
+      c.set("max_strain", json::Value::make_number(r.max_green_strain));
+      c.set("max_rotation_rad", json::Value::make_number(r.max_rotation));
+      c.set("max_neglected_quadratic_strain", json::Value::make_number(r.max_quadratic_strain));
+    } else {
+      c.set("max_green_strain", json::Value::make_number(r.max_green_strain));
+      c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
+    }
+    if (r.plastic) {
+      json::Value p = json::Value::make_object();
+      p.set("mean_dilatation_applied", json::Value::make_bool(r.mean_dilatation));
+      p.set("yielded_points", json::Value::make_number(r.plastic_points));
+      p.set("elastoplastic_points", json::Value::make_number(r.total_points));
+      p.set("max_equivalent_plastic_strain", json::Value::make_number(r.max_plastic_strain));
+      int yielded_elements = 0;
+      for (Eigen::Index e = 0; e < r.element_plastic_strain.size(); ++e) {
+        if (r.element_plastic_strain(e) > 0.0) ++yielded_elements;
+      }
+      p.set("yielded_elements", json::Value::make_number(yielded_elements));
+      int first_yield_step = -1;
+      for (const NonlinearStep& s : r.steps) {
+        if (s.yielding_points > 0) {
+          first_yield_step = s.index;
+          break;
+        }
+      }
+      // The step in which a point first yielded, and the load factor it
+      // ended at (yield began within it).
+      p.set("first_yielding_step", json::Value::make_number(first_yield_step));
+      if (first_yield_step > 0) {
+        p.set("first_yielding_step_load_factor",
+              json::Value::make_number(
+                  r.steps[static_cast<std::size_t>(first_yield_step - 1)].load_factor));
+      }
+      c.set("plasticity", p);
+    }
     c.set("max_von_mises_Pa", json::Value::make_number(
                                   r.element_von_mises.size() > 0 ? r.element_von_mises.maxCoeff()
                                                                  : 0.0));
@@ -1318,6 +1408,7 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
 
     std::vector<std::string> warnings;
     if (!r.completed) warnings.push_back("the run stopped early: " + r.termination);
+    for (const std::string& w : r.warnings) warnings.push_back(w);
     if (final_pivots > 0) {
       warnings.push_back("the final state is unstable: its tangent has " +
                          std::to_string(final_pivots) +
@@ -1332,14 +1423,14 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
       warnings.push_back("the tangent is non-symmetric (follower pressure), factorised by LU, "
                          "which reveals no inertia: stability is not assessed");
     }
-    if (svk && r.max_green_strain > 0.05) {
+    if (!small && !r.plastic && svk && r.max_green_strain > 0.05) {
       std::ostringstream os;
       os << "the largest Green-Lagrange strain is " << r.max_green_strain
          << "; the Saint Venant-Kirchhoff law is meant for small strain (large rotation) - "
             "use \"neo_hookean\" for large strain";
       warnings.push_back(os.str());
     }
-    if (svk && r.min_jacobian < 1.0 / std::sqrt(3.0)) {
+    if (!small && svk && r.min_jacobian < 1.0 / std::sqrt(3.0)) {
       std::ostringstream os;
       os << "an integration point is compressed to a volume ratio J = " << r.min_jacobian
          << " < 1/sqrt(3): below a stretch of 1/sqrt(3) the Saint Venant-Kirchhoff law's "

@@ -52,6 +52,33 @@
 
 namespace sparlab {
 
+/// J2 (von Mises) plasticity of an isotropic material: the yield stress
+/// after an accumulated plastic strain \f$\bar\alpha\f$ is
+/// \f[
+///   \sigma_y(\bar\alpha) = \sigma_{y0} + H\bar\alpha + Q\,(1 - e^{-\delta\bar\alpha})
+/// \f]
+/// (linear isotropic hardening plus Voce saturation), and the back stress
+/// evolves by Prager's linear kinematic hardening,
+/// \f$\dot\beta = \tfrac{2}{3} H_{kin}\,\dot\varepsilon^p\f$. A yield stress
+/// of 0 means the material stays elastic. Material/Plasticity.hpp integrates
+/// the law.
+struct PlasticityParameters {
+  Scalar yield_stress = 0.0;                 ///< \f$\sigma_{y0}\f$ [Pa]
+  Scalar hardening_modulus = 0.0;            ///< H, linear isotropic [Pa]
+  Scalar kinematic_hardening_modulus = 0.0;  ///< \f$H_{kin}\f$, Prager [Pa]
+  Scalar saturation_stress = 0.0;            ///< Q, Voce saturation increment [Pa]
+  Scalar saturation_rate = 0.0;              ///< \f$\delta\f$, Voce rate [-]
+
+  bool enabled() const { return yield_stress > 0.0; }
+  /// \f$\sigma_y(\bar\alpha)\f$ [Pa].
+  Scalar yield(Scalar alpha) const;
+  /// \f$d\sigma_y/d\bar\alpha\f$ [Pa].
+  Scalar yield_slope(Scalar alpha) const;
+  /// Stored energy of the isotropic hardening per unit volume,
+  /// \f$\int_0^{\bar\alpha} (\sigma_y - \sigma_{y0})\,d\bar\alpha\f$ [J/m^3].
+  Scalar isotropic_energy(Scalar alpha) const;
+};
+
 /// Isotropic linear-elastic material described by \f$(E, \nu, \rho)\f$.
 class IsotropicMaterial {
  public:
@@ -96,8 +123,17 @@ class IsotropicMaterial {
     copy.alpha_ = alpha_;
     copy.t_ref_ = t_ref_;
     copy.k_ = k_;
+    copy.plasticity_ = plasticity_;
     return copy;
   }
+
+  /// J2 plasticity; `plasticity().enabled()` is false for an elastic
+  /// material (the default).
+  const PlasticityParameters& plasticity() const { return plasticity_; }
+  /// Set the plasticity parameters.
+  /// \throws ConfigError for a negative or non-finite parameter, or a
+  ///         saturation stress without a positive saturation rate.
+  void set_plasticity(const PlasticityParameters& parameters);
 
   /// Linear thermal expansion coefficient alpha [1/K]; 0 means no thermal
   /// strain.
@@ -108,7 +144,7 @@ class IsotropicMaterial {
   /// Thermal conductivity k [W/(m K)], used by the conduction solve.
   Scalar conductivity() const { return k_; }
   /// Set the thermal properties.
-  /// 	hrows ConfigError for a negative conductivity or non-finite input.
+  /// \throws ConfigError for a negative conductivity or non-finite input.
   void set_thermal(Scalar expansion, Scalar reference_temperature, Scalar conductivity);
 
   /// Voigt thermal strain \f$\varepsilon_0\f$ of a temperature change for
@@ -131,6 +167,7 @@ class IsotropicMaterial {
   Scalar alpha_ = 0.0;
   Scalar t_ref_ = 0.0;
   Scalar k_ = 0.0;
+  PlasticityParameters plasticity_;
 };
 
 }  // namespace sparlab

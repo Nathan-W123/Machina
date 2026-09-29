@@ -29,11 +29,25 @@
 /// convection `F1`...`F6`, and `*NODE FILE, NT`, so CalculiX solves the
 /// conduction problem itself.
 ///
-/// A geometrically non-linear analysis of a case also gets
-/// `<stem>_<case>_nlgeom.inp`: the same model and loads in a `*STEP, NLGEOM`
-/// whose `*STATIC` step ramps every load (and prescribed displacement) with
-/// the step time from 0 to 1, as SparLab's load factor does, in automatically
-/// sized increments no longer than 1 / `increments`. Under NLGEOM CalculiX's
+/// A non-linear analysis of a case also gets `<stem>_<case>_nlgeom.inp`
+/// (finite kinematics) or `<stem>_<case>_small_strain.inp`: the same model
+/// and loads in a `*STEP` (with `NLGEOM` for finite kinematics) whose
+/// `*STATIC` step ramps every load (and prescribed displacement) with the
+/// step time from 0 to 1, as SparLab's load factor does - one step per leg of
+/// a load path, each ramping from the last leg's level to its own. An
+/// elastic NLGEOM step takes automatically sized increments no longer than
+/// 1 / `increments`; an elastoplastic one takes exactly `increments` fixed
+/// increments per leg (`DIRECT`), the steps of SparLab's run, because the
+/// backward-Euler return depends on the increments on a non-proportional
+/// path. An elastoplastic material goes out with `*PLASTIC`: its isotropic
+/// hardening curve as (yield stress, equivalent plastic strain) pairs, exact
+/// for linear hardening (CalculiX holds the last value beyond the table, so
+/// the table runs to a plastic strain of 10) and a piecewise-linear table
+/// within 1e-4 of the saturation stress for Voce hardening. Kinematic
+/// hardening is not exported: CalculiX 2.21's `HARDENING=KINEMATIC`, given
+/// the table of a linear rule, softens a single element in uniaxial tension
+/// at the rate the rule hardens it (measured), so such a case gets no
+/// non-linear deck. Under NLGEOM CalculiX's
 /// `*ELASTIC` material is Saint Venant-Kirchhoff (second Piola-Kirchhoff
 /// stress linear in the Green-Lagrange strain) and its `*DLOAD` pressure
 /// follows the deforming face, so a follower pressure stays a face load
@@ -60,11 +74,18 @@
 
 namespace sparlab {
 
-/// The geometrically non-linear decks to write beside the linear ones.
+/// The non-linear decks to write beside the linear ones.
 struct CalculixNonlinearExport {
   std::vector<std::size_t> load_cases;  ///< indices of the cases to export
-  int increments = 10;                  ///< largest increment = 1 / increments
+  /// Increments per leg of the load path: the largest increment of an
+  /// elastic NLGEOM step, the fixed increment of an elastoplastic one.
+  int increments = 10;
   bool follower_pressure = true;        ///< as NonlinearOptions::follower_pressure
+  /// Finite kinematics (`*STEP, NLGEOM`); false for small strain.
+  bool nlgeom = true;
+  /// The load factors of the path's turning points, one `*STEP` each; empty
+  /// for a single step from 0 to 1.
+  std::vector<Scalar> load_path;
 };
 
 /// Write `<stem>_<load case>.inp` for every load case of `model`, followed by

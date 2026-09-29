@@ -82,6 +82,45 @@ void IsotropicMaterial::set_thermal(Scalar expansion, Scalar reference_temperatu
   k_ = conductivity;
 }
 
+Scalar PlasticityParameters::yield(Scalar alpha) const {
+  return yield_stress + hardening_modulus * alpha +
+         saturation_stress * -std::expm1(-saturation_rate * alpha);
+}
+
+Scalar PlasticityParameters::yield_slope(Scalar alpha) const {
+  return hardening_modulus +
+         saturation_stress * saturation_rate * std::exp(-saturation_rate * alpha);
+}
+
+Scalar PlasticityParameters::isotropic_energy(Scalar alpha) const {
+  // int_0^a H s + Q (1 - e^(-delta s)) ds = H a^2/2 + Q (a + expm1(-delta a) / delta).
+  Scalar out = 0.5 * hardening_modulus * alpha * alpha;
+  if (saturation_stress != 0.0) {
+    out += saturation_stress * (alpha + std::expm1(-saturation_rate * alpha) / saturation_rate);
+  }
+  return out;
+}
+
+void IsotropicMaterial::set_plasticity(const PlasticityParameters& p) {
+  const Scalar values[] = {p.yield_stress, p.hardening_modulus, p.kinematic_hardening_modulus,
+                           p.saturation_stress, p.saturation_rate};
+  for (Scalar v : values) {
+    if (!std::isfinite(v) || v < 0.0) {
+      throw ConfigError("material '" + name_ +
+                        "' needs finite, non-negative plasticity parameters");
+    }
+  }
+  if (p.saturation_stress > 0.0 && !(p.saturation_rate > 0.0)) {
+    throw ConfigError("material '" + name_ +
+                      "' has a Voce saturation stress but no positive saturation rate");
+  }
+  if (!p.enabled() && (p.hardening_modulus > 0.0 || p.kinematic_hardening_modulus > 0.0 ||
+                       p.saturation_stress > 0.0)) {
+    throw ConfigError("material '" + name_ + "' has hardening parameters but no yield stress");
+  }
+  plasticity_ = p;
+}
+
 Vector IsotropicMaterial::thermal_strain(StressState state, Scalar delta_t) const {
   const Scalar e0 = alpha_ * delta_t;
   switch (state) {

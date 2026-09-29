@@ -3,7 +3,8 @@
 ///
 /// The structural studies live in sparlab_verify.cpp; the studies of the
 /// volume, pressure and thermal loads live in verify_loads.cpp, those of the
-/// geometrically non-linear analysis in verify_nonlinear.cpp. All report a
+/// geometrically non-linear analysis in verify_nonlinear.cpp and those of
+/// plasticity in verify_plasticity.cpp. All report a
 /// `StudyOutcome` that the driver prints and writes to summary.json.
 #pragma once
 
@@ -52,6 +53,13 @@ StudyOutcome study_self_weight(const std::string& out_dir, json::Value& summary)
 StudyOutcome study_elastica(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_hyperelastic_cylinder(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_arch_snap_through(const std::string& out_dir, json::Value& summary);
+/// \}
+
+/// Studies of the elastoplastic analysis (verify_plasticity.cpp).
+/// \{
+StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_plastic_bending(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_plastic_cycle(const std::string& out_dir, json::Value& summary);
 /// \}
 
 /// Quarter sections of a cylinder (verify_loads.cpp).

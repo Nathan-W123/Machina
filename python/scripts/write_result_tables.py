@@ -240,6 +240,7 @@ def cross_validation_table(results_dir: str) -> Optional[str]:
                     case["case"], case.get("element_type", ""), load_case["load_case"],
                     f"{code} {versions.get(code, '')}".strip(), entry.get("element", ""),
                     _fmt(judged, 3), _fmt(entry.get("rms_rel_diff"), 3),
+                    _fmt(entry["round_off_scale"], 2) if "round_off_scale" in entry else "",
                     _fmt(entry["tolerance"], 2), verdict,
                 ])
                 flat = {k: v for k, v in entry.items() if not isinstance(v, (dict, list))
@@ -256,7 +257,7 @@ def cross_validation_table(results_dir: str) -> Optional[str]:
     pd.DataFrame(frames).to_csv(os.path.join(_OUTPUT, "cross_validation.csv"), index=False)
     return _markdown_table(
         ["case", "SparLab element", "load case", "code", "reference element",
-         "max rel diff", "RMS rel diff", "tolerance", "result"],
+         "max rel diff", "RMS rel diff", "kappa_1 eps", "tolerance", "result"],
         rows,
     )
 
@@ -1019,6 +1020,153 @@ def nonlinear_decks_table(results_dir: str) -> Optional[str]:
          "tangent", "force balance"], rows)
 
 
+#: Rows of docs/results/plasticity.csv, collected by the plasticity tables.
+_PLASTIC_FRAMES: List[Dict] = []
+
+#: The elastoplastic decks (configs/verification/plastic_*.json).
+PLASTIC_CASES = ["plastic_beam_hex_small_strain", "plastic_strip_q4_small_strain",
+                 "plastic_punch_tet10_small_strain", "plastic_beam_hex_cyclic",
+                 "plastic_strip_q4_plane_stress_cyclic", "plastic_plate_thermal_tet10",
+                 "plastic_beam_tet10_nlgeom", "plastic_clamped_beam_hex_nlgeom",
+                 "plastic_clamped_strip_q4_nlgeom", "plastic_clamped_strip_q4_plane_stress_nlgeom"]
+
+
+def plastic_cylinder_table(results_dir: str) -> Optional[str]:
+    """The thick tube to plastic collapse: one row per element variant on its
+    finest mesh."""
+    path = os.path.join(results_dir, "verification", "plastic_cylinder.csv")
+    if not os.path.isfile(path):
+        return None
+    table = pd.read_csv(path)
+    rows = []
+    for (element, md), sub in table.groupby(["element", "mean_dilatation"], sort=False):
+        last = sub.iloc[-1]
+        record = {
+            "study": "plastic tube", "element": str(element),
+            "case": "mean dilatation" if md == "yes" else "standard",
+            "mesh": f"{int(last['n_r'])} x {int(last['n_theta'])}",
+            "DOFs": int(last["num_dofs"]),
+            "collapse_pressure_ratio[-]": float(last["collapse_pressure_ratio[-]"]),
+            "collapse_error[-]": float(last["collapse_error[-]"]),
+            "collapse_order[-]": float(last["collapse_order[-]"]),
+            "plateau_rise[-]": float(last["plateau_rise[-]"]),
+            "stress_rms_error[-]": float(last["stress_rms_error[-]"]),
+            "stress_order[-]": float(last["stress_order[-]"]),
+        }
+        _PLASTIC_FRAMES.append(record)
+        rows.append([ELEMENT_LABELS.get(element, element), record["case"], record["mesh"],
+                     _fmt(record["DOFs"]), _fmt(record["collapse_pressure_ratio[-]"], 8),
+                     _fmt(record["collapse_error[-]"], 3), _fmt(record["collapse_order[-]"], 3),
+                     _fmt(record["plateau_rise[-]"], 2), _fmt(record["stress_rms_error[-]"], 3),
+                     _fmt(record["stress_order[-]"], 3)])
+    if not rows:
+        return None
+    return _markdown_table(["element", "variant", "finest mesh", "DOFs", "collapse / p_L",
+                            "error", "order", "plateau rise", "plateau stress error / sigma_y",
+                            "order"], rows)
+
+
+def plastic_bending_table(results_dir: str) -> Optional[str]:
+    """Pure bending past yield and back: per mesh, the largest moment error
+    on the loading branch and the unloaded state."""
+    base = os.path.join(results_dir, "verification")
+    summary_path = os.path.join(base, "summary.json")
+    if not os.path.isfile(summary_path):
+        return None
+    block = load_json(summary_path).get("plastic_bending")
+    if not block:
+        return None
+    rows = []
+    for m in block.get("meshes", []):
+        record = {"study": "plastic bending", "element": "Quad4",
+                  "case": "moment-curvature and unloading",
+                  "mesh": f"{int(m['nx'])} x {int(m['ny'])}", "DOFs": int(m["num_dofs"]),
+                  "moment_error_over_mp[-]": float(m["max_moment_error_over_mp"]),
+                  "residual_moment_over_mp[-]": float(m["residual_moment_over_mp"]),
+                  "residual_stress_error_over_sy[-]":
+                      float(m["residual_stress_rms_error_over_sy"])}
+        _PLASTIC_FRAMES.append(record)
+        rows.append([record["mesh"], _fmt(record["DOFs"]),
+                     _fmt(record["moment_error_over_mp[-]"], 3),
+                     _fmt(record["residual_moment_over_mp[-]"], 3),
+                     _fmt(record["residual_stress_error_over_sy[-]"], 3)])
+    rows.append(["order (two finest)", "-", _fmt(block.get("moment_error_order"), 3), "-",
+                 _fmt(block.get("residual_stress_error_order"), 3)])
+    return _markdown_table(["mesh (nx x ny)", "DOFs", "largest moment error / M_p",
+                            "residual moment / M_p", "residual stress error / sigma_y"], rows)
+
+
+def plastic_cycle_table(results_dir: str) -> Optional[str]:
+    """The uniaxial cycle with combined hardening."""
+    summary_path = os.path.join(results_dir, "verification", "summary.json")
+    if not os.path.isfile(summary_path):
+        return None
+    block = load_json(summary_path).get("plastic_cycle")
+    if not block:
+        return None
+    _PLASTIC_FRAMES.append({"study": "plastic cycle", "element": "Hex8",
+                            "case": "0 -> 1 % -> -1 % -> 1 %",
+                            "steps": int(block["steps"]),
+                            "max_stress_error_over_sy[-]":
+                                float(block["max_stress_error_over_yield"]),
+                            "final_equivalent_plastic_strain[-]":
+                                float(block["final_equivalent_plastic_strain"])})
+    return _markdown_table(["quantity", "value"], [
+        ["steps (three legs of 20)", str(int(block["steps"]))],
+        ["completed", _fmt(bool(block["completed"]))],
+        ["largest stress error / sigma_y", _fmt(block["max_stress_error_over_yield"], 3)],
+        ["accumulated plastic strain at the end",
+         _fmt(block["final_equivalent_plastic_strain"], 5)],
+    ])
+
+
+def plastic_decks_table(results_dir: str) -> Optional[str]:
+    """The elastoplastic decks solved by sparlab_solve."""
+    rows = []
+    for case in PLASTIC_CASES:
+        path = os.path.join(results_dir, case, "summary.json")
+        if not os.path.isfile(path):
+            continue
+        doc = load_json(path)
+        block = doc.get("nonlinear")
+        if not block:
+            continue
+        element = doc.get("mesh", {}).get("element_type", "")
+        path_factors = block.get("options", {}).get("load_path") or [1.0]
+        for lc in block.get("load_cases", []):
+            plastic = lc.get("plasticity", {})
+            record = {
+                "study": "deck", "element": element, "case": f"{case}/{lc['load_case']}",
+                "kinematics": block.get("kinematics"),
+                "load_path": " -> ".join(_fmt(f, 3) for f in [0.0] + list(path_factors)),
+                "load_factor": lc["load_factor"], "steps": lc["steps"],
+                "iterations": lc["iterations"], "cuts": lc["cuts"],
+                "yielded_points": plastic.get("yielded_points"),
+                "points": plastic.get("elastoplastic_points"),
+                "max_equivalent_plastic_strain":
+                    plastic.get("max_equivalent_plastic_strain"),
+                "first_yielding_step_load_factor":
+                    plastic.get("first_yielding_step_load_factor"),
+                "mean_dilatation": plastic.get("mean_dilatation_applied"),
+                "relative_force_error": lc["equilibrium"]["relative_force_error"],
+            }
+            _PLASTIC_FRAMES.append(record)
+            rows.append([case, ELEMENT_LABELS.get(element, element),
+                         str(block.get("kinematics")), record["load_path"],
+                         f"{lc['steps']} / {lc['iterations']} / {lc['cuts']}",
+                         f"{record['yielded_points']} of {record['points']}",
+                         _fmt(record["max_equivalent_plastic_strain"], 3),
+                         _fmt(record["first_yielding_step_load_factor"], 3),
+                         "yes" if record["mean_dilatation"] else "no",
+                         _fmt(record["relative_force_error"], 2)])
+    if not rows:
+        return None
+    return _markdown_table(["deck", "element", "kinematics", "load path",
+                            "steps / iterations / cuts", "yielded points",
+                            "max plastic strain", "first yielding step at lambda",
+                            "mean dilatation", "force balance"], rows)
+
+
 _OUTPUT = "docs/results"
 
 
@@ -1115,6 +1263,35 @@ def main(argv=None) -> int:
          "assembled tangent is symmetric (its inertia is then known) and LU when a "
          "follower pressure makes it non-symmetric. `force balance` is the relative "
          "error of the applied loads against the reactions in the deformed state."),
+        ("Plastic collapse of a thick tube", plastic_cylinder_table(args.results),
+         "From `results/verification/plastic_cylinder.csv` (`sparlab_verify --study "
+         "plastic-cylinder`): a quarter section of a tube a = 0.1 m, b = 0.2 m in plane "
+         "strain, perfectly plastic (E = 200 GPa, nu = 0.3, sigma_y = 250 MPa), small "
+         "strain, loaded by its bore pressure along the arc-length path past collapse. "
+         "`collapse / p_L` is the largest load factor of the path over the exact collapse "
+         "pressure (2/sqrt 3) sigma_y ln(b/a); the order is measured between the two finest "
+         "meshes; `plateau rise` is the load factor gained over the last ten steps (zero on "
+         "a true collapse plateau); the plateau stress error is the RMS error of the element "
+         "stresses against the exact fully plastic field, over sigma_y. The defaults are Q4 "
+         "and Hex8 with mean dilatation and Tet10 without."),
+        ("Elastoplastic pure bending", plastic_bending_table(args.results),
+         "From `results/verification/summary.json` (`sparlab_verify --study "
+         "plastic-bending`): a plane-stress beam 0.2 m x 0.05 m (sigma_y = 250 MPa, no "
+         "hardening) bent by end rotations on square Q4 cells. The moment error is the "
+         "largest over k = 0.5, 1, 1.5, 2, 3 k_y against M_p (1 - (k_y/k)^2/3); unloaded "
+         "from 3 k_y to the curvature where the exact moment vanishes, the residual moment "
+         "and the residual stress of the column left of mid-span against the exact profile."),
+        ("A uniaxial cycle with combined hardening", plastic_cycle_table(args.results),
+         "From `results/verification/summary.json` (`sparlab_verify --study "
+         "plastic-cycle`): a bar on a distorted 4 x 2 x 2 Hex8 mesh strained through "
+         "0 -> 1 % -> -1 % -> 1 % with linear and Voce isotropic plus Prager kinematic "
+         "hardening, against the exact uniaxial response at every step."),
+        ("Elastoplastic decks", plastic_decks_table(args.results),
+         "Each `configs/verification/plastic_*.json` deck solved by `sparlab_solve` "
+         "(`results/<deck>/summary.json`, block `nonlinear`). `yielded points` counts the "
+         "integration points with an accumulated plastic strain at the end of the load "
+         "path, `first yielding step at lambda` the load factor that ended the step in which "
+         "a point first yielded."),
         ("Cross-validation against independent codes", cross_validation_table(args.results),
          "Generated from `results/cross_validation/summary.json` by "
          "`python/scripts/cross_validate.py`: node-by-node comparison of the "
@@ -1122,7 +1299,11 @@ def main(argv=None) -> int:
          "CalculiX (C3D8, C3D4 and C3D10 are the same elements; CPS4 and CPS3 are "
          "plane elements CalculiX expands into a layer of solids, which matches "
          "plane stress only at nu = 0, so those rows at nu != 0 are INFO: recorded, "
-         "not judged; the plane-strain expansion CPE4 is exact). CalculiX results "
+         "not judged; the plane-strain expansion CPE4 is exact). `kappa_1 eps`, "
+         "given for the linear scikit-fem rows, is the round-off scale of the "
+         "linear system: the 1-norm condition number of its stiffness matrix "
+         "(Hager and Higham's estimate) times machine epsilon, about the most two "
+         "backward-stable solutions of it can differ by. CalculiX results "
          "are read from its .frd output, which carries six significant digits, so "
          "differences below 5e-6 relative are its rounding. The `buckling` rows "
          "compare load factors mode by mode: scikit-fem assembles the geometric "
@@ -1142,7 +1323,15 @@ def main(argv=None) -> int:
          "Lagrangian solver written on scikit-fem (dead loads), `calculix NLGEOM` "
          "CalculiX's `*STEP, NLGEOM` with its own follower pressure and "
          "centrifugal load (Saint Venant-Kirchhoff only: its NEO HOOKE is a "
-         "different strain energy)."),
+         "different strain energy). The elastoplastic decks compare their final "
+         "states at the end of the load path: `scikit-fem J2` is an independent "
+         "J2 solver written on scikit-fem (radial return in tensor form, a "
+         "central-difference material tangent, SparLab's load factors; with finite "
+         "kinematics the return in the Green-Lagrange strain and the geometric "
+         "stiffness), `calculix *PLASTIC` "
+         "CalculiX's isotropic-hardening `*PLASTIC` with the same fixed increments "
+         "and one step per leg (without NLGEOM; under NLGEOM its finite-strain "
+         "plasticity is a different model, INFO)."),
         ("Benchmark results", benchmark_table(args.results),
          "Generated from each `results/<case>/summary.json`. `stiffness gain` is "
          "the compliance of an equal-mass uniform plate divided by the optimised "
@@ -1231,6 +1420,9 @@ def main(argv=None) -> int:
     if _NONLINEAR_FRAMES:
         pd.DataFrame(_NONLINEAR_FRAMES).to_csv(os.path.join(args.output, "nonlinear.csv"),
                                                index=False)
+    if _PLASTIC_FRAMES:
+        pd.DataFrame(_PLASTIC_FRAMES).to_csv(os.path.join(args.output, "plasticity.csv"),
+                                             index=False)
 
     lines = [
         "# SparLab result tables",

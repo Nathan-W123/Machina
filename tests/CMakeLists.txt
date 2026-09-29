@@ -35,6 +35,7 @@ set(SPARLAB_TEST_SOURCES
   test_dofs.cpp
   test_loads_thermal.cpp
   test_nonlinear.cpp
+  test_plasticity.cpp
 )
 
 add_executable(sparlab_tests ${SPARLAB_TEST_SOURCES})

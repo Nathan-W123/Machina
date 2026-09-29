@@ -922,8 +922,8 @@ def plot_sensitivity_projection(directory: str, path: str) -> str:
 # ---------------------------------------------------------------------------
 def plot_cross_validation(directory: str, path: str) -> str:
     """Largest relative nodal-displacement difference per code and load case:
-    the linear solutions and, where a deck has one, the large-deflection
-    state."""
+    the linear solutions and, where a deck has one, the large-deflection or
+    the elastoplastic state."""
     summary = load_json(os.path.join(directory, "summary.json"))
     codes = summary.get("codes", {})
     tolerances = summary.get("tolerances", {})
@@ -938,26 +938,47 @@ def plot_cross_validation(directory: str, path: str) -> str:
     # Colour follows the code - the slot does not depend on which codes are
     # present, so scikit-fem keeps its colour on a runner without CalculiX -
     # and the marker the comparison: a circle for the linear solution, a
-    # diamond, set just below, for the large-deflection state.
+    # diamond, set just below, for the large-deflection state, a triangle,
+    # set just above, for the elastoplastic one.
     code_names = ["scikit-fem", "calculix"]
     st.require_scatter_series(len(code_names), "codes")
     nonlinear_of = {"scikit-fem": "scikit-fem non-linear", "calculix": "calculix NLGEOM"}
+    plastic_of = {"scikit-fem": "scikit-fem J2", "calculix": "calculix *PLASTIC"}
     present = [code for code in code_names
-               if any(code in r[3] or nonlinear_of[code] in r[3] for r in rows)]
+               if any(code in r[3] or nonlinear_of[code] in r[3] or plastic_of[code] in r[3]
+                      for r in rows)]
     # The legend gets a row of its own beneath the panel: beside it, it took a
-    # third of the width from a log axis spanning ten decades.
-    fig, grid, legend_ax = _grid_with_legend_row(7.4, 0.36 * len(rows) + 3.4, 1, 1)
-    ax = grid[0, 0]
+    # third of the width from a log axis spanning ten decades. The row has a
+    # fixed height: a share of a panel this tall would leave it mostly empty.
+    import matplotlib.pyplot as plt
+
+    st.apply_style()
+    panel_height, legend_height = 0.36 * len(rows), 1.2
+    fig = plt.figure(figsize=(7.4, panel_height + legend_height + 2.4), layout="constrained")
+    spec = fig.add_gridspec(2, 1, height_ratios=[panel_height, legend_height])
+    ax = fig.add_subplot(spec[0, 0])
+    legend_ax = fig.add_subplot(spec[1, 0])
+    legend_ax.axis("off")
     y = np.arange(len(rows))[::-1]
     floors = set()
     informational = 0
+    # The round-off scale of each linear system, kappa_1 eps: two
+    # backward-stable solutions of it can differ by up to about that much.
+    round_off = [(results["scikit-fem"]["round_off_scale"], position)
+                 for position, (_c, _e, _l, results) in zip(y, rows)
+                 if "round_off_scale" in results.get("scikit-fem", {})]
+    if round_off:
+        ax.plot([r for r, _p in round_off], [p for _r, p in round_off], "|",
+                color=st.INK_MUTED, markersize=11, markeredgewidth=1.4,
+                label="round-off scale of the linear system, kappa_1(K) eps")
     for slot, code in enumerate(code_names):
         if code not in present:
             continue
         colour = st.series_color(slot)
         version = codes.get(code, {}).get("version", "")
         for key, marker, offset, kind in ((code, "o", 0.0, "linear"),
-                                          (nonlinear_of[code], "D", -0.22, "large deflection")):
+                                          (nonlinear_of[code], "D", -0.22, "large deflection"),
+                                          (plastic_of[code], "^", 0.22, "elastoplastic")):
             judged_x, judged_y, info_x, info_y, own_x, own_y = [], [], [], [], [], []
             for position, (_c, _e, _l, results) in zip(y, rows):
                 entry = results.get(key)
@@ -989,6 +1010,10 @@ def plot_cross_validation(directory: str, path: str) -> str:
                 label = "scikit-fem, large deflection (its own total Lagrangian solver)"
             elif key == "calculix NLGEOM":
                 label = "calculix, large deflection (*STEP, NLGEOM)"
+            elif key == "scikit-fem J2":
+                label = "scikit-fem, elastoplastic (its own J2 solver)"
+            elif key == "calculix *PLASTIC":
+                label = "calculix, elastoplastic (*PLASTIC)"
             size = 7 if marker == "o" else 6
             if judged_x:
                 ax.plot(judged_x, judged_y, marker, color=colour, markersize=size, label=label)
@@ -1028,7 +1053,8 @@ def plot_cross_validation(directory: str, path: str) -> str:
     st.figure_title(
         fig, "Cross-validation: nodal displacements vs independent codes",
         f"{len(rows)} load cases, {len(present)} "
-        f"code{'s' if len(present) != 1 else ''}, linear and large-deflection; {verdict}",
+        f"code{'s' if len(present) != 1 else ''}, linear, large-deflection and "
+        f"elastoplastic; {verdict}",
     )
     handles, labels = ax.get_legend_handles_labels()
     legend_ax.legend(handles, labels, loc="center", ncol=2, fontsize=7.4, frameon=False,
@@ -1037,8 +1063,10 @@ def plot_cross_validation(directory: str, path: str) -> str:
         fig,
         "Same mesh, material, supports and nodal loads in every code. scikit-fem "
         "uses the same elements (bilinear, trilinear, linear and quadratic "
-        "simplices), so its differences are solver round-off - larger only on the "
-        "slender elastica cantilever, whose conditioning amplifies it. CalculiX C3D8, "
+        "simplices), so its differences are solver round-off: each linear one lies "
+        "below the round-off scale of its system (the bar, the condition number of "
+        "the stiffness matrix times eps), which the slender beams' conditioning "
+        "raises. CalculiX C3D8, "
         "C3D4 and C3D10 are the same elements as SparLab's Hex8, Tet4 and Tet10; its "
         "plane elements are a layer of solid elements, which matches plane stress "
         "only for nu = 0, so plane-stress comparisons at nu != 0 are hollow and not "
@@ -1046,9 +1074,14 @@ def plot_cross_validation(directory: str, path: str) -> str:
         "element-average temperature of a C3D8, the C3D10's rules for a centrifugal "
         "load and a curved face), the filled point is CalculiX against scikit-fem "
         "solving CalculiX's problem - the judged number - and the square SparLab's "
-        "difference to CalculiX. CalculiX results are read from the .frd file, which "
-        "carries six significant digits, so differences below the dotted floor are "
-        "its output rounding.",
+        "difference to CalculiX. The elastoplastic states are compared at the end of "
+        "their load paths: scikit-fem with its own J2 solver (small strain and finite "
+        "kinematics), CalculiX "
+        "with *PLASTIC (isotropic hardening only - its kinematic hardening does not "
+        "reproduce Prager's rule - and under NLGEOM a different finite-strain model, "
+        "hollow). CalculiX results are read from the .frd file, which carries six "
+        "significant digits, so differences below the dotted floor are its output "
+        "rounding.",
     )
     return st.save_figure(fig, path)
 
@@ -1986,5 +2019,287 @@ def plot_finite_strain_tube(directory: str, path: str) -> str:
         "lie on the curved surfaces. On the meshes both run, the Q4 errors (dashed) equal "
         "the Hex8 errors: the one-cell-deep Hex8 section held at u_z = 0 is exactly plane "
         "strain.",
+    )
+    return st.save_figure(fig, path)
+
+
+#: The variants of the thick-cylinder collapse study, in legend order: the
+#: element, whether it averages its dilatation, and whether that is its
+#: default. Colour follows the element; the default variant is solid and
+#: filled, the other dashed and open.
+CYLINDER_VARIANTS = [("Quad4", "yes", True), ("Hex8", "yes", True), ("Tet10", "no", True),
+                     ("Quad4", "no", False), ("Tet10", "yes", False), ("Tri3", "no", False)]
+CYLINDER_SLOTS = {"Hex8": 0, "Tet10": 2, "Quad4": 3, "Tri3": 4}
+
+
+def _variant_label(element: str, md: str) -> str:
+    return ELEMENT_NAMES[element] + (" mean dilatation" if md == "yes" else " standard")
+
+
+def plot_plastic_cylinder(directory: str, path: str) -> str:
+    """The thick tube to plastic collapse: the pressure paths of the finest
+    meshes, the collapse-pressure error under refinement, and the stress
+    through the wall on the plateau against the exact fully plastic field."""
+    table = load_csv(os.path.join(directory, "plastic_cylinder.csv"))
+    paths = load_csv(os.path.join(directory, "plastic_cylinder_paths.csv"))
+    profile = load_csv(os.path.join(directory, "plastic_cylinder_stress.csv"))
+    block = load_json(os.path.join(directory, "summary.json")).get("plastic_cylinder", {})
+    p_limit = float(block.get("collapse_pressure_exact_Pa", np.nan))
+    first_yield = float(block.get("first_yield_pressure_exact_Pa", np.nan)) / p_limit
+    fig, axes = st.figure(12.0, 4.6, ncols=3)
+    mm = 1.0e3
+
+    ax = axes[0]
+    ax.axhline(1.0, color=st.INK_MUTED, linewidth=1.0, linestyle=":",
+               label="exact collapse pressure p_L")
+    for element, md, default in CYLINDER_VARIANTS:
+        sub = paths[(paths["element"] == element) & (paths["mean_dilatation"] == md)]
+        if sub.empty:
+            continue
+        finest = sub["n_r"].max()
+        sub = sub[sub["n_r"] == finest]
+        color = st.series_color(CYLINDER_SLOTS[element])
+        ax.plot(sub["bore_displacement[m]"] * mm, sub["pressure_ratio[-]"],
+                "-" if default else "--", color=color, linewidth=1.4,
+                label=f"{_variant_label(element, md)}, n_r = {int(finest)}")
+    ax.set_xlabel("bore displacement [mm]")
+    ax.set_ylabel("bore pressure / p_L [-]")
+    ax.set_ylim(0.985, 1.016)
+    ax.set_xlim(left=0.0)
+    st.title(ax, "The collapse plateau",
+             f"finest mesh of each variant; first yield at {first_yield:.3f} p_L, below the "
+             "frame", wrap=44)
+    st.legend(ax, loc="lower right", fontsize=7)
+
+    ax = axes[1]
+    for element, md, default in CYLINDER_VARIANTS:
+        sub = table[(table["element"] == element) & (table["mean_dilatation"] == md)]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("h[m]")
+        color = st.series_color(CYLINDER_SLOTS[element])
+        error = sub["collapse_error[-]"].to_numpy()
+        below = bool((error < 0).all())
+        marker = ELEMENT_MARKERS[element]
+        ax.plot(sub["h[m]"], np.abs(error), ("-" if default else "--") + marker,
+                color=color, markersize=5,
+                markerfacecolor=color if default else st.SURFACE,
+                label=_variant_label(element, md) + (" (from below)" if below else ""))
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ticks = [0.003, 0.006, 0.0125, 0.025, 0.05]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t:g}" for t in ticks])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("radial cell size h [m]")
+    ax.set_ylabel("|collapse pressure / p_L - 1| [-]")
+    for order, element, md in ((2.0, "Quad4", "yes"), (3.0, "Tet10", "no")):
+        sub = table[(table["element"] == element) & (table["mean_dilatation"] == md)]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("h[m]")
+        h = sub["h[m]"].to_numpy()
+        e0 = abs(float(sub["collapse_error[-]"].to_numpy()[-1])) * 0.3
+        guide = e0 * (h / h[-1]) ** order
+        ax.plot(h, guide, ":", color=st.INK_MUTED, linewidth=1.0)
+        # Labelled below the middle of the guide, clear of the frame.
+        middle = len(h) // 2
+        ax.annotate(f"order {order:g}", (h[middle], guide[middle]), xytext=(2, -11),
+                    textcoords="offset points", fontsize=7.5, color=st.INK_MUTED)
+    st.title(ax, "Collapse pressure under refinement",
+             "largest load factor of the path against (2/sqrt 3) sigma_y ln(b/a)", wrap=44)
+    st.legend(ax, loc="upper left", fontsize=6.8)
+
+    ax = axes[2]
+    sy = 250.0e6
+    components = (("sigma_r", "radial"), ("sigma_theta", "hoop"), ("sigma_z", "axial"))
+    for fill, md in ((True, "yes"), (False, "no")):
+        sub = profile[(profile["element"] == "Quad4") & (profile["mean_dilatation"] == md)]
+        if sub.empty:
+            continue
+        # One point per radial cell: the cells of a ring share their radius.
+        rings = sub.groupby("r[m]").mean(numeric_only=True).reset_index()
+        for slot, (key, _) in enumerate(components):
+            color = st.series_color(slot)
+            ax.plot(rings["r[m]"] * mm, rings[f"{key}[Pa]"] / sy, "o", color=color,
+                    markersize=3.5 if fill else 4.5,
+                    markerfacecolor=color if fill else st.SURFACE, markeredgewidth=1.0)
+    exact = profile[(profile["element"] == "Quad4") & (profile["mean_dilatation"] == "yes")]
+    exact = exact.groupby("r[m]").mean(numeric_only=True).reset_index().sort_values("r[m]")
+    for slot, (key, _) in enumerate(components):
+        ax.plot(exact["r[m]"] * mm, exact[f"{key}_exact[Pa]"] / sy, "-",
+                color=st.series_color(slot), linewidth=1.0)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([], [], color=st.series_color(slot), linewidth=1.4, label=name)
+               for slot, (_, name) in enumerate(components)]
+    handles += [Line2D([], [], color=st.INK_SECONDARY, marker="o", linestyle="none",
+                       markersize=4, label="Q4 mean dilatation"),
+                Line2D([], [], color=st.INK_SECONDARY, marker="o", linestyle="none",
+                       markersize=4.5, markerfacecolor=st.SURFACE,
+                       markeredgecolor=st.INK_SECONDARY, markeredgewidth=1.0,
+                       label="Q4 standard"),
+                Line2D([], [], color=st.INK_SECONDARY, linewidth=1.0, label="exact")]
+    ax.legend(handles=handles, loc="upper left", fontsize=7, ncol=2, frameon=False)
+    ax.set_xlabel("radius [mm]")
+    ax.set_ylabel("stress / sigma_y [-]")
+    ax.set_ylim(-0.95, 1.55)
+    st.title(ax, "Stress through the wall on the plateau",
+             "ring averages of the finest meshes against the exact fully plastic field",
+             wrap=44)
+
+    q4 = table[(table["element"] == "Quad4") & (table["mean_dilatation"] == "yes")]
+    q4 = q4.sort_values("h[m]")
+    st.annotate_note(
+        fig,
+        "Quarter section of a tube a = 0.1 m, b = 0.2 m in plane strain, perfectly plastic "
+        "(E = 200 GPa, nu = 0.3, sigma_y = 250 MPa), small strain, loaded by its bore "
+        "pressure along the arc-length path. The Hex8 section is one cell deep with "
+        "u_z = 0, exactly plane strain: its results equal the Q4's. With mean dilatation "
+        f"the Q4 converges to p_L at second order ({float(q4['collapse_error[-]'].iloc[0]):.1e} "
+        f"at n_r = {int(q4['n_r'].iloc[0])}) and its plateau is flat; fully integrated it "
+        "locks: the collapse load comes out high and the plateau keeps rising. The Tet10 "
+        "converges at third order without mean dilatation, and with it at second order "
+        "from below, its constant element pressure oscillating. The checkerboard Tri3 mesh "
+        "does not lock here.",
+    )
+    return st.save_figure(fig, path)
+
+
+def _bending_moment(k, youngs, sy, t, h):
+    """Exact moment of an elastic-perfectly plastic rectangle at curvature k."""
+    ky = 2.0 * sy / (youngs * h)
+    inertia = t * h ** 3 / 12.0
+    mp = sy * t * h * h / 4.0
+    k = np.asarray(k, dtype=float)
+    ratio = ky / np.maximum(np.abs(k), ky)
+    return np.where(np.abs(k) <= ky, youngs * inertia * k,
+                    np.sign(k) * mp * (1.0 - ratio ** 2 / 3.0))
+
+
+def plot_plastic_bending(directory: str, path: str) -> str:
+    """Pure bending of an elastic-perfectly plastic beam: moment-curvature,
+    the moment error under refinement, and the residual stress after
+    unloading to zero moment."""
+    table = load_csv(os.path.join(directory, "plastic_bending.csv"))
+    residual = load_csv(os.path.join(directory, "plastic_bending_residual.csv"))
+    block = load_json(os.path.join(directory, "summary.json")).get("plastic_bending", {})
+    youngs, sy, t, h = 200.0e9, 250.0e6, 0.01, 0.05
+    ky = 2.0 * sy / (youngs * h)
+    mp = sy * t * h * h / 4.0
+    inertia = t * h ** 3 / 12.0
+    k_res = float(block.get("unloaded_curvature_ratio", np.nan))
+    fig, axes = st.figure(12.0, 4.4, ncols=3)
+
+    ax = axes[0]
+    k = np.linspace(0.0, 3.2, 400)
+    ax.plot(k, _bending_moment(k * ky, youngs, sy, t, h) / mp, "-", color=st.INK_MUTED,
+            linewidth=1.2, label="exact, loading")
+    m1 = float(_bending_moment(3.0 * ky, youngs, sy, t, h))
+    ax.plot([3.0, k_res], [m1 / mp, 0.0], "--", color=st.INK_MUTED, linewidth=1.2,
+            label="exact, elastic unloading")
+    finest = table["ny"].max()
+    sub = table[table["ny"] == finest]
+    ax.plot(sub["curvature_ratio[-]"], sub["moment[N m]"] / mp, "o", color=st.series_color(0),
+            markersize=6, label=f"Q4, {int(finest)} cells deep")
+    residual_moment = float(block["meshes"][-1]["residual_moment_over_mp"]) if block.get(
+        "meshes") else np.nan
+    ax.plot([k_res], [residual_moment], "s", color=st.series_color(1), markersize=6,
+            label="Q4, unloaded to k_res")
+    ax.axhline(1.0, color=st.GRID, linewidth=1.0)
+    ax.annotate("M_p", (0.02, 1.0), xycoords=("axes fraction", "data"), xytext=(0, 3),
+                textcoords="offset points", fontsize=7.5, color=st.INK_SECONDARY)
+    ax.set_xlabel("curvature / first-yield curvature k_y [-]")
+    ax.set_ylabel("moment / plastic moment M_p [-]")
+    ax.set_ylim(-0.05, 1.1)
+    st.title(ax, "Moment-curvature", "loading to 3 k_y and back to zero moment", wrap=44)
+    st.legend(ax, loc="lower right", fontsize=7.5)
+
+    ax = axes[1]
+    for slot, ratio in enumerate(sorted(table["curvature_ratio[-]"].unique())):
+        sub = table[table["curvature_ratio[-]"] == ratio].sort_values("h[m]")
+        ax.plot(sub["h[m]"], sub["moment_error[-]"], "-o", color=st.series_color(slot),
+                markersize=4.5, label=f"k = {ratio:g} k_y")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    hs = sorted(table["h[m]"].unique())
+    ax.set_xticks(hs)
+    ax.set_xticklabels([f"{x * 1e3:g}" for x in hs])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("cell size [mm]")
+    ax.set_ylabel("|M - M_exact| / M_p [-]")
+    # The order-2 guide runs beneath every curve, labelled below its middle;
+    # the legend takes the empty upper left.
+    coarse = table[table["h[m]"] == max(hs)]
+    if not coarse.empty:
+        hh = np.asarray(hs)
+        e0 = float(coarse["moment_error[-]"].min()) * 0.4
+        guide = e0 * (hh / hh[-1]) ** 2
+        ax.plot(hh, guide, ":", color=st.INK_MUTED, linewidth=1.0)
+        middle = len(hh) // 2
+        ax.annotate("order 2", (hh[middle], guide[middle]), xytext=(4, -14),
+                    textcoords="offset points", fontsize=7.5, color=st.INK_MUTED)
+    st.title(ax, "Moment error under refinement", "square Q4 cells, plane stress", wrap=44)
+    st.legend(ax, loc="upper left", fontsize=7.5)
+
+    ax = axes[2]
+    for slot, ny in enumerate(sorted(residual["ny"].unique())[-2:]):
+        sub = residual[residual["ny"] == ny].sort_values("y[m]")
+        ax.plot(sub["residual_stress[Pa]"] / sy, (sub["y[m]"] - h / 2) * 1e3, "o",
+                color=st.series_color(slot), markersize=4 if slot else 3,
+                label=f"Q4, {int(ny)} cells deep")
+    y = np.linspace(-h / 2, h / 2, 401)
+    loaded = np.clip(-youngs * 3.0 * ky * y, -sy, sy)
+    exact = loaded - youngs * (k_res * ky - 3.0 * ky) * y
+    ax.plot(exact / sy, y * 1e3, "-", color=st.INK_MUTED, linewidth=1.2, label="exact")
+    ax.axvline(0.0, color=st.GRID, linewidth=1.0)
+    ax.set_xlabel("residual stress / sigma_y [-]")
+    ax.set_ylabel("distance from the neutral axis [mm]")
+    st.title(ax, "Residual stress after unloading",
+             f"loaded to 3 k_y, unloaded to k_res = {k_res:.3f} k_y", wrap=48)
+    st.legend(ax, loc="lower right", fontsize=7.5)
+
+    st.annotate_note(
+        fig,
+        "A beam 0.2 m x 0.05 m, 0.01 m thick, in plane stress (E = 200 GPa, sigma_y = 250 "
+        "MPa, no hardening), small strain, bent by end displacements u_x = -k (x - L/2)(y - "
+        "h/2). The section is in uniaxial stress, so M = E I k up to k_y = 2 sigma_y / (E h) "
+        "and M_p (1 - (k_y / k)^2 / 3) beyond; unloaded elastically from 3 k_y to the "
+        "curvature at which that moment vanishes, the beam keeps the loaded stress profile "
+        "less the elastic unloading. The moment is read from the end reactions; the "
+        "residual stress from the elements left of mid-span.",
+    )
+    return st.save_figure(fig, path)
+
+
+def plot_plastic_cycle(directory: str, path: str) -> str:
+    """A uniaxial strain cycle with combined hardening: the stress-strain loop
+    of a distorted Hex8 bar against the exact uniaxial response."""
+    table = load_csv(os.path.join(directory, "plastic_cycle.csv"))
+    block = load_json(os.path.join(directory, "summary.json")).get("plastic_cycle", {})
+    fig, ax = st.figure(7.2, 4.6)
+    strain = np.concatenate([[0.0], table["strain[-]"].to_numpy()])
+    exact = np.concatenate([[0.0], table["stress_exact[Pa]"].to_numpy()])
+    ax.plot(strain * 100, exact / 1e6, "-", color=st.INK_MUTED, linewidth=1.2,
+            label="exact uniaxial response")
+    ax.plot(table["strain[-]"] * 100, table["stress[Pa]"] / 1e6, "o",
+            color=st.series_color(0), markersize=4.5,
+            label="Hex8 bar, end force / area")
+    ax.axhline(0.0, color=st.GRID, linewidth=1.0)
+    ax.axvline(0.0, color=st.GRID, linewidth=1.0)
+    ax.set_xlabel("axial strain [%]")
+    ax.set_ylabel("axial stress [MPa]")
+    worst = float(block.get("max_stress_error_over_yield", np.nan))
+    st.title(ax, "A strain cycle with isotropic, Voce and kinematic hardening",
+             f"eps = 0 -> 1 % -> -1 % -> 1 %, 20 steps per leg; largest error "
+             f"{worst:.1e} sigma_y")
+    st.legend(ax, loc="lower right")
+    st.annotate_note(
+        fig,
+        "A bar 1 m x 0.1 m x 0.1 m on a distorted 4 x 2 x 2 Hex8 mesh (mean dilatation), "
+        "E = 200 GPa, nu = 0.3, sigma_y = 250 MPa, linear isotropic hardening 1 GPa plus a "
+        "Voce saturation of 100 MPa at rate 30, Prager kinematic hardening 4 GPa. The "
+        "reversal yields early (the Bauschinger effect of the back stress) and the loop "
+        "grows as the isotropic hardening accumulates. A homogeneous state is exact on any "
+        "mesh, so the error is round-off.",
     )
     return st.save_figure(fig, path)

@@ -2549,7 +2549,7 @@ int main(int argc, char** argv) {
             "mesh-convergence-tet10 | buckling-euler | sensitivity-buckling | "
             "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
             "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
-            "arch-snap-through"},
+            "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
             "pass threshold on the max relative gradient error (default 1e-5)"},
@@ -2657,6 +2657,15 @@ int main(int argc, char** argv) {
     }
     if (all || study == "arch-snap-through") {
       outcomes.push_back(verify::study_arch_snap_through(out_dir, summary));
+    }
+    if (all || study == "plastic-cylinder") {
+      outcomes.push_back(verify::study_plastic_cylinder(out_dir, summary));
+    }
+    if (all || study == "plastic-bending") {
+      outcomes.push_back(verify::study_plastic_bending(out_dir, summary));
+    }
+    if (all || study == "plastic-cycle") {
+      outcomes.push_back(verify::study_plastic_cycle(out_dir, summary));
     }
     if (outcomes.empty()) {
       throw ConfigError("unknown study '" + study +

@@ -194,6 +194,23 @@ def run_calculix_nlgeom(deck: str, workdir: str) -> str:
     return frd
 
 
+def run_calculix_steps(deck: str, workdir: str, steps: int) -> str:
+    """Run a deck of `steps` *STEPs and return the .frd path - only if CalculiX
+    completed the last of them (its .sta file's last row: that step, at step
+    time 1, reached without a cut-back)."""
+    frd = run_calculix(deck, workdir)
+    sta = os.path.join(workdir, os.path.splitext(os.path.basename(deck))[0] + ".sta")
+    with open(sta, "r", encoding="utf-8", errors="replace") as handle:
+        rows = [line.split() for line in handle if line.strip()]
+    last = rows[-1] if rows else []
+    completed = (len(last) >= 7 and last[0].isdigit() and int(last[0]) == steps
+                 and "U" not in last[2] and abs(float(last[5]) - 1.0) <= 1e-9)
+    if not completed:
+        raise ResultError(f"CalculiX did not complete step {steps} of {deck} (last .sta row: "
+                          f"{' '.join(last)})")
+    return frd
+
+
 def parse_dat_buckling_factors(path: str) -> np.ndarray:
     """Buckling factors from the "B U C K L I N G   F A C T O R" block of a
     CalculiX .dat file."""
@@ -417,6 +434,22 @@ class SkfemProblem:
         u[self.free] = self._factor(load[self.free] - self._k_fp @ self.x[self.fixed])
         return u
 
+    def condition_estimate(self) -> float:
+        """The 1-norm condition number of K_ff, estimated (Hager and Higham,
+        scipy's onenormest) with the factorisation static() made. K_ff is
+        symmetric, so it is also the infinity-norm condition number, the one
+        that bounds the largest nodal error: two backward-stable solves of the
+        system can differ by about kappa * eps of the largest displacement."""
+        import scipy.sparse.linalg as sla
+
+        if self._factor is None:
+            self.static()
+        kff = self.k[self.free][:, self.free]
+        n = kff.shape[0]
+        inverse = sla.LinearOperator((n, n), matvec=self._factor, rmatvec=self._factor,
+                                     dtype=float)
+        return float(abs(kff).sum(axis=0).max() * sla.onenormest(inverse))
+
     def nodal(self, u: np.ndarray) -> np.ndarray:
         out = np.zeros((self.mesh.num_nodes, self.dim))
         for c in range(self.dim):
@@ -570,6 +603,340 @@ class SkfemProblem:
                 u = u + alpha * du
             else:
                 raise ResultError(f"scikit-fem's Newton did not converge at load factor {factor}")
+        return u
+
+    def plastic(self, materials: List[Dict], element_materials: Optional[np.ndarray],
+                load_factors: List[float], mean_dilatation: bool,
+                temperature: Optional[np.ndarray] = None, f: Optional[np.ndarray] = None,
+                tolerance: float = 1e-11, max_iterations: int = 80,
+                kinematics: str = "small_strain") -> np.ndarray:
+        """The elastoplastic solution along SparLab's load factors, by an
+        independent J2 implementation: the backward-Euler radial return
+        written here in 3 x 3 tensor form (Newton on the plastic multiplier for
+        Voce hardening, on the thickness strain in plane stress), a material
+        tangent by central differences of that return - so no tangent formula
+        is shared with SparLab - and scikit-fem's shape-function gradients on
+        SparLab's quadrature. `kinematics` is "small_strain" (the linear strain
+        of the undeformed body) or "finite" (large rotation, small strain: the
+        return in the Green-Lagrange strain E = (F^T F - I) / 2, its stress the
+        second Piola-Kirchhoff one, the internal force int dE(du) : S dV_0,
+        the tangent with the geometric stiffness). `materials` are the
+        summary's material entries (with their "plasticity" blocks),
+        `element_materials` their index per element (None for one material).
+        With `mean_dilatation` every point's dilatation - the trace of the
+        strain and of its variation - is replaced by its element's volume
+        average (B-bar; E-bar with finite kinematics). `temperature` is the
+        nodal temperature field of the case in SparLab's node order (its
+        change scales with the load factor; small strain only). Every load
+        factor is converged to a residual of `tolerance` relative to the load
+        (or the reactions), and the internal variables are committed only
+        there. `f` replaces the load vector of mesh.json. Returns the solution
+        at the last factor in scikit-fem's numbering."""
+        import scipy.sparse
+        import scipy.sparse.linalg as sla
+        from skfem import Basis
+
+        dim = self.dim
+        element = self.mesh.element_type
+        if kinematics not in ("small_strain", "finite"):
+            raise ResultError(f"unknown kinematics '{kinematics}'")
+        finite = kinematics == "finite"
+        if finite and temperature is not None:
+            raise ResultError("the scikit-fem J2 comparison has no thermal strain with finite "
+                              "kinematics")
+        intorder = {"Quad4": 3, "Hex8": 3, "Tri3": 1, "Tet4": 1, "Tet10": 2}[element]
+        basis = Basis(self.skfem_mesh, self.vector_element, intorder=intorder)
+        if not np.array_equal(basis.nodal_dofs, self.basis.nodal_dofs):
+            raise ResultError("the plastic basis numbers its DOFs differently")
+        ne = basis.nelems
+        nq = basis.X.shape[-1]
+        nbf = basis.Nbfun
+        dofs = basis.element_dofs                                  # (nbf, ne)
+        plane_stress = self.stress_state == "plane_stress"
+        dx = basis.dx * self.thickness                              # (ne, nq)
+        averaged = mean_dilatation and not plane_stress and nq > 1
+
+        # grads[i, m, k] = d (phi_i)_m / d X_k of the vector basis function i.
+        grads = np.stack([basis.basis[i][0].grad for i in range(nbf)])
+        ident = np.eye(dim)[:, :, None, None]
+
+        def average(values):
+            """Volume average over each element's points, broadcast back."""
+            mean = (values * dx).sum(axis=-1) / dx.sum(axis=-1)
+            return np.broadcast_to(mean[..., None], values.shape)
+
+        def strain_operator(g):
+            """Engineering strain rows {11,22,33,12,23,31} of the tensors
+            g[i, j, k] (the gradient of each basis function, or with finite
+            kinematics F^T times it): the symmetric part in Voigt form."""
+            out = np.zeros((6,) + g.shape[:1] + g.shape[3:])
+            out[0] = g[:, 0, 0]
+            out[1] = g[:, 1, 1]
+            out[3] = g[:, 0, 1] + g[:, 1, 0]
+            if dim == 3:
+                out[2] = g[:, 2, 2]
+                out[4] = g[:, 1, 2] + g[:, 2, 1]
+                out[5] = g[:, 2, 0] + g[:, 0, 2]
+            return out
+
+        def average_dilatation(strain, b):
+            """B-bar / E-bar: the dilatation of the strain and of its
+            variation replaced by the element's volume average."""
+            trace = strain[0] + strain[1] + strain[2]
+            strain[:3] += ((average(trace) - trace) / 3.0)[None]
+            div = b[0] + b[1] + b[2]
+            b[:3] += ((average(div) - div) / 3.0)[None]
+
+        def kinematic(ue):
+            """Strain (6, ne, nq) and strain operator (6, nbf, ne, nq) at the
+            element displacements ue (nbf, ne)."""
+            if not finite:
+                b = strain_operator(grads)
+                strain = np.einsum("cieq,ie->ceq", b, ue)
+                if averaged:
+                    average_dilatation(strain, b)
+                return strain, b
+            # E = (H + H^T + H^T H) / 2 with H = grad u: forming F^T F - I
+            # instead would leave an absolute rounding of eps in E, which on a
+            # slender beam holds the residual well above its tolerance.
+            displacement_gradient = np.einsum("imkeq,ie->mkeq", grads, ue)
+            deformation = ident + displacement_gradient
+            green = 0.5 * (displacement_gradient + displacement_gradient.transpose(1, 0, 2, 3)
+                           + np.einsum("mjeq,mkeq->jkeq", displacement_gradient,
+                                       displacement_gradient))
+            strain = np.zeros((6, ne, nq))
+            strain[0], strain[1], strain[3] = green[0, 0], green[1, 1], 2.0 * green[0, 1]
+            if dim == 3:
+                strain[2], strain[4], strain[5] = green[2, 2], 2.0 * green[1, 2], 2.0 * green[2, 0]
+            # dE = sym(F^T grad(du)).
+            b = strain_operator(np.einsum("mjeq,imkeq->ijkeq", deformation, grads))
+            if averaged:
+                average_dilatation(strain, b)
+            return strain, b
+
+        # Material parameters at every point.
+        index = (np.zeros(ne, dtype=int) if element_materials is None
+                 else np.asarray(element_materials, dtype=int))
+        def field(key, default=0.0, block=None):
+            values = []
+            for m in materials:
+                source = m.get(block, {}) if block else m
+                values.append(float(source.get(key, default)))
+            return np.repeat(np.asarray(values)[index][:, None], nq, axis=1)
+        young = field("youngs_modulus_Pa")
+        nu = field("poisson_ratio")
+        shear = young / (2.0 * (1.0 + nu))
+        bulk = young / (3.0 * (1.0 - 2.0 * nu))
+        sy0 = field("yield_stress_Pa", 0.0, "plasticity")
+        hiso = field("hardening_modulus_Pa", 0.0, "plasticity")
+        hkin = field("kinematic_hardening_modulus_Pa", 0.0, "plasticity")
+        qsat = field("saturation_stress_Pa", 0.0, "plasticity")
+        rate = field("saturation_rate", 0.0, "plasticity")
+        expansion = field("thermal_expansion_per_K")
+        reference = field("reference_temperature_K")
+        plastic_point = sy0 > 0.0
+        root23 = np.sqrt(2.0 / 3.0)
+
+        def yield_stress(a):
+            return sy0 + hiso * a + qsat * -np.expm1(-rate * a)
+
+        def yield_slope(a):
+            return hiso + qsat * rate * np.exp(-rate * a)
+
+        # The temperature change at the points per unit load factor.
+        dtemp = np.zeros((ne, nq))
+        if temperature is not None:
+            from skfem import Basis as ScalarBasis
+            scalar = ScalarBasis(self.skfem_mesh, self.scalar_element, intorder=intorder)
+            nodal = np.zeros(scalar.N)
+            nodal[self.scalar_dof_of_node] = temperature
+            dtemp = scalar.interpolate(nodal).value - reference
+
+        eye = np.eye(3)[:, :, None, None]
+
+        def tensor(v):
+            t = np.empty((3, 3) + v.shape[1:])
+            t[0, 0], t[1, 1], t[2, 2] = v[0], v[1], v[2]
+            t[0, 1] = t[1, 0] = 0.5 * v[3]
+            t[1, 2] = t[2, 1] = 0.5 * v[4]
+            t[2, 0] = t[0, 2] = 0.5 * v[5]
+            return t
+
+        def voigt(t):
+            return np.stack([t[0, 0], t[1, 1], t[2, 2], t[0, 1], t[1, 2], t[2, 0]])
+
+        def return_3d(eps, state, dtheta):
+            """Stress (3 x 3) and new state at the strain tensor eps."""
+            eps_p, beta, alpha = state
+            elastic = eps - eps_p - (expansion * dtheta)[None, None] * eye
+            trace = elastic[0, 0] + elastic[1, 1] + elastic[2, 2]
+            deviator = elastic - trace[None, None] / 3.0 * eye
+            s_trial = 2.0 * shear[None, None] * deviator
+            xi = s_trial - beta
+            norm = np.sqrt((xi * xi).sum(axis=(0, 1)))
+            f_trial = norm - root23 * yield_stress(alpha)
+            flowing = plastic_point & (f_trial > 1e-12 * np.maximum(sy0, 1.0))
+            gamma = np.zeros_like(norm)
+            if flowing.any():
+                stiff = 2.0 * shear + 2.0 / 3.0 * hkin
+                for _ in range(60):
+                    a = alpha + root23 * gamma
+                    g = norm - stiff * gamma - root23 * yield_stress(a)
+                    g = np.where(flowing, g, 0.0)
+                    if np.abs(g).max() <= 1e-14 * norm.max():
+                        break
+                    gamma = gamma + g / (stiff + 2.0 / 3.0 * yield_slope(a))
+                else:
+                    raise ResultError("the scikit-fem J2 return did not converge")
+            n = np.where(norm > 0.0, xi / np.where(norm > 0.0, norm, 1.0), 0.0)
+            sigma = bulk * trace * eye + s_trial - 2.0 * shear * gamma * n
+            new = (eps_p + gamma * n, beta + 2.0 / 3.0 * hkin * gamma * n,
+                   alpha + root23 * gamma)
+            return sigma, new
+
+        def respond(strain, state, dtheta):
+            """Stress (6, ne, nq) and new state at the engineering strain; in
+            plane stress eps_33 solves sigma_33 = 0 by Newton with a central-
+            difference derivative."""
+            if not plane_stress:
+                sigma, new = return_3d(tensor(strain), state, dtheta)
+                return voigt(sigma), new
+            lam = bulk - 2.0 * shear / 3.0
+            eps_p = state[0]
+            th = expansion * dtheta
+            e11 = strain[0] - eps_p[0, 0] - th
+            e22 = strain[1] - eps_p[1, 1] - th
+            e33 = eps_p[2, 2] + th - lam / (lam + 2.0 * shear) * (e11 + e22)
+            trial = strain.copy()
+            scale = max(float(np.abs(sy0).max()), 1.0)
+            for _ in range(60):
+                trial[2] = e33
+                sigma, new = return_3d(tensor(trial), state, dtheta)
+                s33 = sigma[2, 2]
+                if np.abs(s33).max() <= 1e-13 * scale:
+                    return voigt(sigma), new
+                h = 1e-9
+                up, down = trial.copy(), trial.copy()
+                up[2] += h
+                down[2] -= h
+                d = (return_3d(tensor(up), state, dtheta)[0][2, 2]
+                     - return_3d(tensor(down), state, dtheta)[0][2, 2]) / (2.0 * h)
+                e33 = e33 - s33 / d
+            raise ResultError("the scikit-fem plane-stress return did not reach sigma_33 = 0")
+
+        active = [0, 1, 3] if dim == 2 else list(range(6))
+        if dim == 2 and not plane_stress and mean_dilatation:
+            active = [0, 1, 2, 3]
+
+        # The gross size of the sums that form the last internal force,
+        # sum_e |f_e| per DOF, whose rounding bounds how small a residual can
+        # be computed.
+        gross = {}
+
+        def evaluate(u, state, dtheta, want_tangent):
+            ue = u[dofs]                                            # (nbf, ne)
+            strain, b = kinematic(ue)
+            sigma, new = respond(strain, state, dtheta)
+            forces = np.einsum("cieq,ceq,eq->ie", b, sigma, dx)
+            f = np.zeros(basis.N)
+            np.add.at(f, dofs, forces)
+            gross["forces"] = np.zeros(basis.N)
+            np.add.at(gross["forces"], dofs, np.abs(forces))
+            if not want_tangent:
+                return f, new, None
+            # Central differences of the return for the tangent d sigma / d eps.
+            h = 1e-8 * max(float(np.abs(strain).max()), 1e-3)
+            c = np.zeros((6, 6, ne, nq))
+            for j in active:
+                up, down = strain.copy(), strain.copy()
+                up[j] += h
+                down[j] -= h
+                c[:, j] = (respond(up, state, dtheta)[0] - respond(down, state, dtheta)[0]) / (2 * h)
+            cb = np.einsum("cdeq,dieq->cieq", c, b)
+            ke = np.einsum("cieq,cjeq,eq->ije", b, cb, dx)
+            if finite:
+                # The change of dE with the displacement at fixed stress:
+                # grad(dv) S . grad(du) per displacement component, and with
+                # E-bar (tr S / 3) times the element average less the local
+                # value of grad(dv) : grad(du).
+                s = np.empty((dim, dim, ne, nq))
+                s[0, 0], s[1, 1] = sigma[0], sigma[1]
+                s[0, 1] = s[1, 0] = sigma[3]
+                if dim == 3:
+                    s[2, 2] = sigma[2]
+                    s[1, 2] = s[2, 1] = sigma[4]
+                    s[2, 0] = s[0, 2] = sigma[5]
+                gs = np.einsum("imkeq,kleq->imleq", grads, s)
+                ke += np.einsum("imleq,jmleq,eq->ije", gs, grads, dx)
+                if averaged:
+                    gg = np.einsum("imkeq,jmkeq->ijeq", grads, grads)
+                    third = (sigma[0] + sigma[1] + sigma[2]) / 3.0
+                    ke += np.einsum("eq,ijeq,eq->ije", third, average(gg) - gg, dx)
+            rows = np.broadcast_to(dofs[:, None, :], ke.shape).ravel()
+            cols = np.broadcast_to(dofs[None, :, :], ke.shape).ravel()
+            k = scipy.sparse.coo_matrix((ke.ravel(), (rows, cols)), shape=(basis.N, basis.N))
+            return f, new, k.tocsr()
+
+        state = (np.zeros((3, 3, ne, nq)), np.zeros((3, 3, ne, nq)), np.zeros((ne, nq)))
+        load = self.f if f is None else f
+        free, fixed = self.free, self.fixed
+        u = np.zeros(basis.N)
+        previous = 0.0
+        for factor in load_factors:
+            dtheta = factor * dtemp
+            # Predictor: the tangent at the converged state, carrying the
+            # increments of the load, the temperature and the prescribed
+            # displacements (a jump of the prescribed DOFs alone would strain
+            # the elements next to them far past yield).
+            f_prev, _, k = evaluate(u, state, previous * dtemp, True)
+            if np.any(dtemp != 0.0) and factor != previous:
+                f_hot, _, _ = evaluate(u, state, dtheta, False)
+                thermal = f_hot - f_prev
+            else:
+                thermal = np.zeros(basis.N)
+            step = np.zeros(basis.N)
+            step[fixed] = (factor - previous) * self.x[fixed]
+            rhs = (factor * load - f_prev - thermal - k @ step)[free]
+            step[free] = sla.spsolve(k[free][:, free].tocsc(), rhs)
+            u = u + step
+            u[fixed] = factor * self.x[fixed]
+            previous = factor
+            last = np.inf
+            for _ in range(max_iterations):
+                f_int, trial_state, k = evaluate(u, state, dtheta, True)
+                r = f_int - factor * load
+                scale = max(np.linalg.norm(factor * load), np.linalg.norm(r[fixed]), 1e-300)
+                norm = np.linalg.norm(r[free])
+                # Converged at the tolerance, or where Newton stops reducing a
+                # residual already at its round-off floor: the rounding of the
+                # sums that form it (1024 eps of the gross forces) or of u
+                # itself (64 eps || |K| |u| ||), counted while that floor is
+                # below 1e-6 of the load, as in SparLab. (The slender Tet10
+                # cantilever's residual stalls at 3e-11 of its load, below
+                # the rounding of u.)
+                eps = np.finfo(float).eps
+                floor = max(1024.0 * eps * np.linalg.norm((gross["forces"]
+                                                           + np.abs(factor * load))[free]),
+                            64.0 * eps * np.linalg.norm((abs(k) @ np.abs(u))[free]))
+                at_floor = floor <= 1e-6 * scale and norm <= floor and norm > 0.5 * last
+                if norm <= tolerance * scale or at_floor:
+                    break
+                last = norm
+                du = np.zeros(basis.N)
+                du[free] = sla.spsolve(k[free][:, free].tocsc(), -r[free])
+                # Backtrack while the residual grows (a Newton step across
+                # the elastic-plastic kink can overshoot).
+                alpha = 1.0
+                for _ in range(8):
+                    f_try, _, _ = evaluate(u + alpha * du, state, dtheta, False)
+                    if np.linalg.norm((f_try - factor * load)[free]) < norm:
+                        break
+                    alpha *= 0.5
+                u = u + alpha * du
+            else:
+                raise ResultError(f"scikit-fem's J2 Newton did not converge at load factor "
+                                  f"{factor}")
+            state = trial_state
         return u
 
     def buckling(self, u: np.ndarray, num_modes: int) -> np.ndarray:
@@ -918,6 +1285,10 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
                          "Tet10": "ElementTetP2"}[element_type]
         stats["element"] = skfem_element
         stats["comparison"] = "SparLab's assembled load vector (mesh.json)"
+        # The round-off scale of the system (informational): two
+        # backward-stable solutions of it differ by up to about kappa * eps.
+        stats["condition_estimate"] = problem.condition_estimate()
+        stats["round_off_scale"] = stats["condition_estimate"] * float(np.finfo(float).eps)
         entry["codes"]["scikit-fem"] = stats
 
         # --- scikit-fem integrating the deck's loads itself ---
@@ -1026,8 +1397,18 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
             stats["passed"] = stats["max_rel_diff"] <= tolerances["calculix_conduction"]
             entry["codes"]["calculix conduction"] = stats
 
-        # --- the geometrically non-linear run, when the case has one ---
+        # --- the non-linear run, when the case has one ---
         nl_case = nonlinear_cases.get(name)
+        if nl_case is not None and nl_case.get("plasticity") is not None:
+            if not nl_case.get("completed"):
+                raise ResultError(f"SparLab's elastoplastic run of load case '{name}' did not "
+                                  f"complete ({nl_case.get('termination', '')})")
+            plastic = plastic_comparisons(case, summary, name, nl_case, problem, loads,
+                                          ccx_type, skfem_element, tolerances, skip_calculix)
+            entry["codes"].update(plastic["codes"])
+            if plastic["notes"]:
+                entry["plastic_notes"] = plastic["notes"]
+            nl_case = None
         if nl_case is not None:
             # Every comparison below is made along SparLab's own load factors, so a
             # run that stopped short would be compared - and could agree - at a
@@ -1139,6 +1520,115 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
     return report
 
 
+def plastic_comparisons(case, summary: Dict, name: str, nl_case: Dict, problem: "SkfemProblem",
+                        loads: Optional["DeckLoads"], ccx_type: str, skfem_element: str,
+                        tolerances: Dict[str, float], skip_calculix: bool) -> Dict:
+    """The comparisons of an elastoplastic run: an independent scikit-fem J2
+    solve through SparLab's load factors (small strain or finite kinematics),
+    and CalculiX's *PLASTIC deck (fixed increments, the legs of the load path
+    as steps)."""
+    entry: Dict = {"codes": {}, "notes": []}
+    mesh = case.mesh
+    nl = summary["nonlinear"]
+    kinematics = nl.get("kinematics", "finite")
+    ours = case_nonlinear_displacement(case, name)
+    path_table = case.table(f"nonlinear_{_safe(name)}.csv")
+    factors = path_table["load_factor[-]"].to_numpy().tolist()
+    mean_dilatation = bool(nl_case["plasticity"]["mean_dilatation_applied"])
+    materials = summary.get("materials") or [summary["material"]]
+    if not any("plasticity" in m for m in materials):
+        raise ResultError(f"the run of '{name}' is elastoplastic but summary.json records no "
+                          "material's plasticity parameters; rerun sparlab_solve")
+    thermal = loads is not None and loads.temperature is not None
+
+    finite = kinematics != "small_strain"
+    if finite and thermal:
+        entry["notes"].append("the scikit-fem J2 comparison has no thermal strain with finite "
+                              "kinematics; the unit tests check it (exact heated states)")
+    else:
+        temperature = None
+        f = None
+        if thermal:
+            # mesh.json's load vector carries the linear thermal load; the
+            # elastoplastic run takes the temperature through the return, so
+            # such a deck carries the temperature and prescribed displacements
+            # only.
+            if loads.cload or loads.pressure or loads.body or loads.gravity is not None \
+                    or loads.centrifugal is not None:
+                raise ResultError(f"the plastic deck of '{name}' combines a temperature with "
+                                  "other loads, which the scikit-fem J2 comparison cannot "
+                                  "separate from the linear thermal load of mesh.json")
+            temperature = case.temperature(name)["temperature[K]"].to_numpy()
+            f = np.zeros(problem.basis.N)
+        u = problem.plastic(materials, mesh.element_materials, factors, mean_dilatation,
+                            temperature, f, kinematics="finite" if finite else "small_strain")
+        stats = compare(problem.nodal(u), ours)
+        stats["tolerance"] = tolerances["skfem_plastic"]
+        stats["passed"] = stats["max_rel_diff"] <= tolerances["skfem_plastic"]
+        averaging = (" E-bar" if finite else " B-bar") if mean_dilatation else ""
+        stats["element"] = skfem_element + averaging + (" finite" if finite else "")
+        stats["load_factors"] = len(factors)
+        stats["kinematics"] = "finite" if finite else "small_strain"
+        stats["comparison"] = (
+            ("an independent J2 implementation with finite kinematics (the return in the "
+             "Green-Lagrange strain and second Piola-Kirchhoff stress, the internal force "
+             "int dE : S dV_0, a central-difference material tangent plus the geometric "
+             "stiffness, E-bar when SparLab applied it)" if finite else
+             "an independent small-strain J2 implementation (radial return in 3 x 3 tensor "
+             "form, a central-difference tangent, the mean dilatation when SparLab applied "
+             "it)") +
+            ", Newton converged at each of SparLab's load factors, internal variables "
+            "committed there")
+        entry["codes"]["scikit-fem J2"] = stats
+
+    if skip_calculix:
+        return entry
+    suffix = "small_strain" if kinematics == "small_strain" else "nlgeom"
+    deck = case.path(f"calculix_{_safe(name)}_{suffix}.inp")
+    if not os.path.isfile(deck):
+        entry["notes"].append("no CalculiX deck: kinematic hardening is not exported (CalculiX "
+                              "2.21's HARDENING=KINEMATIC softens where Prager's rule hardens)")
+        return entry
+    if int(nl_case.get("cuts", 0)) != 0:
+        raise ResultError(f"SparLab's run of '{name}' cut steps, so its increments differ from "
+                          "the deck's fixed ones; the plastic comparison needs equal increments")
+    legs = len(nl.get("options", {}).get("load_path") or [1.0])
+    with tempfile.TemporaryDirectory(prefix="sparlab_ccx_plastic_") as work:
+        frd = run_calculix_steps(deck, work, legs)
+        ref = parse_frd_displacements(frd, mesh.num_nodes)[:, : mesh.dim]
+    if np.isnan(ref).any():
+        raise ResultError(f"CalculiX returned no displacement for some nodes of {name} (*PLASTIC)")
+    stats = compare(ref, ours)
+    stats["tolerance"] = tolerances["calculix_plastic"]
+    stats["element"] = f"{ccx_type} *PLASTIC" + (" NLGEOM" if suffix == "nlgeom" else "")
+    stats["loads"] = native_loads(deck)
+    stats["steps"] = legs
+    if kinematics != "small_strain":
+        stats["passed"] = None
+        stats["comparison"] = (
+            "different plasticity models at finite strain: SparLab's J2 return in the "
+            "Green-Lagrange strain and second Piola-Kirchhoff stress (small strain, large "
+            "rotation), CalculiX's finite-strain J2 under NLGEOM; they differ at the order of "
+            "the strain; informational")
+    elif mean_dilatation:
+        stats["passed"] = None
+        stats["comparison"] = (f"SparLab averages the dilatation (B-bar), CalculiX's {ccx_type} "
+                               "does not; informational")
+    elif ccx_type in ("CPS4", "CPS3"):
+        stats["passed"] = None
+        stats["comparison"] = (f"CalculiX expands {ccx_type} into a 3-D layer, which is not "
+                               "plane stress; informational")
+    else:
+        stats["passed"] = stats["max_rel_diff"] <= tolerances["calculix_plastic"]
+        stats["comparison"] = (
+            "same discrete problem: CalculiX's *PLASTIC (isotropic hardening table) without "
+            "NLGEOM, the same fixed increments (*STATIC, DIRECT), one *STEP per leg of the "
+            "load path")
+    stats["frd_rounding_floor_rel"] = 5.0e-6
+    entry["codes"]["calculix *PLASTIC"] = stats
+    return entry
+
+
 def native_loads(deck: str) -> List[str]:
     """The distributed loads a CalculiX deck applies in CalculiX's own form."""
     found = []
@@ -1196,6 +1686,10 @@ def main(argv=None) -> int:
                         help="scikit-fem's total Lagrangian solve vs SparLab's non-linear one")
     parser.add_argument("--tol-calculix-nlgeom", type=float, default=1e-5,
                         help="CalculiX *STEP, NLGEOM vs SparLab's non-linear solution")
+    parser.add_argument("--tol-skfem-plastic", type=float, default=1e-7,
+                        help="scikit-fem's J2 solve vs SparLab's elastoplastic one")
+    parser.add_argument("--tol-calculix-plastic", type=float, default=1e-5,
+                        help="CalculiX *PLASTIC vs SparLab's small-strain elastoplastic run")
     parser.add_argument("--tol-calculix-conduction", type=float, default=1e-4,
                         help="max nodal temperature difference over the temperature range "
                              "(the .frd rounding of a temperature near 300 K is 5e-4 K)")
@@ -1216,6 +1710,8 @@ def main(argv=None) -> int:
                   "calculix_conduction": args.tol_calculix_conduction,
                   "skfem_nonlinear": args.tol_skfem_nonlinear,
                   "calculix_nlgeom": args.tol_calculix_nlgeom,
+                  "skfem_plastic": args.tol_skfem_plastic,
+                  "calculix_plastic": args.tol_calculix_plastic,
                   "skfem_buckling_max_dofs": args.skfem_buckling_max_dofs}
     import skfem
     summary = {
@@ -1227,7 +1723,9 @@ def main(argv=None) -> int:
                                    "isoparametric with full integration, linear "
                                    "simplices, isoparametric quadratic tetrahedra with "
                                    "the 4-point rule); differences are linear-solver "
-                                   "round-off"},
+                                   "round-off, whose scale is the condition number of "
+                                   "K_ff times eps (condition_estimate: Hager and "
+                                   "Higham's 1-norm estimate; round_off_scale)"},
             "calculix": {"version": None if args.skip_calculix else calculix_version(),
                          "note": "C3D8, C3D4 and C3D10 are the same elements as "
                                  "SparLab's Hex8, Tet4 and Tet10; CPS4/CPS3 (CPE4/CPE3) are plane elements "
@@ -1259,6 +1757,8 @@ def main(argv=None) -> int:
                 extra = ("" if "max_rel_diff_judged" not in stats else
                          f" [vs CalculiX's own formulation; SparLab "
                          f"{stats['max_rel_diff']:.1e}]")
+                if "round_off_scale" in stats:
+                    extra += f" [kappa_1 eps {stats['round_off_scale']:.1e}]"
                 print(f"  {report['case']:<28} {lc['load_case']:<14} {code:<18} "
                       f"{stats['element']:<12} max rel diff {judged:.3e} "
                       f"(tol {stats['tolerance']:.0e}) {verdict}{extra}")

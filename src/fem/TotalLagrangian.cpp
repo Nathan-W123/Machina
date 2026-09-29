@@ -20,41 +20,12 @@ void voigt_pair(int dim, int c, int& i, int& j) {
   j = dim == 3 ? pairs3[c][1] : pairs2[c][1];
 }
 
-/// Shape-function gradients with respect to the reference coordinates,
-/// dim x n, read off the normal-strain rows of the strain operator.
-Matrix reference_gradients(const StrainOperator& op, int dim, int nodes) {
-  Matrix g(dim, nodes);
-  for (int a = 0; a < nodes; ++a) {
-    for (int i = 0; i < dim; ++i) g(i, a) = op.b(i, dim * a + i);
-  }
-  return g;
-}
-
 Matrix displacement_matrix(const Vector& ue, int dim, int nodes) {
   Matrix u(dim, nodes);
   for (int a = 0; a < nodes; ++a) {
     for (int k = 0; k < dim; ++k) u(k, a) = ue(dim * a + k);
   }
   return u;
-}
-
-/// The nonlinear strain operator: delta E (Voigt, engineering shear) =
-/// B_NL delta u.
-Matrix nonlinear_b(const Matrix& f, const Matrix& g, int dim, int nodes) {
-  const int nv = voigt_components(dim);
-  Matrix b(nv, dim * nodes);
-  for (int c = 0; c < nv; ++c) {
-    int i = 0;
-    int j = 0;
-    voigt_pair(dim, c, i, j);
-    for (int a = 0; a < nodes; ++a) {
-      for (int k = 0; k < dim; ++k) {
-        b(c, dim * a + k) =
-            i == j ? f(k, i) * g(i, a) : f(k, i) * g(j, a) + f(k, j) * g(i, a);
-      }
-    }
-  }
-  return b;
 }
 
 Matrix stress_tensor(const Vector& s, int dim) {
@@ -76,6 +47,34 @@ Scalar point_temperature_change(const Vector& n, const Vector& te, Scalar t_ref)
 }
 
 }  // namespace
+
+Matrix reference_gradients(const StrainOperator& op, int dim, int nodes) {
+  // The normal-strain rows of the strain operator hold dN_a/dX_i.
+  Matrix g(dim, nodes);
+  for (int a = 0; a < nodes; ++a) {
+    for (int i = 0; i < dim; ++i) g(i, a) = op.b(i, dim * a + i);
+  }
+  return g;
+}
+
+Matrix green_lagrange_operator(const Matrix& f, const Matrix& g) {
+  const int dim = static_cast<int>(g.rows());
+  const int nodes = static_cast<int>(g.cols());
+  const int nv = voigt_components(dim);
+  Matrix b(nv, dim * nodes);
+  for (int c = 0; c < nv; ++c) {
+    int i = 0;
+    int j = 0;
+    voigt_pair(dim, c, i, j);
+    for (int a = 0; a < nodes; ++a) {
+      for (int k = 0; k < dim; ++k) {
+        b(c, dim * a + k) =
+            i == j ? f(k, i) * g(i, a) : f(k, i) * g(j, a) + f(k, j) * g(i, a);
+      }
+    }
+  }
+  return b;
+}
 
 TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
                                                 const Vector& ue, HyperelasticModel law,
@@ -121,7 +120,7 @@ TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
     }
     const HyperelasticResponse resp =
         evaluate_hyperelastic(law, mat, state, h, temperature_scale * dt0);
-    const Matrix bnl = nonlinear_b(f, g, dim, n);
+    const Matrix bnl = green_lagrange_operator(f, g);
     const Scalar w = ip.weight * op.detJ * t;
     out.internal_force.noalias() += w * (bnl.transpose() * resp.stress);
     out.energy += w * resp.energy;

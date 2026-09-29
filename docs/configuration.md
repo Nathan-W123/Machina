@@ -111,6 +111,7 @@ among them.
 | `thermal_expansion` | number [1/K] | `0` | linear expansion coefficient `alpha`; `0` means a temperature causes no strain |
 | `reference_temperature` | number [K] | `0` | the stress-free temperature `T_ref`: the thermal strain is `alpha (T - T_ref)` |
 | `conductivity` | number [W/(m K)] | `0` | `k`, needed by a conducted temperature field (`load_cases[].temperature.conduction`) |
+| `plasticity` | object | none | J2 plasticity, below; without it the material is elastic |
 
 Temperatures may be given in kelvin or in degrees Celsius as long as every
 temperature of the deck - `reference_temperature`, and the load cases' uniform,
@@ -120,6 +121,36 @@ enter the thermal strain and the conduction problem. The thermal strain is
 in-plane law unchanged), `(1 + nu) alpha dT {1, 1, 0}` in plane strain (the
 restrained out-of-plane expansion; `sigma_zz = nu (sigma_xx + sigma_yy) - E alpha dT`
 is reported as `sigma_zz`), and `alpha dT {1, 1, 1, 0, 0, 0}` in 3-D.
+
+### `material.plasticity`
+
+```json
+"plasticity": { "yield_stress": 250e6, "hardening_modulus": 2e9,
+                "saturation_stress": 80e6, "saturation_rate": 25,
+                "kinematic_hardening_modulus": 3e9 }
+```
+
+J2 (von Mises) plasticity, which the non-linear analysis models (`nonlinear`,
+below; `docs/formulation.md`, section 7d). The yield stress after an
+accumulated plastic strain `alpha` is
+`sigma_y(alpha) = yield_stress + hardening_modulus alpha + saturation_stress (1 - exp(-saturation_rate alpha))`
+(linear isotropic hardening plus Voce saturation), and the yield surface
+moves with the back stress of Prager's linear kinematic hardening,
+`d beta = (2/3) kinematic_hardening_modulus d eps_p`. In uniaxial tension the
+plastic slope of the stress against the plastic strain is
+`hardening_modulus + kinematic_hardening_modulus` (plus the Voce part).
+
+| Key | Type | Default | Constraint |
+|-----|------|---------|------------|
+| `yield_stress` | number [Pa] | required | `> 0`: the initial uniaxial yield stress `sigma_y0` |
+| `hardening_modulus` | number [Pa] | `0` | `>= 0`, `H`: linear isotropic hardening (`0` with the others `0` is perfect plasticity) |
+| `saturation_stress` | number [Pa] | `0` | `>= 0`, `Q`: the Voce saturation increment of the yield stress |
+| `saturation_rate` | number [-] | `0` | `> 0` when `saturation_stress` is given, `delta` |
+| `kinematic_hardening_modulus` | number [Pa] | `0` | `>= 0`, `H_kin`: Prager's linear kinematic hardening |
+
+The linear analyses - static, modal, buckling - and the topology
+optimisation treat the material as elastic; `sparlab_solve` says so when a
+plastic material meets no non-linear analysis.
 
 ## `material_regions`
 
@@ -474,6 +505,7 @@ load factor, residual and energy share in solid material, and, with
 ```json
 "nonlinear": {
   "enabled": true,
+  "kinematics": "finite",
   "material_model": "saint_venant_kirchhoff",
   "method": "load_control",
   "steps": 10,
@@ -489,19 +521,24 @@ load factor, residual and energy share in solid material, and, with
 }
 ```
 
-A geometrically non-linear static analysis of each selected load case: large
-displacement and rotation in the total Lagrangian form, the equilibrium
-solved by Newton's method along a load path (`docs/formulation.md`, section
-7c). One load factor lambda scales every load of the case together - forces,
-pressures, self-weight and body forces, the rotation, the temperature change
-and prescribed displacements - from 0 to 1. `sparlab_solve` runs it after the
-linear analysis, which stays in the summary for comparison; `sparlab_topopt`
-refuses a deck with it enabled (the optimisation is linear).
+A non-linear static analysis of each selected load case: large displacement
+and rotation in the total Lagrangian form (`kinematics: finite`) or small
+strain (`small_strain`), with J2 plasticity for the materials that have a
+`plasticity` block, the equilibrium solved by Newton's method along a load
+path (`docs/formulation.md`, sections 7c and 7d). One load factor lambda
+scales every load of the case together - forces, pressures, self-weight and
+body forces, the rotation, the temperature change and prescribed
+displacements - from 0 to 1, or along a `load_path` that may unload.
+`sparlab_solve` runs it after the linear analysis, which stays in the summary
+for comparison; `sparlab_topopt` refuses a deck with it enabled (the
+optimisation is linear).
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `enabled` | bool | `false` | run the non-linear analysis |
-| `material_model` | string | `saint_venant_kirchhoff` | `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only |
+| `kinematics` | string | `finite` | `finite`: the total Lagrangian formulation, large displacement and rotation. `small_strain`: the linear strain on the undeformed geometry - no geometric stiffness, pressures on the undeformed faces, the rotation's load at the undeformed positions; with elastic materials it is the linear analysis, with plastic ones the classical small-strain elastoplastic analysis |
+| `material_model` | string | `saint_venant_kirchhoff` | the elastic law with `finite` kinematics. `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only, elastic materials only. A plastic material takes the Saint Venant-Kirchhoff form (its J2 return in the Green strain) |
+| `mean_dilatation` | string or bool | `auto` | the elements of a plastic material that average their dilatation over the element (B-bar; its Green-strain form with `finite` kinematics), which keeps them from locking under the isochoric plastic flow. `auto`: Q4 and Hex8, which lock without it; `all`: also Tet10; `none`. `true` and `false` stand for `all` and `none`. Plane stress and one-point elements (Tri3, Tet4) have nothing to average |
 | `method` | string | `load_control` | `load_control`: Newton at prescribed load factors. `arc_length`: Crisfield's cylindrical arc-length method, which follows the path through limit points |
 | `steps` | integer | `10` | load control: the equal steps to lambda = 1 it starts with (halved on failure, lengthened again after easy steps, never beyond this size). Arc length: the first arc length is that of the first of `steps` equal load increments |
 | `max_steps` | integer | `500` | converged steps before the run stops |
@@ -512,6 +549,7 @@ refuses a deck with it enabled (the optimisation is linear).
 | `line_search` | bool | `true` | energy line search along each Newton direction |
 | `follower_pressure` | bool | `true` | pressures act on the deformed faces, their direction and area following the deformation; `false` keeps them on the reference faces (dead) |
 | `load_factors` | array of numbers | none | load control: load factors in (0, 1), strictly increasing, that the path passes through exactly, so the results are recorded at chosen load levels. Not with `arc_length` |
+| `load_path` | array of numbers | none | load control: the load factors to visit in turn from 0, each reached exactly - a path with turning points, such as `[1, 0]` (load, then unload: the permanent set and residual stresses of a plastic body) or `[1, -1, 1]` (a cycle). Each leg starts with `steps` equal steps. Not with `load_factors` or `arc_length` |
 | `target_load_factor` | number | `1` | arc length: the load factor where the run stops, reached exactly by a last load-controlled step |
 | `desired_iterations` | integer | `5` | arc length: the Newton iterations per step the arc length adapts towards |
 | `min_arc_ratio`, `max_arc_ratio` | number | `1e-6`, `10` | arc length: bounds on the arc length relative to the first one |
@@ -529,23 +567,39 @@ factor (`critical_load_factor_bracket`), and the console line says `STOPPED`.
 The arc-length method follows such a path, and records the negative pivots
 of each converged state, which mark the unstable stretches.
 
+With plasticity the second of those tests (the jump to another branch) is
+not made: the elastic predictor of a step in which points start to yield
+underestimates the increment by the ratio of elastic to plastic stiffness,
+and small-strain kinematics has no distant branches. Beyond a plastic
+collapse load - a structure of a material without hardening - there is no
+equilibrium at all: load control stops at the last converged load factor
+with `unreached_load_factor`, the nearest load factor no step reached, or
+the bracket above when the singular collapse tangent shows a negative pivot.
+The largest converged load factor is a lower bound on the collapse load (an
+equilibrium within yield); the arc-length method runs onto the collapse
+plateau, whose load factor is the collapse load of the model
+(`docs/verification.md`, the plastic cylinder).
+
 Refused with a message before any step: the neo-Hookean law in plane stress
 (its plane-stress form, which needs the thickness stretch that makes S_33
 vanish, is not implemented), the neo-Hookean law under a temperature change
 in a material with thermal expansion (the thermal strain is modelled for
-Saint Venant-Kirchhoff only), and the arc-length method with a non-zero
-prescribed displacement (its constraint measures the free displacements
-only; drive a prescribed displacement by load control, which the arch study
-does to follow a snap-through in displacement control).
+Saint Venant-Kirchhoff only), the neo-Hookean law with `small_strain`
+kinematics or a plastic material, `follower_pressure: true` with
+`small_strain` kinematics, a `load_path` with `load_factors` or with the
+arc-length method, and the arc-length method with a non-zero prescribed
+displacement (its constraint measures the free displacements only; drive a
+prescribed displacement by load control, which the arch study does to follow
+a snap-through in displacement control).
 
 The results, per load case:
 
 | File | Content |
 |------|---------|
-| `nonlinear_<lc>.csv` | one row per converged step: load factor, Newton iterations, halvings, the relative residual at convergence, the arc length, the negative pivots of the tangent (`-1` when a non-symmetric tangent was factorised by LU, which reports no inertia), the largest displacement, and the monitors |
+| `nonlinear_<lc>.csv` | one row per converged step: load factor, Newton iterations, halvings, the relative residual at convergence, the arc length, the negative pivots of the tangent (`-1` when a non-symmetric tangent was factorised by LU, which reports no inertia), the largest displacement, with plasticity the integration points that yielded in the step and the largest accumulated plastic strain after it, and the monitors |
 | `nonlinear_displacement_<lc>.csv`, `nonlinear_reactions_<lc>.csv` | nodal displacements and reactions at the final load factor (with `output.csv`) |
-| `nonlinear_stress_<lc>.csv` | element Cauchy stress (with `szz` in plane strain), its von Mises stress and the second Piola-Kirchhoff stress (with `output.csv`) |
-| `nonlinear_<lc>.vtk` | displacement, Cauchy stress and von Mises stress at the final state (with `output.vtk`) |
+| `nonlinear_stress_<lc>.csv` | element Cauchy stress (with `szz` in plane strain), its von Mises stress, the second Piola-Kirchhoff stress (with small strain both are sigma) and, with plasticity, the largest accumulated plastic strain of the element's points (with `output.csv`) |
+| `nonlinear_<lc>.vtk` | displacement, Cauchy stress, von Mises stress and, with plasticity, the equivalent plastic strain at the final state (with `output.vtk`) |
 
 The `nonlinear` block of `summary.json` holds, per load case, whether it
 reached lambda = 1, the steps, iterations and halvings, the largest
@@ -557,7 +611,16 @@ stopped, a final state that is not stable, a non-symmetric tangent whose
 stability is therefore not assessed, and a Saint Venant-Kirchhoff state
 whose strains exceed the law's range (Green strain above 0.05, or a volume
 ratio J below 1/sqrt(3): below a stretch of 1/sqrt(3) the law's compressive
-force falls again).
+force falls again). With `small_strain` kinematics it records the largest
+strain, the largest rotation and the largest component of the neglected
+quadratic strain `H^T H / 2`, and warns when that exceeds a tenth of the
+largest strain (it matters where the structure is restrained against the
+motion a rotation causes: membrane action) or a strain exceeds 0.05. With
+plasticity its `plasticity` block records the integration points that have
+yielded, the largest accumulated plastic strain, the elements that yielded,
+whether mean dilatation was applied, and the step in which a point first
+yielded; the warnings add strains beyond 0.05 (the elastoplastic law assumes
+small strains) and elements that lock under isochoric plastic flow.
 
 ## `topology`
 

@@ -160,8 +160,16 @@ beam or shell elements.
   once - forces, pressures, body loads, the rotation's centrifugal load (so
   the angular velocity grows as `sqrt(lambda)`), the temperature change and
   prescribed displacements - and `lambda = 1` is the load case as written.
-  A reaction monitor sums the support reactions over its nodes with the sign
-  above; a displacement monitor averages the nodal displacements.
+  A `load_path` takes `lambda` through its turning points in order, and a
+  negative `lambda` reverses every load. A reaction monitor sums the support
+  reactions over its nodes with the sign above; a displacement monitor
+  averages the nodal displacements.
+* Plasticity: the equivalent (accumulated) plastic strain is
+  `a = int sqrt(2/3) ||d eps_p||`, which in uniaxial tension is the plastic
+  strain itself; the yield stress `sigma_y(a)` and the hardening moduli are
+  uniaxial values. The plastic strain is stored with engineering shears
+  (as every strain), the back stress with tensorial components (as every
+  stress).
 * A buckling load factor `lambda` multiplies the load case: the structure is
   predicted to buckle under `lambda f`. Load factors are reported positive
   and ascending; the negative ones of the pencil (buckling under the
@@ -262,7 +270,10 @@ Every tolerance is configurable and every run records the value it used in
 | `buckling.tolerance` (and `topology.buckling_constraint.tolerance`) | `1e-8` | relative change of the requested load factors between subspace iterations |
 | `buckling.residual_tolerance` | `1e-6` | relative eigenpair residual `\|\|K phi + lambda K_G phi\|\| / \|\|K phi\|\|`, also part of the stopping rule |
 | `topology.length_scale_check.tolerance` | `0.02` | share of the solid (void) volume a morphological probe may change and still pass |
-| `nonlinear.residual_tolerance` | `1e-8` | out-of-balance force of a converged step over the load scale (the largest of the applied loads, the reactions and the thermal forces); a residual at its round-off floor, `max(1024 eps` gross element forces`, 64 eps \|\| \|K_T\|\|u\| \|\|)`, is accepted too |
+| `nonlinear.residual_tolerance` | `1e-8` | out-of-balance force of a converged step over the load scale (the largest of the applied loads, the reactions and the thermal forces); a residual at its round-off floor, `max(1024 eps` gross element forces`, 64 eps \|\| \|K_T\|\|u\| \|\|)`, is accepted too while that floor is below `1e-6` of the scale |
+| J2 return, Voce hardening | `1e-13` | the consistency residual of the plastic multiplier over the yield radius; 60 Newton iterations, else an error |
+| J2 return, plane stress | `1e-12` | `\|sigma_33\|` over the larger of the stress and the yield stress; 30 Newton iterations, else an error |
+| elastic return at the yield surface | `1e-12` | a trial overshoot of the yield radius below this is elastic (round-off must not start plastic flow); a point that yielded in its last step and sits within `1e-10` of its surface keeps the continuum tangent |
 | `nonlinear.displacement_tolerance` | `1e-8` | last Newton correction over the displacement increment of the step, no finer than `64 eps \|\|u\|\|` |
 | `nonlinear.max_cuts` | `12` | successive halvings of a failing step, and of the steps closing in on a critical point, before the run stops |
 

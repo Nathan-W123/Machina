@@ -51,6 +51,7 @@ add_library(sparlab STATIC
   src/mesh/SubMesh.cpp
   src/material/IsotropicMaterial.cpp
   src/material/Hyperelastic.cpp
+  src/material/Plasticity.cpp
   src/elements/Quadrature.cpp
   src/elements/Element.cpp
   src/elements/Quad4.cpp
@@ -75,6 +76,7 @@ add_library(sparlab STATIC
   src/fem/HeatConduction.cpp
   src/fem/TotalLagrangian.cpp
   src/fem/NonlinearStatic.cpp
+  src/fem/Elastoplastic.cpp
   src/topopt/SimpInterpolation.cpp
   src/topopt/DensityFilter.cpp
   src/topopt/DesignDomain.cpp
@@ -149,7 +151,8 @@ if(SPARLAB_BUILD_APPS)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE sparlab_app_support)
   endforeach()
-  target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp)
+  target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp
+                                     apps/verify_plasticity.cpp)
 endif()
 
 # ----------------------------------------------------------------------------

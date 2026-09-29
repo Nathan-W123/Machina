@@ -295,6 +295,17 @@ int main(int argc, char** argv) {
           "the deck enables the non-linear analysis, but the optimiser designs for linear "
           "statics; run the non-linear analysis of a design with sparlab_solve");
     }
+    {
+      bool plastic = config.material().plasticity().enabled();
+      for (const MaterialRegion& r : config.material_regions) {
+        plastic = plastic || r.material.plasticity().enabled();
+      }
+      if (plastic) {
+        log::warn("the deck's material has a yield stress, but the optimiser designs for "
+                  "linear elasticity: the plasticity is ignored (a stress constraint can "
+                  "keep the design below yield)");
+      }
+    }
 
     const std::string out_dir =
         cli.value("output", app::default_output_directory(config.name));

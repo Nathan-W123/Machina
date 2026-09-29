@@ -130,8 +130,17 @@ int main(int argc, char** argv) {
       }
     }
 
-    // Geometrically non-linear analysis of each selected load case.
+    // Non-linear analysis of each selected load case. Only it models
+    // plasticity: say so when a plastic material meets only linear analyses.
     std::vector<NonlinearResult> nonlinear;
+    if (!config.nonlinear.enabled) {
+      for (const IsotropicMaterial& m : model.materials()) {
+        if (!m.plasticity().enabled()) continue;
+        log::warn("material '", m.name(), "' has a yield stress, which only the non-linear "
+                  "analysis models ('nonlinear' block or --nonlinear); the linear static, "
+                  "modal and buckling analyses treat it as elastic");
+      }
+    }
     if (config.nonlinear.enabled) {
       ScopedTimer t(timings, "nonlinear_analysis");
       NonlinearStaticAnalysis nl(model, assembler, config.nonlinear.options);
@@ -189,14 +198,25 @@ int main(int argc, char** argv) {
         CalculixNonlinearExport nlgeom;
         const CalculixNonlinearExport* nonlinear_export = nullptr;
         if (config.nonlinear.enabled) {
-          if (config.nonlinear.options.law == HyperelasticModel::SaintVenantKirchhoff) {
-            nlgeom.load_cases = config.nonlinear_load_cases();
-            nlgeom.increments = config.nonlinear.options.steps;
-            nlgeom.follower_pressure = config.nonlinear.options.follower_pressure;
-            nonlinear_export = &nlgeom;
-          } else {
+          const NonlinearOptions& o = config.nonlinear.options;
+          bool kinematic = false;
+          for (const IsotropicMaterial& m : model.materials()) {
+            kinematic = kinematic || m.plasticity().kinematic_hardening_modulus > 0.0;
+          }
+          if (o.kinematics == Kinematics::Finite && o.law != HyperelasticModel::SaintVenantKirchhoff) {
             log::warn("the non-linear cases are not exported to CalculiX: its NEO HOOKE is a "
                       "different strain energy from SparLab's neo-Hookean law");
+          } else if (kinematic) {
+            log::warn("the non-linear cases are not exported to CalculiX: its "
+                      "HARDENING=KINEMATIC does not reproduce Prager's linear kinematic "
+                      "hardening (a single element in uniaxial tension softens)");
+          } else {
+            nlgeom.load_cases = config.nonlinear_load_cases();
+            nlgeom.increments = o.steps;
+            nlgeom.follower_pressure = o.follower_pressure;
+            nlgeom.nlgeom = o.kinematics == Kinematics::Finite;
+            nlgeom.load_path = o.load_path;
+            nonlinear_export = &nlgeom;
           }
         }
         const std::vector<std::string> decks = write_calculix_decks(
@@ -272,7 +292,9 @@ int main(int argc, char** argv) {
       std::cout << "\n";
     }
     for (const NonlinearResult& r : nonlinear) {
-      std::cout << "  non-linear '" << r.load_case_name << "' (" << r.method << ", " << r.law
+      std::cout << "  non-linear '" << r.load_case_name << "' (" << r.method << ", "
+                << r.kinematics << (r.kinematics == "finite" ? ", " + r.law : std::string())
+                << (r.plastic ? ", J2 plasticity" : "")
                 << "): " << (r.completed ? "completed" : "STOPPED") << " at lambda = "
                 << app::format(r.load_factor) << " after " << r.steps.size() << " step(s), "
                 << r.total_iterations << " iteration(s)";
@@ -280,7 +302,14 @@ int main(int argc, char** argv) {
         std::cout << ", max |u| " << app::format(r.steps.back().max_displacement) << " m";
       }
       std::cout << "\n";
+      if (r.plastic) {
+        std::cout << "      " << r.plastic_points << " of " << r.total_points
+                  << " integration points yielded, largest plastic strain "
+                  << app::format(r.max_plastic_strain)
+                  << (r.mean_dilatation ? " (mean dilatation)" : "") << "\n";
+      }
       if (!r.completed) std::cout << "      " << r.termination << "\n";
+      for (const std::string& w : r.warnings) std::cout << "      warning: " << w << "\n";
     }
     std::cout << "  runtime:     " << app::format(timings.get("total")) << " s\n";
     std::cout << "  results:     " << out_dir << "\n";

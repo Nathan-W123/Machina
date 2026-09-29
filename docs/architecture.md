@@ -36,6 +36,7 @@ below it.
                                                              |  HeatConduction |
                                                              |  NonlinearStatic|
                                                              |  TotalLagrangian|
+                                                             |  Elastoplastic  |
                                                              +--------+--------+
                                                                       |
                                     +---------------------------------+
@@ -47,7 +48,7 @@ below it.
                            |  Quad4  Tri3   |  |  Material   |  |  Structured|
                            |  Hex8   Tet4   |  |  Hyper-     |  |  SubMesh   |
                            |  Tet10         |  |  elastic    |  |            |
-                           |  Quadrature    |  |             |  |            |
+                           |  Quadrature    |  |  Plasticity |  |            |
                            |  FaceGeometry  |  |             |  |            |
                            +-------+--------+  +------+------+  +-----+------+
                                    |                  |               |
@@ -65,7 +66,8 @@ below it.
    python/scripts/cross_validate.py  drives CalculiX and scikit-fem on the
        exported decks and compares nodal displacements, temperatures,
        buckling load factors and the final states of the non-linear runs
-       (CalculiX NLGEOM; its own total Lagrangian solver in scikit-fem)
+       (CalculiX NLGEOM and *PLASTIC; its own total Lagrangian and J2
+       solvers in scikit-fem)
    python/scripts/make_meshes.py  generates the Gmsh meshes the
        real-geometry decks read (the meshes are committed)
    python/scripts/tet10_part_study.py  meshes the engine mount at several
@@ -91,8 +93,9 @@ deck and comparing each summary, CSV and VTK file with the earlier output.
 | `mesh/Mesh` | nodal coordinates (2-D or 3-D), flat connectivity with an explicit stride, validation, boundary edge / face extraction, named node and element sets, cell-quality statistics | materials, DOFs, physics |
 | `mesh/StructuredMesh` | the rectangular Q4 and the box Hex8 generators, the Tri3 and Tet4 meshes split from them and the Tet10 meshes elevated from those, each with a node-perturbing variant for patch tests; `elevate_to_tet10` for any Tet4 mesh | reading files |
 | `mesh/SubMesh` | extracting an element subset with compact renumbering; edge- (face-) connected components; the density-to-solid interpretation | deciding *whether* to interpret |
-| `material/IsotropicMaterial` | `(E, nu, rho)`, the plane-stress, plane-strain and three-dimensional matrices, input validation | element integration |
+| `material/IsotropicMaterial` | `(E, nu, rho)`, the plane-stress, plane-strain and three-dimensional matrices, the thermal properties, the plasticity parameters and the hardening curve, input validation | element integration |
 | `material/Hyperelastic` | the Saint Venant-Kirchhoff and compressible neo-Hookean laws at a displacement gradient: energy, second Piola-Kirchhoff stress, tangent, the multiplicative thermal split, the thickness stretch of plane stress, the Cauchy stress | the element loop |
+| `material/Plasticity` | the J2 return at one point from its converged internal variables - radial return, Voce Newton, the consistent and continuum tangents, the plane-stress thickness strain, the stored energy | where the strain comes from, and the history |
 | `elements/Element` | the abstract kernel interface: stiffness, consistent mass, strain operator, edge or face traction, local face tables, and - from the element's integration rule - the geometric stiffness and its derivative with respect to the element displacements | the element's own geometry |
 | `elements/Quad4`, `elements/Hex8` | the bilinear quadrilateral and the trilinear hexahedron | any other topology |
 | `elements/Tri3`, `elements/Tet4` | the constant-strain triangle and tetrahedron, in closed form | quadrature |
@@ -113,8 +116,9 @@ deck and comparing each summary, CSV and VTK file with the earlier output.
 | `fem/Buckling` | the geometric stiffness assembly, the buckling eigenproblem by subspace iteration with the spectral transformation and inertia-placed shift, warm starts, the solid-energy diagnostic, the Euler and Engesser references | the constraint built on it |
 | `fem/Loads` | the body loads from the consistent mass (self-weight, force densities, rotation), region temperatures, the thermal load and thermal strain | the conduction solve |
 | `fem/HeatConduction` | steady conduction on the structural mesh: conductivity, sources, fluxes, convection, prescribed temperatures, the heat balance | the thermal strain it causes |
-| `fem/TotalLagrangian` | one element's internal force, tangent (material and initial-stress parts), energy and thermal load rate at a displacement, and its Cauchy stress, largest Green strain and smallest `J` | the global system |
-| `fem/NonlinearStatic` | the non-linear system of a load case (follower pressure, the deformed-position centrifugal load, dead loads, temperature, prescribed displacements, all scaled by one load factor), Newton with the energy line search, load control with its critical-point bracketing, the arc-length method, inertia, monitors, the deformed force balance | the material laws |
+| `fem/TotalLagrangian` | one element's internal force, tangent (material and initial-stress parts), energy and thermal load rate at a displacement, and its Cauchy stress, largest Green strain and smallest `J`; the reference gradients and the Green-strain operator it shares | the global system |
+| `fem/Elastoplastic` | one elastoplastic element with small-strain or finite kinematics: the point strains (with the mean dilatation), the returns, internal force, tangent (with the geometric part), thermal load rate and the updated internal variables; its stresses and deformation measures | keeping the history |
+| `fem/NonlinearStatic` | the non-linear system of a load case (follower pressure, the deformed-position centrifugal load, dead loads, temperature, prescribed displacements, all scaled by one load factor), the committed internal variables of every elastoplastic point and their commit on convergence, Newton with the energy line search, load control along a load path with its critical-point, unreached-load and collapse bracketing, the arc-length method, inertia, monitors, the deformed force balance, the validity warnings | the material laws |
 | `topopt/DesignDomain` | design variables, bounds, passive tags, element volumes, feasibility checks | the objective |
 | `topopt/SimpInterpolation` | `E(rho)`, its derivative, the mass laws | assembly |
 | `topopt/DensityFilter` | the filter operator, its exact adjoint, the Sigmund variant | the objective |
@@ -132,11 +136,11 @@ deck and comparing each summary, CSV and VTK file with the earlier output.
 | `io/MeshReader` | Gmsh (MSH 2.2 / 4.1) and Abaqus / CalculiX `.inp` import: cell types, named sets, orientation repair, unused and duplicate nodes, units, the read report | boundary conditions or materials in the file |
 | `io/CsvWriter`, `io/VtkWriter` | plain-text export with explicit precision | what to export |
 | `io/StlWriter` | the boundary surface of a mesh (extruded for a plane one) as an indexed triangle surface, its closure and manifold checks, binary STL in and out | choosing what to export |
-| `io/CalculixWriter` | one CalculiX input deck per load case for the same discrete problem, every field within CalculiX's 20 characters, and its `*STEP, NLGEOM` counterpart for a non-linear case | running CalculiX |
+| `io/CalculixWriter` | one CalculiX input deck per load case for the same discrete problem, every field within CalculiX's 20 characters, and its non-linear counterpart (`*STEP, NLGEOM`, or small strain) with `*PLASTIC` and one step per leg of a load path | running CalculiX |
 | `io/ResultWriter` | the result-directory layout, the geometry export and the summary documents | computing anything |
 | `apps/` | argument parsing, orchestration, console reports, exit codes | physics |
 | `python/sparlab_viz` | reading result files and drawing figures (plane fields in `fields`/`plots`, solid surfaces in `solid`/`plots3d`) | recomputing physics |
-| `python/scripts/cross_validate.py` | driving CalculiX (static and `*BUCKLE`) and scikit-fem (including an independent geometric stiffness) on the exported problems and comparing nodal displacements and load factors | judging which code is right |
+| `python/scripts/cross_validate.py` | driving CalculiX (static, `*BUCKLE`, `*HEAT TRANSFER`, `NLGEOM`, `*PLASTIC`) and scikit-fem (including an independent geometric stiffness, total Lagrangian solver and J2 solver) on the exported problems and comparing nodal displacements, temperatures and load factors | judging which code is right |
 | `python/scripts/make_meshes.py` | the Gmsh parts of the real-geometry decks in linear and quadratic tetrahedra, their physical groups, deterministic mesher options | the analysis |
 | `python/scripts/tet10_part_study.py` | meshing, solving and tabulating the Tet4 / Tet10 comparison on the engine mount | the element formulation |
 

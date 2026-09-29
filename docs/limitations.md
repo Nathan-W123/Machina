@@ -18,21 +18,34 @@ every mode of a solid mesh fine enough to bend, but a plane model cannot
 buckle out of its plane, so plate buckling of a thin lightened web - which
 can govern it - stays invisible to the 2-D decks.
 
-**Elastic, and linear unless asked otherwise.** The static, modal and
-buckling analyses and the topology optimisation are linear: small strain,
-small displacement, one factorisation. The deformation figures of those runs
-are exaggerated by a stated factor purely for visibility. `sparlab_solve`
-adds a geometrically non-linear static analysis (`nonlinear` in the deck;
-`docs/formulation.md`, section 7c): large displacement and rotation, with the
-Saint Venant-Kirchhoff law (small strain) or a compressible neo-Hookean law
-(large strain), follower pressures, a centrifugal load at the deformed
-position, the finite-strain thermal split, load control that stops at limit
-and bifurcation points and says so, and the arc-length method through limit
-points. What it does not do:
+**Elastic and linear unless asked otherwise.** The static, modal and
+buckling analyses and the topology optimisation are linear and elastic:
+small strain, small displacement, one factorisation - a material's
+`plasticity` block is ignored there (the solve and optimise apps say so). The
+deformation figures of those runs are exaggerated by a stated factor purely
+for visibility. `sparlab_solve` adds a non-linear static analysis
+(`nonlinear` in the deck; `docs/formulation.md`, sections 7c and 7d): large
+displacement and rotation, with the Saint Venant-Kirchhoff law (small strain)
+or a compressible neo-Hookean law (large strain), follower pressures, a
+centrifugal load at the deformed position, the finite-strain thermal split,
+J2 plasticity with isotropic (linear and Voce) and kinematic (Prager)
+hardening in small strain or in the Green-Lagrange strain at large rotation,
+load paths that unload and reverse, load control that stops at limit and
+bifurcation points and at a plastic collapse and says so, and the arc-length
+method through limit points. What it does not do:
 
-* the material stays elastic: no plasticity, damage, creep or
-  viscoelasticity, so a run past yield is an elastic answer to a question
-  the material would answer otherwise;
+* plasticity is rate-independent J2 at small strain: no finite-strain
+  plasticity (with `finite` kinematics the J2 return in the Green-Lagrange
+  strain is sound for large rotation with small strains, and the run warns
+  beyond a strain of 0.05), no creep, viscoplasticity, damage, fracture,
+  non-associative or pressure-dependent yield, nonlinear (Armstrong-Frederick)
+  kinematic hardening, anisotropy or temperature-dependent properties; the
+  elastic part of the neo-Hookean law cannot be combined with plasticity;
+* constant-strain elements (Tri3, Tet4) can lock under the isochoric flow of
+  a fully plastic state in plane strain and 3-D, depending on the mesh
+  pattern, and fully integrated Q4 and Hex8 lock without the mean
+  dilatation that is their default - a locked collapse load comes out high,
+  which is unconservative;
 * no contact, and no dynamics - the path is quasi-static, and a
   snap-through that the arc-length method follows is a sequence of
   equilibria, not the dynamic jump a real structure would make;
@@ -50,8 +63,9 @@ points. What it does not do:
   is not assessed (the summary says so);
 * body forces and self-weight stay dead loads per reference volume, a
   prescribed displacement scales with the load factor, and every load of a
-  case shares one load factor - there are no load sequences (a preload
-  followed by a service load) within a case;
+  case shares one load factor - a `load_path` scales them all together
+  (load, unload, reverse), but there are no load sequences of different
+  loads (a preload followed by a service load) within a case;
 * the topology optimisation, the modal analysis and the buckling analysis do
   not use the non-linear state (`sparlab_topopt` refuses the block).
 
@@ -422,17 +436,23 @@ buckling constraint's gradient to 1.7e-6 and the overhang filter's to
 distorted meshes is reproduced to 1e-9 m, and the tube at finite strain
 converges at every element's order to its exact solution. Linear static
 displacements are cross-validated node by node against two independent
-codes on twenty-one problems with forty-six load cases, covering all five
+codes on thirty-one problems with fifty-six load cases, covering all five
 element types and both mesh-file formats; so are buckling load factors on
-three columns and large-deflection states on four decks. scikit-fem agrees
-to solver round-off, 1.5e-10 or better, displacements and load factors
-alike, except the slender elastica deck's linear solve (8.0e-9, its
-conditioning); scikit-fem's own total Lagrangian solver agrees with
-SparLab's non-linear states to 1e-14. CalculiX's displacements agree to the
-rounding of its own result file, 4.3e-6 or better, linear and `NLGEOM`
-alike, wherever the two codes solve the same discrete problem; its
-plane-stress comparisons at `nu != 0` are recorded but not judged; its
-buckling factors differ by up to 8.3e-5 for a reason not identified.
+three columns, large-deflection states on four decks and elastoplastic
+states on ten. scikit-fem agrees to solver round-off, displacements and
+load factors alike: every linear difference lies below the round-off scale
+of its system (its condition number times eps), 1.5e-10 or better except on
+the three worst-conditioned systems - a plane-strain strip and two slender
+Tet10 cantilevers, 1.4e-9 to 2.2e-8; scikit-fem's own total Lagrangian
+solver agrees with SparLab's non-linear states to 1e-14, and its own J2
+solver with the elastoplastic states, small strain and finite, E-bar
+included, to 7e-12. CalculiX's displacements agree to the rounding of its
+own result file, 4.3e-6 or better, linear, `NLGEOM` and `*PLASTIC` alike,
+wherever the two codes solve the same discrete problem; its plane-stress
+comparisons at `nu != 0` and its finite-strain plasticity are recorded but
+not judged, and its kinematic hardening is not compared (it does not
+reproduce Prager's rule); its buckling factors differ by up to 8.3e-5 for a
+reason not identified.
 Validation against independent theory covers exactly five references:
 Euler-Bernoulli and Timoshenko cantilever deflection, Euler-Bernoulli
 bending frequencies, fixed-free rod axial frequencies, the Euler-Engesser

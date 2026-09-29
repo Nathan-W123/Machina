@@ -107,6 +107,15 @@ def main(argv=None) -> int:
         ("snap-through of a shallow arch",
          lambda: studies.plot_arch_snap_through(
              args.verification, figure("verify_arch_snap_through.png"))),
+        ("plastic collapse of a thick tube",
+         lambda: studies.plot_plastic_cylinder(
+             args.verification, figure("verify_plastic_cylinder.png"))),
+        ("elastoplastic pure bending",
+         lambda: studies.plot_plastic_bending(
+             args.verification, figure("verify_plastic_bending.png"))),
+        ("a uniaxial cycle with combined hardening",
+         lambda: studies.plot_plastic_cycle(
+             args.verification, figure("verify_plastic_cycle.png"))),
     ]
 
     for label, task in tasks:

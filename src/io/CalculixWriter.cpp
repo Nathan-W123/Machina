@@ -158,8 +158,38 @@ Scalar common_reference_temperature(const FemModel& model) {
   return t_ref;
 }
 
+/// The (yield stress, equivalent plastic strain) table of an isotropic
+/// hardening law, up to a plastic strain of 10 (CalculiX holds the last
+/// yield stress beyond it): exact for linear hardening; for Voce saturation
+/// chords within 1e-4 of the saturation stress Q, since the chord over h
+/// departs from the curve by at most h^2 |sigma_y''| / 8 with
+/// |sigma_y''| = Q delta^2 e^(-delta alpha) largest at its start.
+std::vector<std::pair<Scalar, Scalar>> hardening_table(const PlasticityParameters& p) {
+  constexpr Scalar kEnd = 10.0;
+  std::vector<std::pair<Scalar, Scalar>> out;
+  out.emplace_back(p.yield(0.0), 0.0);
+  if (p.saturation_stress == 0.0) {
+    if (p.hardening_modulus > 0.0) out.emplace_back(p.yield(kEnd), kEnd);
+    return out;
+  }
+  const Scalar q = p.saturation_stress;
+  const Scalar d = p.saturation_rate;
+  Scalar a = 0.0;
+  while (a < kEnd) {
+    const Scalar curvature = q * d * d * std::exp(-d * a);
+    a = std::min(kEnd, a + std::sqrt(8.0 * 1.0e-4 * q / curvature));
+    out.emplace_back(p.yield(a), a);
+    if (d * a > 40.0) {
+      // Saturated to round-off: the rest of the curve is linear.
+      if (a < kEnd) out.emplace_back(p.yield(kEnd), kEnd);
+      break;
+    }
+  }
+  return out;
+}
+
 /// The mechanical deck of load case `l`: linear, or with `nonlinear` a
-/// geometrically non-linear step.
+/// non-linear analysis along its load path.
 void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
                        const std::string& case_name,
                        const std::vector<Mesh::BoundaryFace>& boundary,
@@ -174,6 +204,10 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
   const LoadCaseData& data = model.load_case_data(l);
   const bool thermal = data.temperature.size() > 0;
   const bool needs_density = spec.gravity.squaredNorm() > 0.0 || spec.centrifugal.enabled;
+  bool plastic = false;
+  if (nonlinear != nullptr) {
+    for (const IsotropicMaterial& m : model.materials()) plastic = plastic || m.plasticity().enabled();
+  }
 
   out << "*HEADING\n";
   out << "SparLab cross-validation export: " << case_name << " / " << spec.name << " ("
@@ -185,6 +219,12 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
     const IsotropicMaterial& mat = model.materials()[m];
     out << "*MATERIAL, NAME=MAT" << m + 1 << "\n*ELASTIC\n" << field(mat.youngs_modulus())
         << ", " << field(mat.poisson_ratio()) << "\n";
+    if (plastic && mat.plasticity().enabled()) {
+      out << "*PLASTIC\n";
+      for (const auto& point : hardening_table(mat.plasticity())) {
+        out << field(point.first) << ", " << field(point.second) << "\n";
+      }
+    }
     if (needs_density) out << "*DENSITY\n" << field(mat.density()) << "\n";
     if (thermal) {
       out << "*EXPANSION, ZERO=" << field(mat.reference_temperature()) << "\n"
@@ -205,46 +245,20 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
     write_set(out, "ELSET", name, body.region.select_elements(mesh));
     body_sets.push_back(name);
   }
+  Scalar t_ref = 0.0;
   if (thermal) {
-    out << "*INITIAL CONDITIONS, TYPE=TEMPERATURE\nNALL, "
-        << field(common_reference_temperature(model)) << "\n";
-  }
-
-  if (nonlinear != nullptr) {
-    // Automatic increments from 1 / increments (at most 1/50) down to 1e-6
-    // of it; the step time is the load factor. At least 50 increments,
-    // because CalculiX lags the deformed-position centrifugal load within an
-    // increment (its answer converges to SparLab's as the increments shrink:
-    // measured 1e-5 of the displacement at 10, 1.4e-6 at 80). CalculiX's
-    // default convergence test (largest residual below 0.005 of the mean
-    // force, largest correction below 0.01 of the increment) leaves errors of
-    // about 1e-4 of the displacement; a comparison needs it converged: 1e-6
-    // on both, up to 200 iterations, and never the looser residual test it
-    // otherwise switches to after the ninth iteration.
-    const int increments = std::max(nonlinear->increments, 50);
-    const Scalar dt = 1.0 / static_cast<Scalar>(increments);
-    out << "*STEP, NLGEOM, INC=" << 100 * increments << "\n"
-        << "*CONTROLS, PARAMETERS=FIELD\n1.e-6, 1.e-6\n"
-        << "*CONTROLS, PARAMETERS=TIME INCREMENTATION\n20, 30, 200, 200\n"
-        << "*STATIC\n"
-        << field(dt) << ", 1., " << field(1.0e-6 * dt) << ", " << field(dt) << "\n";
-  } else {
-    out << "*STEP\n*STATIC\n";
-  }
-  out << "*BOUNDARY\n";
-  for (Index d : model.dofs().constrained_dofs()) {
-    const Index node = d / ndpn;
-    const int component = static_cast<int>(d % ndpn) + 1;
-    out << node + 1 << ", " << component << ", " << component << ", "
-        << field(model.dofs().prescribed_value(d)) << "\n";
+    t_ref = common_reference_temperature(model);
+    out << "*INITIAL CONDITIONS, TYPE=TEMPERATURE\nNALL, " << field(t_ref) << "\n";
   }
 
   // Point loads and tractions as the assembled nodal forces; every other load
   // in CalculiX's own form, so that CalculiX integrates it itself - except a
   // dead pressure under NLGEOM, where CalculiX's face load would follow the
-  // face: it stays among the nodal forces of the undeformed faces.
+  // face: it stays among the nodal forces of the undeformed faces. (Without
+  // NLGEOM a face load acts on the undeformed face.)
   const bool pressure_faces =
-      !spec.pressures.empty() && (nonlinear == nullptr || nonlinear->follower_pressure);
+      !spec.pressures.empty() &&
+      (nonlinear == nullptr || !nonlinear->nlgeom || nonlinear->follower_pressure);
   Vector concentrated = data.mechanical;
   if (pressure_faces) {
     LoadCaseSpec pressures_only;
@@ -253,54 +267,101 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
     concentrated -= assemble_load_vector(mesh, model.element(), pressures_only,
                                          model.thickness(), model.integration());
   }
-  bool any = false;
-  for (Index n = 0; n < mesh.num_nodes(); ++n) {
-    for (int k = 0; k < ndpn; ++k) {
-      const Scalar f = concentrated(n * ndpn + k);
-      if (f == 0.0) continue;
-      if (!any) out << "*CLOAD\n";
-      any = true;
-      out << n + 1 << ", " << k + 1 << ", " << field(f) << "\n";
+
+  // One step per leg of the load path, each ramping every load from the last
+  // leg's level to its own.
+  std::vector<Scalar> levels{1.0};
+  if (nonlinear != nullptr && !nonlinear->load_path.empty()) levels = nonlinear->load_path;
+  for (const Scalar level : levels) {
+    if (nonlinear == nullptr) {
+      out << "*STEP\n*STATIC\n";
+    } else if (plastic || !nonlinear->nlgeom) {
+      // The increments of SparLab's run: the return depends on them.
+      const int increments = std::max(nonlinear->increments, 1);
+      out << "*STEP" << (nonlinear->nlgeom ? ", NLGEOM" : "") << ", INC=" << 10 * increments
+          << "\n"
+          << "*CONTROLS, PARAMETERS=FIELD\n1.e-6, 1.e-6\n"
+          << "*CONTROLS, PARAMETERS=TIME INCREMENTATION\n20, 30, 200, 200\n"
+          << "*STATIC, DIRECT\n"
+          << field(1.0 / static_cast<Scalar>(increments)) << ", 1.\n";
+    } else {
+      // Automatic increments from 1 / increments (at most 1/50) down to 1e-6
+      // of it; the step time is the load factor. At least 50 increments,
+      // because CalculiX lags the deformed-position centrifugal load within
+      // an increment (its answer converges to SparLab's as the increments
+      // shrink: measured 1e-5 of the displacement at 10, 1.4e-6 at 80).
+      // CalculiX's default convergence test (largest residual below 0.005 of
+      // the mean force, largest correction below 0.01 of the increment)
+      // leaves errors of about 1e-4 of the displacement; a comparison needs
+      // it converged: 1e-6 on both, up to 200 iterations, and never the
+      // looser residual test it otherwise switches to after the ninth
+      // iteration.
+      const int increments = std::max(nonlinear->increments, 50);
+      const Scalar dt = 1.0 / static_cast<Scalar>(increments);
+      out << "*STEP, NLGEOM, INC=" << 100 * increments << "\n"
+          << "*CONTROLS, PARAMETERS=FIELD\n1.e-6, 1.e-6\n"
+          << "*CONTROLS, PARAMETERS=TIME INCREMENTATION\n20, 30, 200, 200\n"
+          << "*STATIC\n"
+          << field(dt) << ", 1., " << field(1.0e-6 * dt) << ", " << field(dt) << "\n";
     }
-  }
-  const bool distributed = pressure_faces || spec.has_body_loads();
-  if (distributed) out << "*DLOAD\n";
-  for (const PressureLoadSpec& p : spec.pressures) {
-    if (!pressure_faces) break;
-    for (const auto& face : calculix_faces_of(mesh, boundary, p.region)) {
-      out << face.first + 1 << ", P" << face.second << ", " << field(p.pressure) << "\n";
+    out << "*BOUNDARY\n";
+    for (Index d : model.dofs().constrained_dofs()) {
+      const Index node = d / ndpn;
+      const int component = static_cast<int>(d % ndpn) + 1;
+      out << node + 1 << ", " << component << ", " << component << ", "
+          << field(level * model.dofs().prescribed_value(d)) << "\n";
     }
-  }
-  if (spec.gravity.squaredNorm() > 0.0) {
-    const Scalar g = spec.gravity.norm();
-    const Vector3 e = spec.gravity / g;
-    out << "EALL, GRAV, " << field(g) << ", " << field(e.x()) << ", " << field(e.y()) << ", "
-        << field(e.z()) << "\n";
-  }
-  for (std::size_t b = 0; b < spec.body_forces.size(); ++b) {
-    const Vector3& density = spec.body_forces[b].force_density;
-    static const char* const labels[3] = {"BX", "BY", "BZ"};
-    for (int k = 0; k < dim; ++k) {
-      if (density(k) != 0.0) {
-        out << body_sets[b] << ", " << labels[k] << ", " << field(density(k)) << "\n";
+    bool any = false;
+    for (Index n = 0; n < mesh.num_nodes(); ++n) {
+      for (int k = 0; k < ndpn; ++k) {
+        const Scalar f = concentrated(n * ndpn + k);
+        if (f == 0.0) continue;
+        if (!any) out << "*CLOAD\n";
+        any = true;
+        out << n + 1 << ", " << k + 1 << ", " << field(level * f) << "\n";
       }
     }
-  }
-  if (spec.centrifugal.enabled) {
-    const CentrifugalSpec& c = spec.centrifugal;
-    const Vector3 axis = c.axis.normalized();
-    out << "EALL, CENTRIF, " << field(c.angular_velocity * c.angular_velocity) << ", "
-        << field(c.point.x()) << ", " << field(c.point.y()) << ", " << field(c.point.z())
-        << ", " << field(axis.x()) << ", " << field(axis.y()) << ", " << field(axis.z())
-        << "\n";
-  }
-  if (thermal) {
-    out << "*TEMPERATURE\n";
-    for (Index n = 0; n < mesh.num_nodes(); ++n) {
-      out << n + 1 << ", " << field(data.temperature(n)) << "\n";
+    const bool distributed = pressure_faces || spec.has_body_loads();
+    if (distributed) out << "*DLOAD\n";
+    for (const PressureLoadSpec& p : spec.pressures) {
+      if (!pressure_faces) break;
+      for (const auto& face : calculix_faces_of(mesh, boundary, p.region)) {
+        out << face.first + 1 << ", P" << face.second << ", " << field(level * p.pressure)
+            << "\n";
+      }
     }
+    if (spec.gravity.squaredNorm() > 0.0) {
+      const Scalar g = spec.gravity.norm();
+      const Vector3 e = spec.gravity / g;
+      out << "EALL, GRAV, " << field(level * g) << ", " << field(e.x()) << ", "
+          << field(e.y()) << ", " << field(e.z()) << "\n";
+    }
+    for (std::size_t b = 0; b < spec.body_forces.size(); ++b) {
+      const Vector3& density = spec.body_forces[b].force_density;
+      static const char* const labels[3] = {"BX", "BY", "BZ"};
+      for (int k = 0; k < dim; ++k) {
+        if (density(k) != 0.0) {
+          out << body_sets[b] << ", " << labels[k] << ", " << field(level * density(k)) << "\n";
+        }
+      }
+    }
+    if (spec.centrifugal.enabled) {
+      const CentrifugalSpec& c = spec.centrifugal;
+      const Vector3 axis = c.axis.normalized();
+      out << "EALL, CENTRIF, "
+          << field(level * c.angular_velocity * c.angular_velocity) << ", "
+          << field(c.point.x()) << ", " << field(c.point.y()) << ", " << field(c.point.z())
+          << ", " << field(axis.x()) << ", " << field(axis.y()) << ", " << field(axis.z())
+          << "\n";
+    }
+    if (thermal) {
+      out << "*TEMPERATURE\n";
+      for (Index n = 0; n < mesh.num_nodes(); ++n) {
+        out << n + 1 << ", " << field(t_ref + level * (data.temperature(n) - t_ref)) << "\n";
+      }
+    }
+    out << "*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n";
   }
-  out << "*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n";
 }
 
 /// The steady heat-transfer deck of load case `l`'s conduction problem.
@@ -426,9 +487,10 @@ std::vector<std::string> write_calculix_decks(const FemModel& model, const std::
     if (nonlinear != nullptr && std::find(nonlinear->load_cases.begin(),
                                           nonlinear->load_cases.end(),
                                           l) != nonlinear->load_cases.end()) {
-      write(base + "_nlgeom.inp", [&](std::ostream& out) {
-        write_static_deck(out, model, l, case_name, boundary, nonlinear);
-      });
+      write(base + (nonlinear->nlgeom ? "_nlgeom.inp" : "_small_strain.inp"),
+            [&](std::ostream& out) {
+              write_static_deck(out, model, l, case_name, boundary, nonlinear);
+            });
     }
   }
   return paths;

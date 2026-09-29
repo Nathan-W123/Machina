@@ -390,7 +390,9 @@ applied nodal forces, `sum_n |f_n|` (and the moment residual by
 `sum_n |x_n| |f_n|`), which is the scale of the round-off in the sums. Dividing
 by the resultant instead would fail every self-equilibrated load - a thermal
 strain, or a self-weight carried by a traction - whose resultant is itself
-round-off.
+round-off. A case driven by prescribed displacements alone applies no force;
+its reactions balance among themselves and are measured against their own
+gross size, `sum_n |r_n|` (and `sum_n |x_n| |r_n|`).
 
 ## 4b. Pressure, volume and thermal loads
 
@@ -872,9 +874,14 @@ displacement increment; the residual of the accepted state is checked once
 more. The second line is the round-off floor, below which no tolerance can
 be met: the residual stagnates at about 150 `eps g_f` on the plane
 cantilever, and at 0.3 `eps || |K_T| |u| ||` on the elastica, where each
-stored displacement is exact only to its own rounding. A step that fails
-is halved (at most `max_cuts` times in a row); three or fewer iterations
-lengthen the next one by half, never beyond the first.
+stored displacement is exact only to its own rounding. A floor counts only
+while it is below `1e-6 s`: past a limit or a plastic collapse load the
+displacement runs away and `|K_T| |u|` with it, until the "floor" exceeds
+the load itself - measured: a perfectly plastic tube driven 5 % past its
+collapse pressure "converged" at strains of 1e11 before this bound, and now
+stops with the collapse bracketed. A step that fails is halved (at most
+`max_cuts` times in a row); three or fewer iterations lengthen the next one
+by half, never beyond the first.
 
 **Limit and bifurcation points.** Past a limit point load control has no
 nearby solution: Newton fails, or - worse - converges on a distant branch,
@@ -933,6 +940,143 @@ stress, `S` itself, the largest Green-Lagrange strain, the smallest `J`,
 the strain energy, and the balance of the applied loads against the
 reactions in the deformed configuration: forces, and moments about the
 deformed positions.
+
+## 7d. Plasticity
+
+`material.plasticity` makes a material elastoplastic in the non-linear
+analysis: J2 (von Mises) plasticity with isotropic and kinematic hardening,
+integrated at every integration point by the backward-Euler radial return of
+Simo and Hughes (*Computational Inelasticity*, 1998, boxes 3.1 and 3.2),
+with its consistent tangent (`src/material/Plasticity.cpp`,
+`src/fem/Elastoplastic.cpp`).
+
+**The law.** The strain splits additively,
+`eps = eps_e + eps_p + alpha dT I`, the stress is `sigma = K tr(eps_e) I +
+2 G dev(eps_e)`, and with the relative stress `xi = dev(sigma) - beta` the
+yield function is
+
+```
+  f = ||xi|| - sqrt(2/3) sigma_y(a) <= 0 ,
+  sigma_y(a) = sigma_y0 + H a + Q (1 - exp(-delta a)) ,
+```
+
+`||.||` the tensor norm. The flow is associative, `d eps_p = d gamma n` with
+`n = xi / ||xi||`; the accumulated plastic strain grows by
+`da = sqrt(2/3) d gamma` (in uniaxial tension it is the plastic strain) and
+the back stress by `d beta = (2/3) H_kin d gamma n` (Prager). Every point
+carries the full 3-D state; Voigt strains have engineering shears, stresses
+tensorial components.
+
+**The return.** From the internal variables of the last converged step, the
+trial deviatoric stress `s_tr = 2 G dev(eps - eps_p,n - alpha dT I)` and
+`xi_tr = s_tr - beta_n` either stay inside the surface - an elastic step -
+or return onto it along `n = xi_tr / ||xi_tr||`, which the return does not
+change (radial return). The multiplier solves
+
+```
+  g(dg) = ||xi_tr|| - (2 G + 2/3 H_kin) dg - sqrt(2/3) sigma_y(a_n + sqrt(2/3) dg) = 0 ,
+```
+
+in closed form for linear hardening and by Newton for Voce saturation (`g`
+is convex and decreasing there, so Newton from `dg = 0` rises monotonically
+onto the root). Then `sigma = sigma_tr - 2 G dg n`,
+`eps_p = eps_p,n + dg n`, `beta = beta_n + (2/3) H_kin dg n`. On a path along
+which `n` keeps its direction - uniaxial stress, for one - the return is
+exact for linear hardening and any step: the unit tests and the cycle study
+compare it with the closed-form uniaxial curves to round-off (`1e-12`,
+`2e-14`). The consistent tangent, the derivative of the returned stress,
+
+```
+  C = K 1 x 1 + 2 G theta (I - 1 x 1 / 3) - 2 G theta_bar n x n ,
+  theta = 1 - 2 G dg / ||xi_tr|| ,
+  theta_bar = 1 / (1 + (sigma_y'(a) + H_kin) / (3 G)) - (1 - theta) ,
+```
+
+keeps Newton's quadratic convergence; it is symmetric (associative flow) and
+checked against central differences of the return (1e-6, in 3-D, plane strain
+and plane stress). A point that yielded in its last converged step and still
+sits on its surface returns elastically at zero increment - but with the
+continuum elastoplastic tangent (`dg = 0` in `C`), so that the next step's
+tangent predictor already sees the softer response of continued loading.
+
+**Plane states.** Plane strain returns with `eps_33 = 0` (or the
+mean-dilatation value below) and reports `sigma_zz`. Plane stress finds
+`eps_33` at every point by Newton on `sigma_33(eps_33) = 0`, from the
+elastic predictor (exact for an elastic step) with the consistent `C_33,33`,
+to `1e-12` of the stress; the tangent is condensed,
+`C_ab - C_a3 C_3b / C_33`. A thermal strain enters every normal component;
+at fixed displacement its load rate is `-C alpha dT_0 m` with the consistent
+(condensed) tangent.
+
+**The element.** With small strain the point strain is `eps = B u_e`, the
+internal force `int B^T sigma dV` and the tangent `int B^T C B dV`. Plastic
+flow is isochoric, and on an element with several integration points each
+point's dilatation becomes a constraint: in plane strain and 3-D the fully
+integrated Q4 and Hex8 then lock - measured on the thick tube below, the
+collapse pressure comes out 1.2 % high at 16 cells through the wall and the
+collapse plateau keeps rising. The mean-dilatation operator of Hughes (1980)
+replaces every point's dilatation by the element's volume average,
+`B_bar = B + (1/3) m (b_bar - b)^T` with the dilatation row `b = B^T m` and
+`m = {1, 1, 1, 0, 0, 0}`; in plane strain it gives `eps_33 = (theta_bar -
+theta) / 3` at a point, zero on average. It is the default for Q4 and Hex8
+(`mean_dilatation: auto`) and brings them to the exact collapse load at
+second order. The four-point Tet10 needs none: it converges at third order
+without it, and with it at second order from below, its constant element
+pressure oscillating. Plane stress has no incompressibility constraint, and
+one-point elements have nothing to average.
+
+**Finite kinematics.** With `kinematics: finite` the return takes the
+Green-Lagrange strain `E` for the strain and gives the second
+Piola-Kirchhoff stress `S`: `E = E_e + E_p + E_theta` with `S = D E_e`,
+the elastoplastic counterpart of the Saint Venant-Kirchhoff law, exact under
+any rigid rotation and meant for strains that stay small (at large
+displacement and rotation with small strain the materially non-linear
+relations may be written between `S` and `E`; Bathe, *Finite Element
+Procedures*, 1996, ch. 6). The element takes `B_NL` of section 7c,
+`f = int B_NL^T S dV_0`, `K = int B_NL^T C B_NL dV_0 + int (G^T S G) x I dV_0`.
+The thermal strain is the Green strain of the free thermal stretch, so free
+heating stays stress-free, but the elastic stiffness is not rescaled by the
+thermal stretch as the Saint Venant-Kirchhoff law's is (a relative difference
+of `alpha dT` in a thermal stress). Mean dilatation acts on the Green strain,
+`E_bar = E + (1/3) m (mean(tr E) - tr E)`; its second variation adds
+`(1/3) tr(S) (mean(G^T G) - G^T G) x I` to the geometric stiffness, and the
+tangent stays symmetric and consistent (checked by central differences with
+a rigid turn of 0.5 rad). Objectivity - a rigidly rotated state returns the
+same `S`, plastic state and energy, and its forces turn with it - exact
+homogeneous finite deformations on distorted meshes, heated or not, and free
+heating are unit-tested, and an independent implementation of the same model
+in scikit-fem reproduces four large-deflection decks - a Tet10 cantilever,
+and a clamped beam driven into membrane action and back with combined
+hardening on Hex8 and Q4 (E-bar) and in plane stress
+(`docs/verification.md`, section 24). The model is not finite-strain
+plasticity: beyond a Green strain of 0.05 the run warns. A large rotation
+superposed on plastic flow also sharpens a real effect: under a large
+hydrostatic pressure (a 3 % volume change, 5 GPa) the
+geometric stiffness outweighs a small plastic tangent and a homogeneous
+state loses stability - at strains well beyond the model's range.
+
+**History.** Each point keeps `(eps_p, beta, a)` of the last converged step.
+Every Newton iterate, line-search probe and rejected step returns from
+those, never from the last iterate, and only a converged step commits the
+new ones - so halving a step leaves no trace, and the path is the sequence
+of converged steps. A `load_path` visits turning points in order (unloading
+leaves the permanent set and residual stresses). Load control's jump test
+(section 7c) is off with plasticity: the elastic predictor of a step in which
+points start to yield underestimates the increment by the ratio of elastic
+to plastic stiffness. Without hardening a structure has a collapse load
+beyond which no equilibrium exists; the largest converged load factor is a
+lower bound on it, the arc-length method runs onto its plateau, and load
+control stops with it bracketed.
+
+**Small strain.** `kinematics: small_strain` keeps the linear strain on the
+undeformed geometry: no geometric stiffness, pressures on the undeformed
+faces, the rotation's load at the undeformed positions. With elastic
+materials it reproduces the linear analysis (unit-tested to 1e-10, one
+Newton iteration per step). The run reports the largest strain, the largest
+infinitesimal rotation and the largest component of the quadratic strain
+`H^T H / 2` it neglects, and warns when that exceeds a tenth of the largest
+strain - where membrane action (a structure restrained against the motion a
+rotation causes) makes it matter.
 
 ## 8. Topology optimisation
 

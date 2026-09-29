@@ -102,6 +102,11 @@ struct Evaluation {
   /// the load a temperature change exerts, which a free expansion balances
   /// with no external force or reaction at all.
   Scalar thermal = 0.0;
+  /// Elastoplastic elements: the internal variables of every point after the
+  /// return from the committed ones (empty for an elastic element), and the
+  /// number of points whose return was plastic.
+  std::vector<std::vector<PlasticState>> states;
+  int yielding_points = 0;
 };
 
 /// Norm over the free DOFs of |K| |u|, the tangent's absolute entries times
@@ -124,6 +129,13 @@ Scalar stiffness_gross(const SparseMatrix& k, const Vector& u, const std::vector
   return std::sqrt(sum);
 }
 
+/// Small-strain kinematics neglects the quadratic part of the Green strain,
+/// H^T H / 2; a run warns once it exceeds this fraction of the largest strain.
+constexpr Scalar kQuadraticWarning = 0.1;
+/// The small-strain theory and the elastoplastic law assume small strains; a
+/// run warns beyond this strain.
+constexpr Scalar kStrainWarning = 0.05;
+
 /// Round-off floor of a residual: a multiple of the machine epsilon times the
 /// gross size of the sums that form it, and of the forces the rounding of
 /// the displacement itself causes. Newton's residual stagnates at about 150
@@ -131,16 +143,26 @@ Scalar stiffness_gross(const SparseMatrix& k, const Vector& u, const std::vector
 /// element forces are themselves sums of stress times area), so 1024 epsilon
 /// sits safely above that; and at 0.3 epsilon |K||u| on the elastica, so 64
 /// epsilon sits above that - both far below any useful tolerance.
-Scalar residual_floor(const Evaluation& ev, Scalar k_gross) {
+///
+/// A floor belongs to a state that is resolved to working precision. One
+/// above a millionth of the residual's scale (`scale`) means the state is
+/// not: past a limit or a plastic collapse load the displacement runs away
+/// and inflates |K||u| without bound, until the "floor" exceeds the load
+/// itself and any residual would pass. Such a floor is not accepted in place
+/// of the tolerance (0 is returned).
+constexpr Scalar kFloorLimit = 1.0e-6;
+Scalar residual_floor(const Evaluation& ev, Scalar k_gross, Scalar scale) {
   const Scalar eps = std::numeric_limits<Scalar>::epsilon();
-  return std::max(1024.0 * eps * ev.gross, 64.0 * eps * k_gross);
+  const Scalar floor = std::max(1024.0 * eps * ev.gross, 64.0 * eps * k_gross);
+  return floor <= kFloorLimit * scale ? floor : 0.0;
 }
 
 class NonlinearSystem {
  public:
   NonlinearSystem(const FemModel& model, const Assembler& assembler, std::size_t lc,
                   const NonlinearOptions& options)
-      : model_(model), assembler_(assembler), options_(options) {
+      : model_(model), assembler_(assembler), options_(options),
+        small_(options.kinematics == Kinematics::SmallStrain) {
     const LoadCaseSpec& spec = model.load_case_specs()[lc];
     const LoadCaseData& data = model.load_case_data(lc);
     const Index n = model.dofs().num_dofs();
@@ -148,9 +170,31 @@ class NonlinearSystem {
     if (data.body.size() > 0) dead_ += data.body;
     if (data.temperature.size() > 0) temperature_ = data.temperature;
 
-    // A follower pressure leaves the dead load and is integrated over the
-    // deformed faces.
-    if (options.follower_pressure && !spec.pressures.empty()) {
+    // Elastoplastic elements keep their points' internal variables, starting
+    // virgin; mean dilatation where it relaxes a constraint.
+    const Index ne = model.mesh().num_elements();
+    const int points = elastoplastic_points(model);
+    committed_.resize(static_cast<std::size_t>(ne));
+    averaged_.assign(static_cast<std::size_t>(ne), 0);
+    virgin_.assign(static_cast<std::size_t>(points), PlasticState());
+    for (Index e = 0; e < ne; ++e) {
+      if (!model.material_of(e).plasticity().enabled()) continue;
+      plastic_ = true;
+      committed_[static_cast<std::size_t>(e)].assign(static_cast<std::size_t>(points),
+                                                     PlasticState());
+      const ElementType type = model.mesh().element_type();
+      const bool wanted =
+          options.mean_dilatation == MeanDilatation::All ||
+          (options.mean_dilatation == MeanDilatation::Auto &&
+           (type == ElementType::Quad4 || type == ElementType::Hex8));
+      averaged_[static_cast<std::size_t>(e)] =
+          wanted && points > 1 && model.stress_state() != StressState::PlaneStress;
+    }
+
+    // Small strain: every load acts on the undeformed geometry, as in the
+    // linear analysis. Finite kinematics: a follower pressure leaves the dead
+    // load and is integrated over the deformed faces.
+    if (!small_ && options.follower_pressure && !spec.pressures.empty()) {
       LoadCaseSpec only;
       only.name = spec.name;
       only.pressures = spec.pressures;
@@ -169,10 +213,10 @@ class NonlinearSystem {
       }
       symmetric_ = false;
     }
-    // A rotation acts at the deformed position: the centrifugal load of the
-    // reference geometry leaves the dead load and returns as
-    // lambda (f_c0 + omega^2 M_perp u).
-    if (spec.centrifugal.enabled) {
+    // With finite kinematics a rotation acts at the deformed position: the
+    // centrifugal load of the reference geometry leaves the dead load and
+    // returns as lambda (f_c0 + omega^2 M_perp u).
+    if (!small_ && spec.centrifugal.enabled) {
       LoadCaseSpec only;
       only.name = spec.name;
       only.centrifugal = spec.centrifugal;
@@ -202,6 +246,35 @@ class NonlinearSystem {
 
   bool symmetric() const { return symmetric_; }
   const Vector& dead() const { return dead_; }
+  /// Some material is elastoplastic.
+  bool plastic() const { return plastic_; }
+  /// Element e averages its dilatation.
+  bool averaged(Index e) const { return averaged_[static_cast<std::size_t>(e)] != 0; }
+  /// Element e is elastoplastic.
+  bool elastoplastic(Index e) const { return !committed_[static_cast<std::size_t>(e)].empty(); }
+  /// The internal variables of element e's points at the last converged
+  /// step (the virgin state for an elastic element).
+  const std::vector<PlasticState>& committed(Index e) const {
+    const std::vector<PlasticState>& c = committed_[static_cast<std::size_t>(e)];
+    return c.empty() ? virgin_ : c;
+  }
+  /// Make the internal variables of a converged evaluation the committed
+  /// ones.
+  void commit(Evaluation& ev) {
+    if (!plastic_) return;
+    for (std::size_t e = 0; e < committed_.size(); ++e) {
+      if (!committed_[e].empty()) committed_[e] = std::move(ev.states[e]);
+    }
+    ev.states.clear();
+  }
+  /// The largest accumulated plastic strain of the committed state.
+  Scalar max_plastic_strain() const {
+    Scalar top = 0.0;
+    for (const std::vector<PlasticState>& element : committed_) {
+      for (const PlasticState& p : element) top = std::max(top, p.equivalent_plastic_strain);
+    }
+    return top;
+  }
 
   Evaluation evaluate(const Vector& u, Scalar lambda, bool want_tangent) const {
     const Mesh& mesh = model_.mesh();
@@ -222,6 +295,8 @@ class NonlinearSystem {
     std::vector<Vector> pressure_el(static_cast<std::size_t>(ne));
     std::vector<Matrix> k_el(want_tangent ? static_cast<std::size_t>(ne) : 0);
     std::vector<Scalar> energy_el(static_cast<std::size_t>(ne), 0.0);
+    std::vector<std::vector<PlasticState>> states(plastic_ ? static_cast<std::size_t>(ne) : 0);
+    std::vector<int> yielding(plastic_ ? static_cast<std::size_t>(ne) : 0, 0);
     std::string failure;
 #ifdef SPARLAB_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
@@ -233,8 +308,23 @@ class NonlinearSystem {
         for (int a = 0; a < npe; ++a) {
           for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
         }
-        TotalLagrangianElement tl = total_lagrangian_element(model_, e, ue, options_.law,
-                                                             temperature, lambda, want_tangent);
+        TotalLagrangianElement tl;
+        if (small_ || elastoplastic(e)) {
+          ElastoplasticElement ep = elastoplastic_element(
+              model_, e, ue, committed(e), averaged(e), temperature, lambda, want_tangent,
+              options_.kinematics);
+          tl.internal_force = std::move(ep.internal_force);
+          tl.tangent = std::move(ep.tangent);
+          tl.thermal_force_rate = std::move(ep.thermal_force_rate);
+          tl.energy = ep.energy;
+          if (elastoplastic(e)) {
+            states[static_cast<std::size_t>(e)] = std::move(ep.states);
+            yielding[static_cast<std::size_t>(e)] = ep.yielding_points;
+          }
+        } else {
+          tl = total_lagrangian_element(model_, e, ue, options_.law, temperature, lambda,
+                                        want_tangent);
+        }
         const auto it = faces_.find(e);
         if (it != faces_.end()) {
           const Matrix x0 = mesh.element_coordinates(e);
@@ -304,7 +394,9 @@ class NonlinearSystem {
         }
       }
       out.energy += energy_el[static_cast<std::size_t>(e)];
+      if (plastic_) out.yielding_points += yielding[static_cast<std::size_t>(e)];
     }
+    out.states = std::move(states);
     out.external = lambda * (dead_ + pressure);
     out.load_rate += pressure;
     if (centrifugal_.size() > 0) {
@@ -327,6 +419,11 @@ class NonlinearSystem {
   const FemModel& model_;
   const Assembler& assembler_;
   const NonlinearOptions& options_;
+  bool small_ = false;
+  bool plastic_ = false;
+  std::vector<std::vector<PlasticState>> committed_;  ///< per element; empty if elastic
+  std::vector<char> averaged_;                        ///< per element: mean dilatation
+  std::vector<PlasticState> virgin_;                  ///< one per point, for elastic elements
   Vector dead_;
   Vector temperature_;
   std::map<Index, std::vector<PressureFace>> faces_;
@@ -397,6 +494,23 @@ NonlinearState evaluate_nonlinear_state(const FemModel& model, const Assembler& 
   return out;
 }
 
+std::string to_string(MeanDilatation mode) {
+  switch (mode) {
+    case MeanDilatation::Auto: return "auto";
+    case MeanDilatation::All: return "all";
+    case MeanDilatation::None: return "none";
+  }
+  return "auto";
+}
+
+MeanDilatation parse_mean_dilatation(const std::string& text) {
+  if (text == "auto") return MeanDilatation::Auto;
+  if (text == "all") return MeanDilatation::All;
+  if (text == "none") return MeanDilatation::None;
+  throw ConfigError("unknown mean_dilatation '" + text +
+                    "'; expected \"auto\" (Q4 and Hex8), \"all\" or \"none\"");
+}
+
 std::string to_string(NonlinearOptions::Method method) {
   return method == NonlinearOptions::Method::ArcLength ? "arc_length" : "load_control";
 }
@@ -436,9 +550,39 @@ NonlinearStaticAnalysis::NonlinearStaticAnalysis(const FemModel& model,
   // Refuse what the laws refuse before any step, so that it is reported as
   // what it is and not as a step that failed to converge.
   if (options_.law == HyperelasticModel::NeoHookean &&
+      options_.kinematics == Kinematics::SmallStrain) {
+    throw ConfigError("the small-strain kinematics is linear elasticity; the neo-Hookean law "
+                      "needs \"finite\" kinematics");
+  }
+  if (options_.law == HyperelasticModel::NeoHookean) {
+    for (Index e = 0; e < model.mesh().num_elements(); ++e) {
+      if (!model.material_of(e).plasticity().enabled()) continue;
+      throw ConfigError("material '" + model.material_of(e).name() +
+                        "' is elastoplastic, which takes the Saint Venant-Kirchhoff form; the "
+                        "neo-Hookean law cannot be combined with plasticity");
+    }
+  }
+  if (options_.law == HyperelasticModel::NeoHookean &&
       model.stress_state() == StressState::PlaneStress) {
     throw ConfigError("the neo-Hookean law needs plane strain or a solid mesh; in plane "
                       "stress use \"saint_venant_kirchhoff\"");
+  }
+  if (!options_.load_path.empty()) {
+    if (options_.method == NonlinearOptions::Method::ArcLength) {
+      throw ConfigError("'load_path' is followed by load control; the arc-length method "
+                        "follows the equilibrium path and cannot unload");
+    }
+    if (!options_.load_factors.empty()) {
+      throw ConfigError("give either 'load_path' or 'load_factors', not both");
+    }
+    Scalar previous = 0.0;
+    for (Scalar f : options_.load_path) {
+      if (!std::isfinite(f) || f == previous) {
+        throw ConfigError("'load_path' needs finite load factors, each different from the one "
+                          "before it (the path starts at 0)");
+      }
+      previous = f;
+    }
   }
   if (!options_.load_factors.empty()) {
     if (options_.method == NonlinearOptions::Method::ArcLength) {
@@ -471,8 +615,13 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
                         "law does not model; use \"saint_venant_kirchhoff\"");
     }
   }
-  const NonlinearSystem system(model_, assembler_, load_case, options_);
+  NonlinearSystem system(model_, assembler_, load_case, options_);
   const bool arc = options_.method == NonlinearOptions::Method::ArcLength;
+  const bool small = options_.kinematics == Kinematics::SmallStrain;
+  // The jump test compares the converged state with the elastic tangent's
+  // prediction: meaningful with finite kinematics and elastic materials only
+  // (see the file comment).
+  const bool jump_test = !small && !system.plastic();
 
   Vector prescribed(static_cast<Eigen::Index>(fixed.size()));
   for (std::size_t i = 0; i < fixed.size(); ++i) {
@@ -487,6 +636,11 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   result.load_case_name = spec.name;
   result.method = to_string(options_.method);
   result.law = to_string(options_.law);
+  result.kinematics = to_string(options_.kinematics);
+  result.plastic = system.plastic();
+  for (Index e = 0; e < mesh.num_elements(); ++e) {
+    if (system.averaged(e)) result.mean_dilatation = true;
+  }
   std::vector<std::vector<Index>> monitor_nodes;
   for (const NonlinearMonitor& m : options_.monitors) {
     if (m.component < 0 || m.component >= dim) {
@@ -552,7 +706,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
 
   // Record the converged state (u, lambda) with its full residual.
   const auto record = [&](int iterations, Scalar residual, int cuts, int pivots,
-                          const Vector& full_residual) {
+                          const Vector& full_residual, int yielding) {
     NonlinearStep s;
     s.index = static_cast<int>(result.steps.size()) + 1;
     s.load_factor = lambda;
@@ -563,6 +717,10 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     s.cuts = cuts;
     s.monitors = monitors_of(u, full_residual);
     s.max_displacement = max_magnitude(u);
+    if (system.plastic()) {
+      s.yielding_points = yielding;
+      s.max_plastic_strain = system.max_plastic_strain();
+    }
     result.steps.push_back(s);
     result.total_iterations += iterations;
     std::ostringstream os;
@@ -570,6 +728,10 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
        << " iteration(s), residual " << residual;
     for (std::size_t i = 0; i < s.monitors.size(); ++i) {
       os << ", " << result.monitor_names[i] << " = " << s.monitors[i];
+    }
+    if (system.plastic()) {
+      os << ", " << yielding << " point(s) yielding, largest plastic strain "
+         << s.max_plastic_strain;
     }
     log::info(os.str());
   };
@@ -662,7 +824,8 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   enum class StepFailure { None, Diverged, Unstable, Jumped };
   const auto newton_load_control = [&](Vector& state, Scalar lambda_new, int& iterations,
                                        Scalar& residual_out, int& pivots,
-                                       Vector& full_residual, StepFailure& failure) -> bool {
+                                       Vector& full_residual, int& yielding,
+                                       StepFailure& failure) -> bool {
     failure = StepFailure::Diverged;
     const Scalar dl = lambda_new - lambda;
     Evaluation ev = system.evaluate(state, lambda, true);
@@ -702,7 +865,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       const Scalar increment = restrict(trial - start, free_dofs).norm();
       const Scalar rel = r.norm() / scale;
       log::debug("  newton ", it, " at lambda = ", lambda_new, ": |R| = ", r.norm(), " (scale ",
-                 scale, ", round-off floor ", residual_floor(ev, k_gross), "), |du| = ",
+                 scale, ", round-off floor ", residual_floor(ev, k_gross, scale), "), |du| = ",
                  alpha * du.norm(),
                  " (limit ", correction_limit(increment, trial), "), line search ", alpha);
       // Converged: residual and correction within tolerance - or the
@@ -710,18 +873,18 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       // amplified by the conditioning and cannot shrink further.
       if ((r.norm() <= options_.residual_tolerance * scale &&
            alpha * du.norm() <= correction_limit(increment, trial)) ||
-          r.norm() <= residual_floor(ev, k_gross)) {
+          r.norm() <= residual_floor(ev, k_gross, scale)) {
         // The correction just applied is below tolerance: accept, and check
         // the residual of the accepted state.
-        const Evaluation final_ev = system.evaluate(trial, lambda_new, false);
+        Evaluation final_ev = system.evaluate(trial, lambda_new, false);
         const Scalar final_norm = restrict(final_ev.residual, free_dofs).norm();
         const Scalar final_scale = residual_scale(final_ev);
         if (final_norm <= std::max(options_.residual_tolerance * final_scale,
-                                   residual_floor(final_ev, k_gross))) {
+                                   residual_floor(final_ev, k_gross, final_scale))) {
           const Scalar corrector = restrict(trial - predicted_state, free_dofs).norm();
           log::debug("  step to lambda = ", lambda_new, ": corrector / predictor = ",
                      corrector / predicted.norm());
-          if (predicted.norm() > 0.0 && corrector > predicted.norm()) {
+          if (jump_test && predicted.norm() > 0.0 && corrector > predicted.norm()) {
             failure = StepFailure::Jumped;
             return false;
           }
@@ -730,6 +893,8 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
           iterations = it;
           residual_out = final_norm / final_scale;
           full_residual = final_ev.residual;
+          yielding = final_ev.yielding_points;
+          system.commit(final_ev);
           return true;
         }
       }
@@ -738,39 +903,65 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     return false;
   };
 
+  bool path_completed = false;
   if (!arc) {
-    // The load levels to pass through exactly, ending with lambda = 1.
-    std::vector<Scalar> stations = options_.load_factors;
-    stations.push_back(target);
+    // The load levels to pass through exactly: the turning points of the
+    // load path, or the intermediate load factors and then lambda = 1.
+    const bool path = !options_.load_path.empty();
+    std::vector<Scalar> stations = options_.load_path;
+    if (!path) {
+      stations = options_.load_factors;
+      stations.push_back(target);
+    }
+    Scalar path_scale = 0.0;
+    for (Scalar v : stations) path_scale = std::max(path_scale, std::abs(v));
     std::size_t next_station = 0;
-    // A suspected critical point: the lowest load factor a step reached only
-    // by meeting an unstable tangent or jumping, the kind of the evidence, and
+    // The path runs in legs between its turning points; each leg starts
+    // with steps of 1/steps of its length, and s = direction * lambda grows
+    // along it.
+    Scalar direction = stations[0] > 0.0 ? 1.0 : -1.0;
+    Scalar leg_step =
+        (path ? std::abs(stations[0]) : target) / static_cast<Scalar>(options_.steps);
+    step = leg_step;
+    // A suspected critical point: the nearest s a step reached only by
+    // meeting an unstable tangent or jumping, the kind of the evidence, and
     // the halvings it has cost from any state. Steps keep closing in on it
     // (a success lengthens the next step again); once max_cuts halvings have
     // failed to pass it the run stops there. A step that converges beyond it
     // proves it a stray iterate and clears it.
-    Scalar critical_above = std::numeric_limits<Scalar>::infinity();
+    Scalar critical_beyond = std::numeric_limits<Scalar>::infinity();
     StepFailure critical_kind = StepFailure::None;
     int critical_cuts = 0;
-    while (lambda < target * (1.0 - 1.0e-12)) {
+    // Likewise the nearest s that a step failed to reach by not converging:
+    // successes short of it keep resetting the count of halvings in a row,
+    // so without this a load beyond a limit - a plastic collapse, where there
+    // is no equilibrium at all - would be crept towards until the step budget
+    // ran out.
+    Scalar stall_beyond = std::numeric_limits<Scalar>::infinity();
+    int stall_cuts = 0;
+    while (next_station < stations.size()) {
       if (static_cast<int>(result.steps.size()) >= options_.max_steps) {
-        result.termination = "the step budget (max_steps) ran out before lambda = 1";
+        result.termination = path ? "the step budget (max_steps) ran out before the end of "
+                                    "the load path"
+                                  : "the step budget (max_steps) ran out before lambda = 1";
         break;
       }
       const Scalar station = stations[next_station];
       // A step that would stop just short of a station stretches to it.
-      const Scalar lambda_new =
-          lambda + step >= station - 1.0e-9 * target ? station : lambda + step;
+      const Scalar lambda_new = direction * (station - lambda) <= step + 1.0e-9 * path_scale
+                                    ? station
+                                    : lambda + direction * step;
       Vector state = u;
       int iterations = 0;
       Scalar residual = 0.0;
       int pivots = -1;
+      int yielding = 0;
       Vector full_residual;
       StepFailure failure = StepFailure::Diverged;
       bool ok = false;
       try {
         ok = newton_load_control(state, lambda_new, iterations, residual, pivots, full_residual,
-                                 failure);
+                                 yielding, failure);
       } catch (const SolverError& ex) {
         log::debug("non-linear step at lambda = ", lambda_new, " failed: ", ex.what());
         ok = false;
@@ -780,33 +971,48 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
         ++cuts_in_a_row;
         ++result.total_cuts;
         if (failure == StepFailure::Unstable || failure == StepFailure::Jumped) {
-          critical_above = std::min(critical_above, lambda_new);
+          critical_beyond = std::min(critical_beyond, direction * lambda_new);
           // A jump is the stronger evidence: it names a limit point.
           if (critical_kind != StepFailure::Jumped) critical_kind = failure;
           ++critical_cuts;
+        } else {
+          stall_beyond = std::min(stall_beyond, direction * lambda_new);
+          ++stall_cuts;
         }
         if (critical_cuts > options_.max_cuts) {
-          result.critical_bound = critical_above;
+          result.critical_bound = direction * critical_beyond;
           std::ostringstream os;
           if (critical_kind == StepFailure::Jumped) {
-            os << "between lambda = " << lambda << " and " << critical_above
+            os << "between lambda = " << lambda << " and " << result.critical_bound
                << " the path turns at a limit point: every step beyond it lands on a distant "
                   "branch of equilibria, a snap-through that load control cannot follow - the "
                   "arc-length method can";
           } else {
             os << "the tangent stiffness loses positive definiteness between lambda = " << lambda
-               << " and " << critical_above
-               << ": a limit or bifurcation point, which load control cannot pass - the "
-                  "arc-length method follows the path through a limit point";
+               << " and " << result.critical_bound << ": a limit or bifurcation point"
+               << (system.plastic() ? " or a plastic collapse (whose tangent is singular)" : "")
+               << ", which load control cannot pass - the arc-length method follows the path "
+                  "through a limit point";
           }
           result.termination = os.str();
           break;
         }
-        if (cuts_in_a_row > options_.max_cuts) {
+        if (stall_cuts > options_.max_cuts || cuts_in_a_row > options_.max_cuts) {
           std::ostringstream os;
-          os << "a load step from lambda = " << lambda << " failed to converge after "
-             << options_.max_cuts << " halvings (step " << step
-             << "); the load may exceed a limit point - try the arc-length method";
+          if (stall_cuts > options_.max_cuts) {
+            result.unreached_load_factor = direction * stall_beyond;
+            os << "no step converged beyond lambda = " << result.unreached_load_factor
+               << " in " << stall_cuts << " halvings; the last converged load factor is "
+               << lambda;
+          } else {
+            os << "a load step from lambda = " << lambda << " failed to converge after "
+               << options_.max_cuts << " halvings (step " << step << ")";
+          }
+          os << ". The load may exceed a limit point - try the arc-length method";
+          if (system.plastic()) {
+            os << " - or a plastic collapse load, beyond which a material without hardening "
+                  "has no equilibrium";
+          }
           result.termination = os.str();
           break;
         }
@@ -820,17 +1026,40 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       }
       u = state;
       lambda = lambda_new;
-      if (lambda_new == station) ++next_station;
-      record(iterations, residual, cuts_in_a_row, pivots, full_residual);
+      record(iterations, residual, cuts_in_a_row, pivots, full_residual, yielding);
       cuts_in_a_row = 0;
-      if (lambda > critical_above) {
-        log::debug("load factor ", critical_above, " was a stray iterate, not a critical point");
-        critical_above = std::numeric_limits<Scalar>::infinity();
+      if (direction * lambda > critical_beyond) {
+        log::debug("load factor ", direction * critical_beyond,
+                   " was a stray iterate, not a critical point");
+        critical_beyond = std::numeric_limits<Scalar>::infinity();
         critical_kind = StepFailure::None;
         critical_cuts = 0;
       }
-      if (iterations <= 3) step = std::min(initial_step, 1.5 * step);
+      if (direction * lambda > stall_beyond) {
+        stall_beyond = std::numeric_limits<Scalar>::infinity();
+        stall_cuts = 0;
+      }
+      if (iterations <= 3) step = std::min(leg_step, 1.5 * step);
+      if (lambda_new == station) {
+        ++next_station;
+        if (next_station < stations.size()) {
+          const Scalar turn = stations[next_station] > lambda ? 1.0 : -1.0;
+          if (turn != direction) {
+            // A turning point: a new leg, from its own first step.
+            direction = turn;
+            leg_step = std::abs(stations[next_station] - lambda) /
+                       static_cast<Scalar>(options_.steps);
+            step = leg_step;
+            critical_beyond = std::numeric_limits<Scalar>::infinity();
+            critical_kind = StepFailure::None;
+            critical_cuts = 0;
+            stall_beyond = std::numeric_limits<Scalar>::infinity();
+            stall_cuts = 0;
+          }
+        }
+      }
     }
+    path_completed = next_station == stations.size();
   } else {
     // Crisfield's cylindrical arc-length method.
     bool finished = false;
@@ -863,6 +1092,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       int iterations = 0;
       Scalar residual = 0.0;
       Vector step_residual;  // full residual of the converged state
+      Evaluation accepted_ev;  // its evaluation, whose internal variables are committed
       try {
         for (int it = 1; it <= options_.max_iterations; ++it) {
           Vector trial = u;
@@ -896,16 +1126,17 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
           add_to(accepted, free_dofs, du, 1.0);
           if ((r.norm() <= options_.residual_tolerance * scale &&
                correction.norm() <= correction_limit(du.norm(), accepted)) ||
-              r.norm() <= residual_floor(ev, k_gross)) {
-            const Evaluation final_ev = system.evaluate(accepted, lambda + dlambda, false);
+              r.norm() <= residual_floor(ev, k_gross, scale)) {
+            Evaluation final_ev = system.evaluate(accepted, lambda + dlambda, false);
             const Scalar final_norm = restrict(final_ev.residual, free_dofs).norm();
             const Scalar final_scale = residual_scale(final_ev);
             if (final_norm <= std::max(options_.residual_tolerance * final_scale,
-                                       residual_floor(final_ev, k_gross))) {
+                                       residual_floor(final_ev, k_gross, final_scale))) {
               converged = true;
               iterations = it;
               residual = final_norm / final_scale;
               step_residual = final_ev.residual;
+              accepted_ev = std::move(final_ev);
               break;
             }
           }
@@ -930,33 +1161,39 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       }
       if (lambda + dlambda >= target) {
         // Land exactly on the target by load control from the last state.
+        // (From the last converged state, whose internal variables are still
+        // the committed ones.)
         Vector state = u;
         int its = 0;
         Scalar res = 0.0;
         int pivots = -1;
+        int yielding = 0;
         Vector landing_residual;
         StepFailure failure = StepFailure::Diverged;
         bool ok = false;
         try {
-          ok = newton_load_control(state, target, its, res, pivots, landing_residual, failure);
+          ok = newton_load_control(state, target, its, res, pivots, landing_residual, yielding,
+                                   failure);
         } catch (const SolverError&) {
           ok = false;
         }
         if (ok) {
           u = state;
           lambda = target;
-          record(its, res, cuts_in_a_row, pivots, landing_residual);
+          record(its, res, cuts_in_a_row, pivots, landing_residual, yielding);
           finished = true;
           break;
         }
         // The path is not monotone near the target: take the arc-length step.
       }
+      const int yielding = accepted_ev.yielding_points;
+      system.commit(accepted_ev);
       add_to(u, free_dofs, du, 1.0);
       lambda += dlambda;
       previous_increment = du;
       // The inertia of this state is set by the next step's predictor, which
       // factorises the tangent here (or by the final factorisation).
-      record(iterations, residual, cuts_in_a_row, -1, step_residual);
+      record(iterations, residual, cuts_in_a_row, -1, step_residual, yielding);
       cuts_in_a_row = 0;
       const Scalar factor_growth =
           std::sqrt(static_cast<Scalar>(options_.desired_iterations) /
@@ -977,9 +1214,11 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   result.linear_solver = factor.name();
   result.displacement = u;
   result.load_factor = lambda;
-  result.completed = lambda >= target * (1.0 - 1.0e-12);
+  result.completed = arc ? lambda >= target * (1.0 - 1.0e-12) : path_completed;
   if (result.completed && result.termination.empty()) {
-    result.termination = arc ? "reached the target load factor" : "reached lambda = 1";
+    result.termination = arc                               ? "reached the target load factor"
+                         : !options_.load_path.empty() ? "completed the load path"
+                                                           : "reached lambda = 1";
   }
   result.strain_energy = final_ev.energy;
   result.reactions = Vector::Zero(n);
@@ -1022,14 +1261,44 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   result.element_piola_kirchhoff = Matrix::Zero(nv, ne);
   result.element_von_mises = Vector::Zero(ne);
   result.element_cauchy_zz = Vector::Zero(ne);
+  if (system.plastic()) result.element_plastic_strain = Vector::Zero(ne);
   const LoadCaseData& data = model_.load_case_data(load_case);
   const Vector* temperature = data.temperature.size() > 0 ? &data.temperature : nullptr;
   result.min_jacobian = std::numeric_limits<Scalar>::infinity();
+  const int points = elastoplastic_points(model_);
+  // A 3-D Voigt stress in the model's own Voigt order.
+  const auto own_voigt = [&](const Vector6& v) {
+    if (dim == 3) return Vector(v);
+    Vector out(3);
+    out << v(0), v(1), v(3);
+    return out;
+  };
   for (Index e = 0; e < ne; ++e) {
     const Index* nodes = mesh.element_nodes(e);
     Vector ue(dim * npe);
     for (int a = 0; a < npe; ++a) {
       for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
+    }
+    if (small || system.elastoplastic(e)) {
+      const ElastoplasticStress st =
+          elastoplastic_stress(model_, e, ue, system.committed(e), system.averaged(e),
+                               temperature, lambda, options_.kinematics);
+      result.element_cauchy.col(e) = own_voigt(st.cauchy);
+      result.element_piola_kirchhoff.col(e) = own_voigt(st.piola_kirchhoff);
+      if (dim == 2) result.element_cauchy_zz(e) = st.cauchy(2);
+      result.element_von_mises(e) = st.von_mises;
+      result.max_green_strain = std::max(result.max_green_strain, st.max_strain);
+      result.min_jacobian = std::min(result.min_jacobian, st.min_jacobian);
+      result.max_rotation = std::max(result.max_rotation, st.max_rotation);
+      result.max_quadratic_strain = std::max(result.max_quadratic_strain, st.max_quadratic_strain);
+      if (system.elastoplastic(e)) {
+        result.element_plastic_strain(e) = st.max_equivalent_plastic_strain;
+        result.max_plastic_strain =
+            std::max(result.max_plastic_strain, st.max_equivalent_plastic_strain);
+        result.plastic_points += st.plastic_points;
+        result.total_points += points;
+      }
+      continue;
     }
     const TotalLagrangianStress st =
         total_lagrangian_stress(model_, e, ue, options_.law, temperature, lambda);
@@ -1042,13 +1311,56 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     result.max_green_strain = std::max(result.max_green_strain, st.max_green_strain);
     result.min_jacobian = std::min(result.min_jacobian, st.min_jacobian);
   }
+
+  // What bears on the validity of the run.
+  const auto warn = [&](const std::string& text) {
+    result.warnings.push_back(text);
+    log::warn("load case '", spec.name, "': ", text);
+  };
+  if (small && result.max_quadratic_strain > kQuadraticWarning * result.max_green_strain &&
+      result.max_green_strain > 0.0) {
+    std::ostringstream os;
+    os << "the small-strain kinematics neglects the quadratic part of the Green strain, "
+          "H^T H / 2, which reaches "
+       << result.max_quadratic_strain / result.max_green_strain
+       << " of the largest strain (largest rotation " << result.max_rotation
+       << " rad); \"finite\" kinematics models it";
+    warn(os.str());
+  }
+  if ((small || system.plastic()) && result.max_green_strain > kStrainWarning) {
+    std::ostringstream os;
+    os << "the largest strain is " << result.max_green_strain << ", beyond the small strains "
+       << (system.plastic() ? "the elastoplastic law assumes"
+                            : "of the small-strain (linear elastic) theory");
+    warn(os.str());
+  }
+  if (system.plastic() && model_.stress_state() != StressState::PlaneStress) {
+    const ElementType type = mesh.element_type();
+    if (type == ElementType::Tri3 || type == ElementType::Tet4) {
+      warn("constant-strain elements (" + to_string(type) +
+           ") can lock under the isochoric flow of a fully plastic state in plane strain "
+           "and 3-D, depending on the mesh pattern (a collapse load comes out too high); "
+           "check one against Q4 or Hex8 with mean dilatation, or Tet10");
+    } else if ((type == ElementType::Quad4 || type == ElementType::Hex8) &&
+               !result.mean_dilatation) {
+      warn("without mean dilatation the fully integrated " + to_string(type) +
+           " locks under isochoric plastic flow in plane strain and 3-D: a collapse load "
+           "comes out too high and the plastic plateau keeps rising");
+    }
+  }
   if (!result.completed) {
     log::warn("non-linear analysis of load case '", spec.name, "' stopped at lambda = ",
               lambda, ": ", result.termination);
   } else {
     log::info("non-linear analysis of load case '", spec.name, "': ", result.steps.size(),
               " step(s), ", result.total_iterations, " iteration(s), ", result.total_cuts,
-              " cut(s), lambda = ", lambda, ", largest Green strain ", result.max_green_strain);
+              " cut(s), lambda = ", lambda, ", largest ", small ? "strain " : "Green strain ",
+              result.max_green_strain);
+    if (system.plastic()) {
+      log::info("  ", result.plastic_points, " of ", result.total_points,
+                " elastoplastic integration point(s) have yielded; largest plastic strain ",
+                result.max_plastic_strain);
+    }
   }
   return result;
 }

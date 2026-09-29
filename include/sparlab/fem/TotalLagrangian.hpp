@@ -38,6 +38,17 @@
 
 namespace sparlab {
 
+/// Shape-function gradients with respect to the reference coordinates,
+/// \f$G = \partial N/\partial X\f$ (dim x n), read off the normal-strain rows
+/// of an element's strain operator.
+Matrix reference_gradients(const StrainOperator& op, int dim, int nodes);
+
+/// The operator \f$B_{NL}\f$ of the variation of the Green-Lagrange strain,
+/// \f$\delta E = B_{NL}\,\delta u\f$ (Voigt, engineering shear; nv x dim n),
+/// at the deformation gradient `f` (dim x dim) with the reference gradients
+/// `g` (dim x n) - the formula of the file comment.
+Matrix green_lagrange_operator(const Matrix& f, const Matrix& g);
+
 /// Element contribution of the total Lagrangian formulation.
 struct TotalLagrangianElement {
   Vector internal_force;  ///< num_dofs [N]

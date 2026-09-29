@@ -231,10 +231,14 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
   // forces. Both balances are measured against the gross size of the applied
   // loads, sum |f_n| and sum |x_n| |f_n|, the scale of the round-off in their
   // sums: the resultant of a self-equilibrated load - a thermal strain, or a
-  // self-weight carried by a traction - is itself round-off.
+  // self-weight carried by a traction - is itself round-off. A case driven by
+  // prescribed displacements alone applies no load: its reactions balance
+  // among themselves, measured against their own gross size.
   EquilibriumCheck& eq = sol.equilibrium;
   Scalar force_scale = 0.0;
   Scalar applied_moment_scale = 0.0;
+  Scalar reaction_scale = 0.0;
+  Scalar reaction_moment_scale = 0.0;
   for (Index n = 0; n < nn; ++n) {
     const Vector3 x = model_.mesh().node(n);
     const Vector3 fa = nodal_vector(applied_force, n, dim, ndpn);
@@ -245,13 +249,19 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
     eq.reaction_moment += moment_about_origin(x, fr, dim);
     force_scale += fa.norm();
     applied_moment_scale += x.norm() * fa.norm();
+    reaction_scale += fr.norm();
+    reaction_moment_scale += x.norm() * fr.norm();
     if (ndpn == kMaxDofsPerNode) {
       const Vector3 ma = nodal_rotation_part(applied_force, n, ndpn);
+      const Vector3 mr = nodal_rotation_part(sol.reactions, n, ndpn);
       eq.applied_moment += ma;
-      eq.reaction_moment += nodal_rotation_part(sol.reactions, n, ndpn);
+      eq.reaction_moment += mr;
       applied_moment_scale += ma.norm();
+      reaction_moment_scale += mr.norm();
     }
   }
+  if (force_scale == 0.0) force_scale = reaction_scale;
+  if (applied_moment_scale == 0.0) applied_moment_scale = reaction_moment_scale;
   eq.force_residual = eq.applied_force + eq.reaction_force;
   eq.moment_residual = eq.applied_moment + eq.reaction_moment;
   eq.relative_force_error = eq.force_residual.norm() / std::max(force_scale, 1.0e-30);
