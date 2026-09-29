@@ -38,6 +38,7 @@ set(SPARLAB_TEST_SOURCES
   test_plasticity.cpp
   test_dynamics.cpp
   test_contact.cpp
+  test_forming.cpp
 )
 
 add_executable(sparlab_tests ${SPARLAB_TEST_SOURCES})
