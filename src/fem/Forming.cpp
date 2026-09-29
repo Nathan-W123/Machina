@@ -1339,6 +1339,10 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
     const bool completed = sr.completed;
     const std::string termination = sr.termination;
     result.steps.push_back(std::move(sr));
+    if (observer_) {
+      ScopedTimer st(timing, "output");
+      observer_(result);
+    }
     if (!completed) {
       result.termination = label + " (" + std::to_string(si + 1) + " of " +
                            std::to_string(options_.steps.size()) + "): " + termination;

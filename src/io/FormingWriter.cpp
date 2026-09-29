@@ -64,46 +64,47 @@ std::string forming_step_stem(std::size_t index, const std::string& name) {
   return "step_" + std::to_string(index + 1) + "_" + clean;
 }
 
-std::vector<std::string> write_forming_results(const ResultWriter& writer, const FemModel& model,
-                                               const FormingOptions& options,
-                                               const FormingResult& result, bool vtk,
-                                               bool step_files) {
+std::vector<std::string> write_forming_step(const ResultWriter& writer, const FemModel& model,
+                                            std::size_t index, const FormingStepResult& s,
+                                            bool vtk, bool step_files) {
   const Mesh& mesh = model.mesh();
   std::vector<std::string> files;
-  for (std::size_t k = 0; k < result.steps.size(); ++k) {
-    const FormingStepResult& s = result.steps[k];
-    if (!s.completed || !step_files) continue;
-    const std::string stem = forming_step_stem(k, s.name);
-    write_nodes(writer.file(stem + "_nodes.csv"), mesh, s.displacement);
-    files.push_back(stem + "_nodes.csv");
-    {
-      CsvWriter csv(writer.file(stem + "_elements.csv"),
-                    {"element", "eq_plastic_strain", "von_mises_Pa"});
-      for (Index e = 0; e < mesh.num_elements(); ++e) {
-        csv.row(e, {s.element_plastic_strain(e), s.element_von_mises(e)});
-      }
-      csv.close();
-      files.push_back(stem + "_elements.csv");
+  if (!s.completed || !step_files) return files;
+  const std::string stem = forming_step_stem(index, s.name);
+  write_nodes(writer.file(stem + "_nodes.csv"), mesh, s.displacement);
+  files.push_back(stem + "_nodes.csv");
+  {
+    CsvWriter csv(writer.file(stem + "_elements.csv"),
+                  {"element", "eq_plastic_strain", "von_mises_Pa"});
+    for (Index e = 0; e < mesh.num_elements(); ++e) {
+      csv.row(e, {s.element_plastic_strain(e), s.element_von_mises(e)});
     }
+    csv.close();
+    files.push_back(stem + "_elements.csv");
+  }
+  if (vtk) {
+    write_vtk(writer.file(stem + ".vtk"), mesh, s.displacement, &s.element_plastic_strain,
+              &s.element_von_mises);
+    files.push_back(stem + ".vtk");
+  }
+  for (const FormingSnapshot& snap : s.snapshots) {
+    const std::string name = stem + "_inc_" + std::to_string(snap.increment);
+    write_nodes(writer.file(name + "_nodes.csv"), mesh, snap.displacement);
+    files.push_back(name + "_nodes.csv");
     if (vtk) {
-      write_vtk(writer.file(stem + ".vtk"), mesh, s.displacement, &s.element_plastic_strain,
-                &s.element_von_mises);
-      files.push_back(stem + ".vtk");
-    }
-    for (const FormingSnapshot& snap : s.snapshots) {
-      const std::string name = stem + "_inc_" + std::to_string(snap.increment);
-      write_nodes(writer.file(name + "_nodes.csv"), mesh, snap.displacement);
-      files.push_back(name + "_nodes.csv");
-      if (vtk) {
-        write_vtk(writer.file(name + ".vtk"), mesh, snap.displacement, nullptr, nullptr);
-        files.push_back(name + ".vtk");
-      }
+      write_vtk(writer.file(name + ".vtk"), mesh, snap.displacement, nullptr, nullptr);
+      files.push_back(name + ".vtk");
     }
   }
+  return files;
+}
+
+void write_tool_forces(const ResultWriter& writer, const FemModel& model,
+                       const FormingOptions& options, const FormingResult& result) {
   CsvWriter tools(writer.file("tool_forces.csv"),
                   {"step", "increment", "t", "tool", "cx", "cy", "cz", "fx", "fy", "fz",
                    "active_nodes", "max_penetration_m"});
-  const int dim = mesh.dim();
+  const int dim = model.mesh().dim();
   for (std::size_t k = 0; k < result.steps.size(); ++k) {
     for (const FormingIncrement& inc : result.steps[k].increments) {
       for (const ToolRecord& t : inc.tools) {
@@ -117,6 +118,19 @@ std::vector<std::string> write_forming_results(const ResultWriter& writer, const
     }
   }
   tools.close();
+}
+
+std::vector<std::string> write_forming_results(const ResultWriter& writer, const FemModel& model,
+                                               const FormingOptions& options,
+                                               const FormingResult& result, bool vtk,
+                                               bool step_files) {
+  std::vector<std::string> files;
+  for (std::size_t k = 0; k < result.steps.size(); ++k) {
+    for (std::string& f : write_forming_step(writer, model, k, result.steps[k], vtk, step_files)) {
+      files.push_back(std::move(f));
+    }
+  }
+  write_tool_forces(writer, model, options, result);
   files.push_back("tool_forces.csv");
   return files;
 }

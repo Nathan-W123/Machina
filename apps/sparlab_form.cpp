@@ -6,8 +6,10 @@
 ///        FormingWriter.hpp (docs/forming.md).
 ///
 /// Unlike sparlab_solve it runs no linear static solve first: it builds the
-/// model (which validates the mesh and the material), runs the steps in
-/// order and writes every completed step's results. The exit status is 0
+/// model (which validates the mesh and the material), writes the deck and
+/// the mesh, runs the steps in order - writing each completed step's
+/// results and the tool forces so far as the step ends - and writes
+/// summary.json last. The exit status is 0
 /// when every step completed, 3 when one stopped (its reason on stderr and
 /// in summary.json; the files of the steps before it are written), and as
 /// for the other apps on a configuration (2) or I/O (4) error.
@@ -102,16 +104,25 @@ int main(int argc, char** argv) {
                   : "Eigen");
 
     FormingAnalysis analysis(model, assembler, config.forming.options);
-    const FormingResult result = analysis.run();
-    const Scalar runtime = wall.elapsed_seconds();
-
+    // The output directory, the deck and the mesh before the first step (an
+    // unwritable directory fails now, not after hours), each step's files
+    // and the tool forces so far as the step ends (a run that is killed
+    // keeps the steps it completed), summary.json last.
     ResultWriter writer(out_dir, config);
     writer.write_config();
     writer.write_mesh(model);
-    std::vector<std::string> files = write_forming_results(
-        writer, model, config.forming.options, result, vtk,
-        config.forming.snapshots != FormingConfig::Snapshots::None);
-    files.insert(files.begin(), {"summary.json", "config.json", "mesh.json"});
+    const bool step_files = config.forming.snapshots != FormingConfig::Snapshots::None;
+    std::vector<std::string> files = {"summary.json", "config.json", "mesh.json"};
+    analysis.set_step_observer([&](const FormingResult& so_far) {
+      const std::size_t k = so_far.steps.size() - 1;
+      for (std::string& f : write_forming_step(writer, model, k, so_far.steps[k], vtk, step_files)) {
+        files.push_back(std::move(f));
+      }
+      write_tool_forces(writer, model, config.forming.options, so_far);
+    });
+    const FormingResult result = analysis.run();
+    const Scalar runtime = wall.elapsed_seconds();
+    files.push_back("tool_forces.csv");
     writer.write_json("summary.json",
                       forming_summary_json(config, model, config.forming.options, result,
                                            runtime, version_string(), files));

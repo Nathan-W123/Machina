@@ -20,7 +20,9 @@
 /// points', its von Mises stress that of its point-averaged Cauchy stress
 /// [Pa]; the tool force is the force the body exerts on the tool [N], and
 /// (cx, cy, cz) the tool's reference point [m], at the end of each converged
-/// increment. Only completed steps have files.
+/// increment. Only completed steps have files. sparlab_form writes
+/// config.json and mesh.json before the first step, each step's files and
+/// tool_forces.csv as the step ends, and summary.json last.
 #pragma once
 
 #include "sparlab/fem/FemModel.hpp"
@@ -36,6 +38,17 @@ namespace sparlab {
 
 /// "step_<k>_<name>" for the step at 0-based index `index`.
 std::string forming_step_stem(std::size_t index, const std::string& name);
+
+/// Write the files of the step at 0-based `index` - its node and element
+/// CSVs, its VTK file (when `vtk`) and its snapshots - when it completed and
+/// `step_files` is set. Returns the names of the files written.
+std::vector<std::string> write_forming_step(const ResultWriter& writer, const FemModel& model,
+                                            std::size_t index, const FormingStepResult& step,
+                                            bool vtk, bool step_files);
+
+/// Write tool_forces.csv with every increment of `result` (so far).
+void write_tool_forces(const ResultWriter& writer, const FemModel& model,
+                       const FormingOptions& options, const FormingResult& result);
 
 /// Write the per-step files (when `step_files`; VTK when `vtk`) of every
 /// completed step, their snapshots, and tool_forces.csv. Returns the names

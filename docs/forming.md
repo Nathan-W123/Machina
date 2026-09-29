@@ -289,7 +289,7 @@ writes, into `dir`:
 
 | File | Content |
 |------|---------|
-| `summary.json` | `case`, `sparlab_version` (`"<version> (<git revision>)"`), `completed`, `termination`, `runtime_s`, `timing` (seconds per phase: `element_tangent_s`, `element_residual_s`, `contact_s`, `factorisation_s` with `factor_<kind>_s` per factorisation, `solve_s`, `total_s`; `increments`, `iterations`, `cuts`, `linear_solver` with the count of each factorisation used, `failed_factorisations` with the count of each attempt that failed - a Cholesky of a tangent that is not positive definite, then `LDL^T`; an `LDL^T` with a vanishing pivot, then LU; a singular LU, which fails the iteration - empty if none, `suitesparse`), `analysis` (kinematics, tolerances), `steps` (per step: `name`, `type`, `completed`, `increments`, `iterations`, `cuts`, `max_plastic_strain`, `reaction_norm_N`, `warnings`, and `termination`, `files_stem`, `t_begin_s`, `t_end_s`, `tools`, `constrained_dofs`, `start_imbalance_N`, `reference_force_N`, `max_displacement_change_m`, `max_displacement_m`), `tools` (per tool: shape, radius, friction, penalty, trajectory span and length, peak force and its time, largest contact node count and penetration), `mesh` (element type, dim, nodes, elements, DOFs, bounding box), `warnings`, `files`, `provenance` |
+| `summary.json` | `case`, `sparlab_version` (`"<version> (<git revision>)"`), `completed`, `termination`, `runtime_s`, `timing` (seconds per phase: `element_tangent_s`, `element_residual_s`, `contact_s`, `factorisation_s` with `factor_<kind>_s` per factorisation, `solve_s`, `output_s` (the step files written during the run), `total_s`; `increments`, `iterations`, `cuts`, `linear_solver` with the count of each factorisation used, `failed_factorisations` with the count of each attempt that failed - a Cholesky of a tangent that is not positive definite, then `LDL^T`; an `LDL^T` with a vanishing pivot, then LU; a singular LU, which fails the iteration - empty if none, `suitesparse`), `analysis` (kinematics, tolerances), `steps` (per step: `name`, `type`, `completed`, `increments`, `iterations`, `cuts`, `max_plastic_strain`, `reaction_norm_N`, `warnings`, and `termination`, `files_stem`, `t_begin_s`, `t_end_s`, `tools`, `constrained_dofs`, `start_imbalance_N`, `reference_force_N`, `max_displacement_change_m`, `max_displacement_m`), `tools` (per tool: shape, radius, friction, penalty, trajectory span and length, peak force and its time, largest contact node count and penetration), `mesh` (element type, dim, nodes, elements, DOFs, bounding box), `warnings`, `files`, `provenance` |
 | `config.json` | the deck, verbatim |
 | `mesh.json` | nodes, connectivity (`ResultWriter::write_mesh`) |
 | `step_<k>_<s>_nodes.csv` | `node,X,Y,Z,ux,uy,uz`: reference coordinates and the displacement at the end of step `k` (1-based) named `s` [m]; Z and uz are 0 on a 2-D model |
@@ -299,7 +299,13 @@ writes, into `dir`:
 | `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m`: per converged increment and active tool, the tool's reference point [m] and the force the body exerts **on the tool** [N] |
 
 `s` is the step name with every character other than letters, digits, `-`
-and `_` replaced by `_`. Only completed steps have files. The exit status is
+and `_` replaced by `_`. Only completed steps have files. They are written
+as the run goes: `config.json` and `mesh.json` before the first step (an
+output directory that cannot be created fails the run before it starts),
+each step's files and `tool_forces.csv` (every increment so far) as the step
+ends, `summary.json` last - so a run that is killed keeps the steps it
+completed, and a directory without `summary.json` holds an unfinished run.
+The exit status is
 0 when every step completed and 3 when one stopped (the reason is in
 `summary.json` and on stderr; the steps before it are written); 2 for a
 configuration error, 4 for an I/O error. `--version` prints one line,

@@ -111,6 +111,7 @@
 #include "sparlab/material/Hyperelastic.hpp"
 #include "sparlab/material/Plasticity.hpp"
 
+#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
@@ -292,7 +293,7 @@ struct FormingResult {
   /// assembly with the tangent), "element_residual" (without it: line search
   /// and acceptance), "contact", "factorisation" (scatter into the
   /// partition's pattern, analysis, numeric factorisation), "solve",
-  /// "total".
+  /// "output" (the step observer), "total".
   TimingLedger timing;
   std::vector<std::string> warnings;
 };
@@ -320,6 +321,13 @@ class FormingAnalysis {
   ///         would jump between them.
   FormingResult run(const AnalysisState& start);
 
+  /// Called after each step ends - completed or stopped - with the result
+  /// so far, whose last step is the one that ended (its time is counted as
+  /// "output" in the timing). sparlab_form writes that step's files there,
+  /// so a long run that is killed keeps the steps it completed.
+  using StepObserver = std::function<void(const FormingResult& so_far)>;
+  void set_step_observer(StepObserver observer) { observer_ = std::move(observer); }
+
   const FormingOptions& options() const { return options_; }
   /// The pseudo-time windows the steps resolve to from the start of the
   /// analysis [s] (a restart resolves them from its start state's time).
@@ -342,6 +350,7 @@ class FormingAnalysis {
   FormingOptions options_;
   std::vector<std::vector<char>> active_;  ///< per step, per tool
   std::vector<std::pair<Scalar, Scalar>> windows_;
+  StepObserver observer_;
 };
 
 }  // namespace sparlab

@@ -1351,16 +1351,50 @@ TEST_CASE("a forming run writes the result files of its output contract", "[form
   const Configuration c = parse_deck(forming_deck(kFullForming));
   FemModel model = build_model(c);
   Assembler assembler(model);
-  const FormingResult r = FormingAnalysis(model, assembler, c.forming.options).run();
-  REQUIRE(r.completed);
-  REQUIRE(r.steps.size() == 3);
-  CHECK(r.steps[2].reaction_norm < 1.0e-6 * r.steps[2].reference_force);
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "sparlab_test_forming_out";
   std::filesystem::remove_all(dir);
   ResultWriter writer(dir.string(), c);
-  const std::vector<std::string> files =
+  // As sparlab_form does: each step's files, and the tool forces so far,
+  // written as the step ends.
+  FormingAnalysis analysis(model, assembler, c.forming.options);
+  std::vector<std::string> files;
+  std::vector<std::size_t> seen;
+  std::vector<int> tool_rows;
+  analysis.set_step_observer([&](const FormingResult& so_far) {
+    const std::size_t k = so_far.steps.size() - 1;
+    seen.push_back(so_far.steps.size());
+    for (std::string& f :
+         write_forming_step(writer, model, k, so_far.steps[k], true, true)) {
+      files.push_back(std::move(f));
+    }
+    write_tool_forces(writer, model, c.forming.options, so_far);
+    std::ifstream in((dir / "tool_forces.csv").string());
+    std::string line;
+    int count = 0;
+    while (std::getline(in, line)) ++count;
+    tool_rows.push_back(count);
+  });
+  const FormingResult r = analysis.run();
+  REQUIRE(r.completed);
+  REQUIRE(r.steps.size() == 3);
+  CHECK(seen == std::vector<std::size_t>{1, 2, 3});
+  CHECK(r.timing.totals().count("output") == 1);
+  // The tool forces grow step by step: 1 + the press's increments, then
+  // the lift's too (the release has no tool).
+  REQUIRE(tool_rows.size() == 3);
+  CHECK(tool_rows[0] == 1 + static_cast<int>(r.steps[0].increments.size()));
+  CHECK(tool_rows[1] ==
+        1 + static_cast<int>(r.steps[0].increments.size() + r.steps[1].increments.size()));
+  CHECK(tool_rows[2] == tool_rows[1]);
+  CHECK(r.steps[2].reaction_norm < 1.0e-6 * r.steps[2].reference_force);
+  // The same files as writing them all after the run.
+  const std::vector<std::string> after =
       write_forming_results(writer, model, c.forming.options, r, true, true);
+  std::vector<std::string> expected = files;
+  expected.push_back("tool_forces.csv");
+  CHECK(after == expected);
+  files = after;
   const auto first_line = [&](const std::string& name) {
     std::ifstream in((dir / name).string());
     std::string line;
@@ -1434,7 +1468,14 @@ TEST_CASE("a step whose start state cannot be evaluated stops the run with its s
     })"));
   FemModel model = build_model(c);
   Assembler assembler(model);
-  const FormingResult r = FormingAnalysis(model, assembler, c.forming.options).run();
+  FormingAnalysis analysis(model, assembler, c.forming.options);
+  int observed = 0;
+  analysis.set_step_observer([&](const FormingResult& so_far) {
+    ++observed;
+    CHECK_FALSE(so_far.steps.back().completed);  // told of the stopped step too
+  });
+  const FormingResult r = analysis.run();
+  CHECK(observed == 1);
   CHECK_FALSE(r.completed);
   REQUIRE(r.steps.size() == 1);
   const FormingStepResult& s = r.steps[0];
