@@ -66,38 +66,66 @@ def limit_wall_angle(hm: HeightMap, max_wall_angle_deg: float = MAX_WALL_ANGLE_D
     The guarantee is stated in the measure the rest of the package uses:
     the central-difference wall angle (`HeightMap.wall_angle`) of the result
     is at most `max_wall_angle_deg`. A surface of facets can show a
-    central-difference slope a few per cent above the cone slope s, so s
-    starts at tan(limit) and is reduced by the measured excess, for up to
-    `max_rounds` rounds. Metadata records the nodes raised, the largest raise
-    [m] and the cone slope used.
+    central-difference slope above the cone slope s: the cone bounds each of
+    |z_x| and |z_y| by s, so their combination by at most sqrt(2) s. The
+    cone slope therefore starts at tan(limit); if the result exceeds the
+    limit, s is reduced once by the measured excess and then bisected, for
+    up to `max_rounds` rounds, between the largest failing slope and
+    tan(limit) / sqrt(2), which always satisfies it. (Reducing by the excess
+    alone stalled where the steepest central difference combines an x and a
+    y difference the cone does not bind yet: the measure did not move while
+    s shrank by 0.07 % per round.) Metadata records the nodes raised, the
+    largest raise [m] and the cone slope used.
     """
     if not 0 < max_wall_angle_deg < 90:
         raise ValueError("max_wall_angle_deg must lie in (0, 90)")
     limit = math.tan(math.radians(max_wall_angle_deg))
     r = int(radius_cells)
+    if r < 2:
+        raise ValueError("radius_cells must be >= 2 (the central differences span two cells)")
     k = np.arange(-r, r + 1)
     DX, DY = np.meshgrid(k, k, indexing="xy")
     footprint = np.hypot(DX, DY) <= r + 1e-9
     dist = np.hypot(DX, DY) * hm.grid.h
-    slope = limit
-    z = hm.z.copy()
-    for _ in range(max_rounds):
-        structure = np.where(footprint, -slope * dist, 0.0)
-        z = hm.z.copy()
+
+    def dilate(s: float) -> Tuple[np.ndarray, float]:
+        structure = np.where(footprint, -s * dist, 0.0)
+        zz = hm.z.copy()
         while True:
-            znew = ndimage.grey_dilation(z, footprint=footprint, structure=structure,
+            znew = ndimage.grey_dilation(zz, footprint=footprint, structure=structure,
                                          mode="nearest")
-            if np.array_equal(znew, z):
+            if np.array_equal(znew, zz):
                 break
-            z = znew
-        gy, gx = np.gradient(z, hm.grid.h)
-        measured = float(np.hypot(gx, gy).max())
-        if measured <= limit * (1.0 + 1e-12):
-            break
-        slope *= limit / measured * (1.0 - 1e-6)
-    else:
-        raise PrecompError(f"limit_wall_angle: the central-difference slope still exceeds "
-                           f"{max_wall_angle_deg} deg after {max_rounds} rounds")
+            zz = znew
+        gy, gx = np.gradient(zz, hm.grid.h)
+        return zz, float(np.hypot(gx, gy).max())
+
+    def ok(m: float) -> bool:
+        return m <= limit * (1.0 + 1e-12)
+
+    slope = limit
+    z, measured = dilate(slope)
+    if not ok(measured):
+        hi = slope
+        lo = limit / math.sqrt(2.0) * (1.0 - 1e-9)
+        z_lo, m_lo = dilate(lo)
+        if not ok(m_lo):
+            raise PrecompError(f"limit_wall_angle: the central-difference slope exceeds "
+                               f"{max_wall_angle_deg} deg even with the cone slope "
+                               f"tan(limit) / sqrt(2)")
+        trial = slope * limit / measured * (1.0 - 1e-6)
+        for _ in range(max_rounds):
+            if not lo < trial < hi:
+                trial = 0.5 * (lo + hi)
+            z_t, m_t = dilate(trial)
+            if ok(m_t):
+                lo, z_lo = trial, z_t
+            else:
+                hi = trial
+            if hi - lo <= 1e-3 * lo:
+                break
+            trial = 0.5 * (lo + hi)
+        slope, z = lo, z_lo
     raised = z - hm.z
     meta = dict(hm.metadata)
     meta["wall_angle_limit"] = {"max_wall_angle_deg": float(max_wall_angle_deg),

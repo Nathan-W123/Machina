@@ -1,5 +1,7 @@
 """Displacement adjustment on synthetic linear springback operators with known inverses."""
 
+import math
+
 import numpy as np
 import pytest
 
@@ -127,3 +129,29 @@ def test_surrogate_and_composite_predictors(target):
     assert np.allclose(comp(target).z, 0.9 * target.z)
     with pytest.raises(TypeError):
         SurrogatePredictor(object(), None)
+
+
+def test_limit_wall_angle_no_longer_stalls_on_combined_differences():
+    """The central-difference slope combines an x and a y difference the cone
+    need not bind; reducing the cone slope by the measured excess alone moved
+    it by 0.07 % per round on this perturbed pyramid (found by the data
+    generation) and gave up after 8 rounds. Bisection towards tan / sqrt(2)
+    settles it."""
+    from scipy import ndimage
+
+    t = Pyramid(0.054947587200440476, 0.06160189188085497, 62.49617939814925,
+                0.029419167179614306, 0.044168543145060545, 0.0033550517037510873,
+                0.004863982778042555).heightmap(Grid(-0.1005, -0.1005, 68, 68, 3e-3))
+    rng = np.random.default_rng(np.random.SeedSequence([0, 30, 1]))
+    amp, corr = rng.uniform(2e-4, 1e-3), rng.uniform(0.008, 0.025)
+    f = ndimage.gaussian_filter(rng.standard_normal(t.grid.shape), corr / 3e-3, mode="nearest")
+    part = part_mask(t)
+    w = np.clip(ndimage.distance_transform_edt(part) * 3e-3 / (2 * 0.007928765352815389), 0, 1)
+    f = f * w * w * (3 - 2 * w)
+    z = np.where(part, np.minimum(t.z + amp * f / np.sqrt(np.mean(f[part] ** 2)), 0.0), t.z)
+    assert np.degrees(t.with_z(z).wall_angle().max()) > 65.0
+    out = limit_wall_angle(t.with_z(z), 65.0)
+    assert np.degrees(out.wall_angle().max()) <= 65.0 + 1e-9 and np.all(out.z >= z)
+    info = out.metadata["wall_angle_limit"]
+    assert math.tan(math.radians(65)) / math.sqrt(2) < info["cone_slope"] < 2.14
+    assert 0 < info["nodes_raised"] < 10
