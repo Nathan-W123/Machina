@@ -366,6 +366,41 @@ std::vector<std::size_t> Configuration::buckling_load_cases() const {
   return out;
 }
 
+namespace {
+
+/// The indices of the load cases `names` lists (every case when empty),
+/// each checked to exist; `key` names the deck entry in errors.
+std::vector<std::size_t> select_load_cases(const std::vector<LoadCaseSpec>& cases,
+                                           const std::vector<std::string>& names,
+                                           const std::string& key) {
+  std::vector<std::size_t> out;
+  if (names.empty()) {
+    for (std::size_t l = 0; l < cases.size(); ++l) out.push_back(l);
+    return out;
+  }
+  for (const std::string& wanted : names) {
+    std::size_t l = 0;
+    while (l < cases.size() && cases[l].name != wanted) ++l;
+    if (l == cases.size()) {
+      throw ConfigError("'" + key + "' names '" + wanted + "', which is not a load case of the "
+                        "deck");
+    }
+    out.push_back(l);
+  }
+  return out;
+}
+
+}  // namespace
+
+std::vector<std::size_t> Configuration::transient_load_cases() const {
+  return select_load_cases(load_cases, transient.load_cases, "transient.load_cases");
+}
+
+std::vector<std::size_t> Configuration::frequency_response_load_cases() const {
+  return select_load_cases(load_cases, frequency_response.load_cases,
+                           "frequency_response.load_cases");
+}
+
 std::vector<std::size_t> Configuration::nonlinear_load_cases() const {
   std::vector<std::size_t> out;
   if (nonlinear.load_cases.empty()) {
@@ -944,6 +979,182 @@ Configuration parse_configuration(const json::Value& document, const std::string
                           "solid mesh; in plane stress use \"saint_venant_kirchhoff\"");
       }
       (void)config.nonlinear_load_cases();  // validates the names
+    }
+  }
+
+  // --- dynamics -----------------------------------------------------------
+  const auto parse_dynamic_monitors = [&](const ConfigNode& block,
+                                          std::vector<DynamicMonitor>& out) {
+    int index = 0;
+    for (const ConfigNode& m : block.array("monitors")) {
+      DynamicMonitor monitor;
+      monitor.name = m.string_or("name", "monitor" + std::to_string(index++));
+      monitor.region = parse_region(m.require("region"), monitor.name, dim);
+      monitor.component = parse_axis(m, "component");
+      if (monitor.component >= dim) {
+        throw ConfigError("'" + m.path() + ".component' names an axis the " +
+                          std::to_string(dim) + "-D model lacks");
+      }
+      monitor.quantity = parse_dynamic_quantity(m.string_or("quantity", "displacement"));
+      out.push_back(std::move(monitor));
+    }
+  };
+  {
+    const ConfigNode tr = root.child("transient");
+    TransientConfig& c = config.transient;
+    c.enabled = tr.boolean_or("enabled", false);
+    TransientOptions& o = c.options;
+    o.time_step = tr.number_or("time_step", 0.0);
+    o.end_time = tr.number_or("end_time", 0.0);
+    o.alpha = tr.number_or("alpha", 0.0);
+    o.mass_type = parse_mass_type(tr.string_or("mass", "consistent"));
+    const ConfigNode damping = tr.child("damping");
+    o.mass_damping = damping.number_or("mass", 0.0);
+    o.stiffness_damping = damping.number_or("stiffness", 0.0);
+    const ConfigNode amp = tr.child("amplitude");
+    if (amp.exists()) {
+      o.amplitude.kind = parse_amplitude_kind(amp.string_or("type", "step"));
+      o.amplitude.scale = amp.number_or("scale", 1.0);
+      if (o.amplitude.kind == Amplitude::Kind::Table) {
+        o.amplitude.times = amp.require("times").number_list();
+        o.amplitude.values = amp.require("values").number_list();
+      } else if (o.amplitude.kind == Amplitude::Kind::Harmonic) {
+        o.amplitude.frequency = amp.positive_number("frequency");
+        o.amplitude.phase = amp.number_or("phase", 0.0);
+      }
+    }
+    o.start = parse_transient_start(tr.string_or("start", "rest"));
+    o.snapshot_every = tr.integer_or("snapshot_every", 0);
+    parse_dynamic_monitors(tr, o.monitors);
+    o.linear = config.analysis.linear;
+    // The non-linear transient: the keys of the non-linear system.
+    o.nonlinear = tr.boolean_or("nonlinear", false);
+    NonlinearOptions& nl = o.nonlinear_options;
+    const std::vector<std::string> nonlinear_keys = {
+        "kinematics", "material_model", "mean_dilatation", "follower_pressure",
+        "residual_tolerance", "displacement_tolerance", "max_iterations", "max_cuts"};
+    for (const std::string& key : nonlinear_keys) {
+      if (tr.child(key).exists() && !o.nonlinear) {
+        throw ConfigError("'transient." + key + "' applies to a non-linear transient; set "
+                          "\"nonlinear\": true or remove it");
+      }
+    }
+    nl.law = parse_hyperelastic_model(tr.string_or("material_model", "saint_venant_kirchhoff"));
+    nl.kinematics = parse_kinematics(tr.string_or("kinematics", "finite"));
+    {
+      const ConfigNode md = tr.child("mean_dilatation");
+      if (md.exists()) {
+        nl.mean_dilatation = md.raw()->is_bool()
+                                 ? (md.boolean() ? MeanDilatation::All : MeanDilatation::None)
+                                 : parse_mean_dilatation(md.string());
+      }
+    }
+    nl.follower_pressure = tr.boolean_or("follower_pressure", nl.follower_pressure);
+    nl.residual_tolerance = tr.number_or("residual_tolerance", nl.residual_tolerance);
+    nl.displacement_tolerance = tr.number_or("displacement_tolerance", nl.displacement_tolerance);
+    nl.max_iterations = tr.integer_or("max_iterations", nl.max_iterations);
+    o.max_cuts = tr.integer_or("max_cuts", o.max_cuts);
+    c.load_cases = string_list(tr, "load_cases");
+    if (c.enabled) {
+      if (!(o.time_step > 0.0) || !(o.end_time > 0.0)) {
+        throw ConfigError("'transient' needs a positive time_step and end_time [s]");
+      }
+      const Scalar ratio = o.end_time / o.time_step;
+      if (std::abs(ratio - std::round(ratio)) > 1.0e-9 * std::max(1.0, ratio)) {
+        throw ConfigError("'transient.end_time' must be a whole number of time steps (" +
+                          std::to_string(ratio) + " given)");
+      }
+      (void)HhtParameters::from_alpha(o.alpha);  // validates the range
+      if (o.mass_damping < 0.0 || o.stiffness_damping < 0.0) {
+        throw ConfigError("'transient.damping' coefficients must be non-negative");
+      }
+      if (o.snapshot_every < 0) throw ConfigError("'transient.snapshot_every' must be >= 0");
+      o.amplitude.validate();
+      if (o.nonlinear) {
+        if (o.start != TransientOptions::Start::Rest) {
+          throw ConfigError("'transient.start' \"static\" is for the linear transient; the "
+                            "non-linear one starts at rest (ramp the load with a table "
+                            "amplitude instead)");
+        }
+        if (nl.max_iterations < 1 || o.max_cuts < 0 || !(nl.residual_tolerance > 0.0) ||
+            !(nl.displacement_tolerance > 0.0)) {
+          throw ConfigError("'transient' needs positive tolerances, max_iterations >= 1 and "
+                            "max_cuts >= 0");
+        }
+        if (nl.kinematics == Kinematics::SmallStrain &&
+            nl.law == HyperelasticModel::NeoHookean) {
+          throw ConfigError("'transient.kinematics' \"small_strain\" is linear elasticity; "
+                            "the \"neo_hookean\" material_model needs \"finite\" kinematics");
+        }
+        if (nl.law == HyperelasticModel::NeoHookean &&
+            config.stress_state == StressState::PlaneStress) {
+          throw ConfigError("'transient.material_model' \"neo_hookean\" needs plane strain "
+                            "or a solid mesh");
+        }
+      }
+      (void)config.transient_load_cases();  // validates the names
+    }
+  }
+  {
+    const ConfigNode fr = root.child("frequency_response");
+    FrequencyResponseConfig& c = config.frequency_response;
+    c.enabled = fr.boolean_or("enabled", false);
+    FrequencyResponseOptions& o = c.options;
+    const ConfigNode freq = fr.child("frequencies");
+    if (freq.exists()) {
+      if (freq.raw()->is_array()) {
+        o.frequencies = freq.number_list();
+      } else {
+        // {"start": f0, "end": f1, "count": n, "spacing": "linear" | "log"}
+        const Scalar start = freq.require("start").number();
+        const Scalar end = freq.require("end").number();
+        const int count = freq.require("count").integer();
+        const std::string spacing = freq.string_or("spacing", "linear");
+        if (count < 2 || !(end > start) || !(start >= 0.0)) {
+          throw ConfigError("'frequency_response.frequencies' needs 0 <= start < end and a "
+                            "count of at least 2");
+        }
+        if (spacing != "linear" && spacing != "log") {
+          throw ConfigError("'frequency_response.frequencies.spacing' is \"linear\" or "
+                            "\"log\"");
+        }
+        if (spacing == "log" && !(start > 0.0)) {
+          throw ConfigError("'frequency_response.frequencies' with log spacing needs a "
+                            "positive start");
+        }
+        for (int i = 0; i < count; ++i) {
+          const Scalar s = static_cast<Scalar>(i) / static_cast<Scalar>(count - 1);
+          o.frequencies.push_back(spacing == "linear"
+                                      ? start + s * (end - start)
+                                      : start * std::pow(end / start, s));
+        }
+      }
+    }
+    o.mass_type = parse_mass_type(fr.string_or("mass", "consistent"));
+    const ConfigNode damping = fr.child("damping");
+    o.mass_damping = damping.number_or("mass", 0.0);
+    o.stiffness_damping = damping.number_or("stiffness", 0.0);
+    o.structural_damping = damping.number_or("structural", 0.0);
+    if (fr.child("snapshot_frequencies").exists()) {
+      o.snapshot_frequencies = fr.child("snapshot_frequencies").number_list();
+    }
+    parse_dynamic_monitors(fr, o.monitors);
+    c.load_cases = string_list(fr, "load_cases");
+    if (c.enabled) {
+      if (o.frequencies.empty()) {
+        throw ConfigError("'frequency_response' needs frequencies [Hz]: a list, or "
+                          "{\"start\", \"end\", \"count\", \"spacing\"}");
+      }
+      for (Scalar f : o.frequencies) {
+        if (!(f >= 0.0) || !std::isfinite(f)) {
+          throw ConfigError("'frequency_response.frequencies' must be finite and "
+                            "non-negative");
+        }
+      }
+      if (o.mass_damping < 0.0 || o.stiffness_damping < 0.0 || o.structural_damping < 0.0) {
+        throw ConfigError("'frequency_response.damping' coefficients must be non-negative");
+      }
+      (void)config.frequency_response_load_cases();  // validates the names
     }
   }
 

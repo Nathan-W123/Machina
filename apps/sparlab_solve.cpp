@@ -1,18 +1,20 @@
 /// \file sparlab_solve.cpp
-/// \brief Linear static (and optional modal, buckling and geometrically
-///        non-linear) analysis of one configuration.
+/// \brief Linear static (and optional modal, buckling, non-linear, transient
+///        and frequency-response) analysis of one configuration.
 ///
 /// Solves every load case of the deck, recovers stresses and reactions, checks
 /// global equilibrium, optionally runs a modal analysis, a linear buckling
-/// check of the load cases (reusing the static factorisation) and a
-/// large-deflection analysis of the selected load cases, and writes the full
-/// result set to the output directory.
+/// check of the load cases (reusing the static factorisation), a non-linear
+/// (large-deflection, elastoplastic) analysis, a transient integration and a
+/// harmonic response of the selected load cases, and writes the full result
+/// set to the output directory.
 
 #include "AppSupport.hpp"
 
 #include "sparlab/core/Timer.hpp"
 #include "sparlab/fem/Assembler.hpp"
 #include "sparlab/fem/Buckling.hpp"
+#include "sparlab/fem/Dynamics.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
 #include "sparlab/fem/ModelDiagnostics.hpp"
 #include "sparlab/fem/NonlinearStatic.hpp"
@@ -130,21 +132,42 @@ int main(int argc, char** argv) {
       }
     }
 
-    // Non-linear analysis of each selected load case. Only it models
-    // plasticity: say so when a plastic material meets only linear analyses.
+    // Non-linear analysis of each selected load case. Only it and the
+    // non-linear transient model plasticity: say so when a plastic material
+    // meets only linear analyses.
     std::vector<NonlinearResult> nonlinear;
-    if (!config.nonlinear.enabled) {
+    const bool nonlinear_transient =
+        config.transient.enabled && config.transient.options.nonlinear;
+    if (!config.nonlinear.enabled && !nonlinear_transient) {
       for (const IsotropicMaterial& m : model.materials()) {
         if (!m.plasticity().enabled()) continue;
         log::warn("material '", m.name(), "' has a yield stress, which only the non-linear "
-                  "analysis models ('nonlinear' block or --nonlinear); the linear static, "
-                  "modal and buckling analyses treat it as elastic");
+                  "analyses model (the 'nonlinear' block or --nonlinear, or a 'transient' "
+                  "with \"nonlinear\": true); the linear static, modal, buckling, transient "
+                  "and frequency-response analyses treat it as elastic");
       }
     }
     if (config.nonlinear.enabled) {
       ScopedTimer t(timings, "nonlinear_analysis");
       NonlinearStaticAnalysis nl(model, assembler, config.nonlinear.options);
       for (std::size_t l : config.nonlinear_load_cases()) nonlinear.push_back(nl.solve(l));
+    }
+
+    // Transient integration and harmonic response of the selected load cases.
+    std::vector<TransientResult> transient;
+    if (config.transient.enabled) {
+      ScopedTimer t(timings, "transient_analysis");
+      for (std::size_t l : config.transient_load_cases()) {
+        transient.push_back(solve_transient(model, assembler, l, config.transient.options));
+      }
+    }
+    std::vector<FrequencyResponseResult> harmonic;
+    if (config.frequency_response.enabled) {
+      ScopedTimer t(timings, "frequency_response");
+      for (std::size_t l : config.frequency_response_load_cases()) {
+        harmonic.push_back(
+            solve_frequency_response(model, assembler, l, config.frequency_response.options));
+      }
     }
 
     std::vector<StressField> stresses;
@@ -192,6 +215,8 @@ int main(int argc, char** argv) {
       if (modal) writer.write_modal(model.mesh(), *modal);
       if (!buckling.empty()) writer.write_buckling(model.mesh(), buckling);
       for (const NonlinearResult& r : nonlinear) writer.write_nonlinear(model, r);
+      for (const TransientResult& r : transient) writer.write_transient(model, r);
+      for (const FrequencyResponseResult& r : harmonic) writer.write_frequency_response(model, r);
       if (cli.has("export-calculix")) {
         // The non-linear cases go out as NLGEOM decks too, when CalculiX has
         // the same material law.
@@ -235,6 +260,13 @@ int main(int argc, char** argv) {
     if (!nonlinear.empty()) {
       summary.set("nonlinear",
                   nonlinear_json(nonlinear, config.nonlinear.options, model, solutions));
+    }
+    if (!transient.empty()) {
+      summary.set("transient", transient_json(transient, config.transient.options));
+    }
+    if (!harmonic.empty()) {
+      summary.set("frequency_response",
+                  frequency_response_json(harmonic, config.frequency_response.options));
     }
     writer.write_json("summary.json", summary);
 
@@ -309,6 +341,68 @@ int main(int argc, char** argv) {
                   << (r.mean_dilatation ? " (mean dilatation)" : "") << "\n";
       }
       if (!r.completed) std::cout << "      " << r.termination << "\n";
+      for (const std::string& w : r.warnings) std::cout << "      warning: " << w << "\n";
+    }
+    for (const TransientResult& r : transient) {
+      std::cout << "  transient '" << r.load_case_name << "' (HHT alpha = "
+                << app::format(r.parameters.alpha)
+                << (r.nonlinear ? ", non-linear" : "") << (r.plastic ? ", J2 plasticity" : "")
+                << "): " << (r.completed ? "completed" : "STOPPED") << " "
+                << r.steps.size() - 1 << " of " << r.num_steps << " step(s) of "
+                << app::format(r.time_step) << " s";
+      if (r.nonlinear) std::cout << ", " << r.total_iterations << " Newton iteration(s)";
+      std::cout << "\n";
+      std::size_t peak = 0;
+      for (std::size_t i = 1; i < r.steps.size(); ++i) {
+        if (r.steps[i].max_displacement > r.steps[peak].max_displacement) peak = i;
+      }
+      std::cout << "      max |u| " << app::format(r.steps[peak].max_displacement)
+                << " m at t = " << app::format(r.steps[peak].time)
+                << " s; energy balance " << app::format(r.energy_balance_error)
+                << " of the energies, final " << app::format(r.numerical_dissipation) << " J";
+      if (r.plastic) {
+        std::cout << "; largest plastic strain " << app::format(r.max_plastic_strain);
+      }
+      std::cout << "\n";
+      for (std::size_t i = 0; i < r.monitor_names.size(); ++i) {
+        std::size_t lo = 0;
+        std::size_t hi = 0;
+        for (std::size_t s = 1; s < r.steps.size(); ++s) {
+          if (r.steps[s].monitors[i] < r.steps[lo].monitors[i]) lo = s;
+          if (r.steps[s].monitors[i] > r.steps[hi].monitors[i]) hi = s;
+        }
+        std::cout << "      " << r.monitor_names[i] << ": max "
+                  << app::format(r.steps[hi].monitors[i]) << " " << r.monitor_units[i]
+                  << " at t = " << app::format(r.steps[hi].time) << " s, min "
+                  << app::format(r.steps[lo].monitors[i]) << " " << r.monitor_units[i]
+                  << " at t = " << app::format(r.steps[lo].time) << " s\n";
+      }
+      if (!r.completed) std::cout << "      " << r.termination << "\n";
+      for (const std::string& w : r.warnings) std::cout << "      warning: " << w << "\n";
+    }
+    for (const FrequencyResponseResult& r : harmonic) {
+      std::cout << "  frequency response '" << r.load_case_name << "': " << r.points.size()
+                << " frequenc" << (r.points.size() == 1 ? "y" : "ies");
+      if (!r.points.empty()) {
+        std::size_t peak = 0;
+        for (std::size_t j = 1; j < r.points.size(); ++j) {
+          if (r.points[j].max_displacement > r.points[peak].max_displacement) peak = j;
+        }
+        std::cout << ", max |u| " << app::format(r.points[peak].max_displacement) << " m at "
+                  << app::format(r.points[peak].frequency) << " Hz";
+      }
+      std::cout << "\n";
+      for (std::size_t i = 0; i < r.monitor_names.size() && !r.points.empty(); ++i) {
+        std::size_t top = 0;
+        for (std::size_t j = 1; j < r.points.size(); ++j) {
+          if (std::abs(r.points[j].monitors[i]) > std::abs(r.points[top].monitors[i])) top = j;
+        }
+        const ComplexScalar z = r.points[top].monitors[i];
+        std::cout << "      " << r.monitor_names[i] << ": peak " << app::format(std::abs(z))
+                  << " " << r.monitor_units[i] << " at " << app::format(r.points[top].frequency)
+                  << " Hz, phase " << app::format(std::arg(z) * 180.0 / 3.14159265358979323846)
+                  << " deg\n";
+      }
       for (const std::string& w : r.warnings) std::cout << "      warning: " << w << "\n";
     }
     std::cout << "  runtime:     " << app::format(timings.get("total")) << " s\n";

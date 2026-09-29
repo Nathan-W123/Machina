@@ -42,6 +42,7 @@
 
 #include "sparlab/core/Types.hpp"
 #include "sparlab/fem/Buckling.hpp"
+#include "sparlab/fem/Dynamics.hpp"
 #include "sparlab/fem/FemModel.hpp"
 #include "sparlab/fem/LinearSolver.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
@@ -110,6 +111,20 @@ struct BucklingConfig {
 struct NonlinearConfig {
   bool enabled = false;
   NonlinearOptions options;
+  /// Load cases to analyse, by name; empty analyses every case.
+  std::vector<std::string> load_cases;
+};
+
+struct TransientConfig {
+  bool enabled = false;
+  TransientOptions options;
+  /// Load cases to integrate, by name; empty integrates every case.
+  std::vector<std::string> load_cases;
+};
+
+struct FrequencyResponseConfig {
+  bool enabled = false;
+  FrequencyResponseOptions options;
   /// Load cases to analyse, by name; empty analyses every case.
   std::vector<std::string> load_cases;
 };
@@ -188,6 +203,8 @@ class Configuration {
   ModalConfig modal;
   BucklingConfig buckling;
   NonlinearConfig nonlinear;
+  TransientConfig transient;
+  FrequencyResponseConfig frequency_response;
   TopologyConfig topology;
   OutputConfig output;
 
@@ -213,6 +230,10 @@ class Configuration {
 
   /// Indices of the load cases the non-linear analysis covers.
   std::vector<std::size_t> nonlinear_load_cases() const;
+
+  /// Indices of the load cases the transient and the frequency response cover.
+  std::vector<std::size_t> transient_load_cases() const;
+  std::vector<std::size_t> frequency_response_load_cases() const;
 
  private:
   std::optional<IsotropicMaterial> material_;

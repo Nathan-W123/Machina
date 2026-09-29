@@ -375,6 +375,21 @@ std::vector<std::string> concat(std::vector<std::string> a,
   return a;
 }
 
+/// Digits of the file numbers of a series of `count` files (at least four).
+int series_width(std::size_t count) {
+  int width = 1;
+  for (std::size_t c = count > 0 ? count - 1 : 0; c >= 10; c /= 10) ++width;
+  return std::max(width, 4);
+}
+
+/// Largest nodal magnitude of every node of a vector of `dim` translations
+/// per node.
+Vector nodal_magnitudes(const Mesh& mesh, const Vector& translation) {
+  Vector out(mesh.num_nodes());
+  for (Index n = 0; n < mesh.num_nodes(); ++n) out(n) = magnitude(translation, n, mesh.dim());
+  return out;
+}
+
 }  // namespace
 
 ResultWriter::ResultWriter(std::string directory, const Configuration& config)
@@ -839,6 +854,184 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
       writer.add_cell_scalars("equivalent_plastic_strain", result.element_plastic_strain);
     }
     writer.write(file("nonlinear_" + lc + ".vtk"));
+  }
+}
+
+void ResultWriter::write_transient(const FemModel& model, const TransientResult& result) const {
+  const Mesh& mesh = model.mesh();
+  const int dim = mesh.dim();
+  const std::string lc = sanitise(result.load_case_name);
+  {
+    // The energy columns: kinetic T = v'Mv/2, the strain energy U (with
+    // plasticity the stored energy, elastic plus hardening), the damping
+    // dissipation D and the external work W since t = 0; the balance
+    // E_0 + W - T - U - D is the energy the step sequence lost: round-off
+    // for the trapezoidal rule on a linear model, the numerical dissipation
+    // for alpha < 0, and on top the plastic dissipation of a plastic model.
+    std::vector<std::string> header{"step",
+                                    "time[s]",
+                                    "max_displacement[m]",
+                                    "kinetic_energy[J]",
+                                    result.plastic ? "stored_energy[J]" : "strain_energy[J]",
+                                    "damping_energy[J]",
+                                    "external_work[J]",
+                                    "energy_balance[J]"};
+    if (result.nonlinear) {
+      header.push_back("iterations[-]");
+      header.push_back("cuts[-]");
+    }
+    if (result.plastic) {
+      header.push_back("yielding_points[-]");
+      header.push_back("max_plastic_strain[-]");
+    }
+    for (std::size_t i = 0; i < result.monitor_names.size(); ++i) {
+      header.push_back(result.monitor_names[i] + "[" + result.monitor_units[i] + "]");
+    }
+    CsvWriter csv(file("transient_" + lc + ".csv"), header);
+    const Scalar e0 = result.steps.empty()
+                          ? 0.0
+                          : result.steps.front().kinetic_energy + result.steps.front().strain_energy;
+    for (const TransientStep& s : result.steps) {
+      std::vector<Scalar> row{s.time,
+                              s.max_displacement,
+                              s.kinetic_energy,
+                              s.strain_energy,
+                              s.damping_energy,
+                              s.external_work,
+                              e0 + s.external_work - s.kinetic_energy - s.strain_energy -
+                                  s.damping_energy};
+      if (result.nonlinear) {
+        row.push_back(static_cast<Scalar>(s.iterations));
+        row.push_back(static_cast<Scalar>(s.cuts));
+      }
+      if (result.plastic) {
+        row.push_back(static_cast<Scalar>(s.yielding_points));
+        row.push_back(s.max_plastic_strain);
+      }
+      row.insert(row.end(), s.monitors.begin(), s.monitors.end());
+      csv.row(s.index, row);
+    }
+    csv.close();
+  }
+  if (config_.output.write_csv) {
+    // The final state: displacement, velocity and acceleration per node.
+    const Vector u = translations(mesh, result.displacement);
+    const Vector v = translations(mesh, result.velocity);
+    const Vector a = translations(mesh, result.acceleration);
+    std::vector<std::string> header{"node"};
+    header = concat(header, coordinate_headers(dim, ""));
+    header = concat(header, component_headers(dim, "u", "m"));
+    header = concat(header, component_headers(dim, "v", "m/s"));
+    header = concat(header, component_headers(dim, "a", "m/s^2"));
+    CsvWriter csv(file("transient_state_" + lc + ".csv"), header);
+    for (Index n = 0; n < mesh.num_nodes(); ++n) {
+      const Vector3 x = mesh.node(n);
+      std::vector<Scalar> row;
+      for (int k = 0; k < dim; ++k) row.push_back(x(k));
+      for (const Vector* field : {&u, &v, &a}) {
+        for (int k = 0; k < dim; ++k) row.push_back((*field)(n * dim + k));
+      }
+      csv.row(n, row);
+    }
+    csv.close();
+    write_reactions(mesh, model.dofs(), result.load_case_name, result.reactions,
+                    "transient_reactions");
+  }
+  if (config_.output.write_vtk && !result.snapshots.empty()) {
+    // A numbered series with ParaView's file-series index, which carries the
+    // time of every file.
+    const int width = series_width(result.snapshots.size());
+    json::Value files = json::Value::make_array();
+    for (std::size_t k = 0; k < result.snapshots.size(); ++k) {
+      const TransientSnapshot& snap = result.snapshots[k];
+      std::ostringstream title;
+      title << "SparLab transient: " << config_.name << " / " << result.load_case_name
+            << " at t = " << snap.time << " s";
+      VtkWriter writer(mesh, title.str());
+      const Vector u = translations(mesh, snap.displacement);
+      const Vector v = translations(mesh, snap.velocity);
+      writer.add_point_vectors("displacement", u);
+      writer.add_point_scalars("displacement_magnitude", nodal_magnitudes(mesh, u));
+      writer.add_point_vectors("velocity", v);
+      writer.add_point_scalars("velocity_magnitude", nodal_magnitudes(mesh, v));
+      std::ostringstream name;
+      name << "transient_" << lc << "_" << std::setw(width) << std::setfill('0') << k << ".vtk";
+      writer.write(file(name.str()));
+      json::Value entry = json::Value::make_object();
+      entry.set("name", json::Value::make_string(name.str()));
+      entry.set("time", json::Value::make_number(snap.time));
+      files.push_back(entry);
+    }
+    json::Value series = json::Value::make_object();
+    series.set("file-series-version", json::Value::make_string("1.0"));
+    series.set("files", files);
+    write_json("transient_" + lc + ".vtk.series", series);
+  }
+}
+
+void ResultWriter::write_frequency_response(const FemModel& model,
+                                            const FrequencyResponseResult& result) const {
+  constexpr Scalar kDegrees = 180.0 / 3.14159265358979323846;
+  const Mesh& mesh = model.mesh();
+  const std::string lc = sanitise(result.load_case_name);
+  {
+    // Every monitor as its complex amplitude Z (the response is
+    // Re(Z e^{i omega t}) under the load f cos(omega t)): real and imaginary
+    // parts, modulus and phase arg Z, the lag behind the load being -arg Z.
+    std::vector<std::string> header{"point", "frequency[Hz]", "max_displacement[m]"};
+    for (std::size_t i = 0; i < result.monitor_names.size(); ++i) {
+      const std::string& name = result.monitor_names[i];
+      const std::string& unit = result.monitor_units[i];
+      header.push_back(name + "_re[" + unit + "]");
+      header.push_back(name + "_im[" + unit + "]");
+      header.push_back(name + "_abs[" + unit + "]");
+      header.push_back(name + "_phase[deg]");
+    }
+    CsvWriter csv(file("frequency_response_" + lc + ".csv"), header);
+    for (std::size_t j = 0; j < result.points.size(); ++j) {
+      const FrequencyPoint& p = result.points[j];
+      std::vector<Scalar> row{p.frequency, p.max_displacement};
+      for (const ComplexScalar& z : p.monitors) {
+        row.push_back(z.real());
+        row.push_back(z.imag());
+        row.push_back(std::abs(z));
+        row.push_back(std::arg(z) * kDegrees);
+      }
+      csv.row(static_cast<Index>(j), row);
+    }
+    csv.close();
+  }
+  if (config_.output.write_vtk && !result.snapshots.empty()) {
+    // One file per snapshot frequency, with a file-series index whose "time"
+    // is the frequency in Hz (so ParaView steps through the frequencies).
+    const int width = series_width(result.snapshots.size());
+    json::Value files = json::Value::make_array();
+    for (std::size_t k = 0; k < result.snapshots.size(); ++k) {
+      const FrequencySnapshot& snap = result.snapshots[k];
+      std::ostringstream title;
+      title << "SparLab frequency response: " << config_.name << " / " << result.load_case_name
+            << " at " << snap.frequency << " Hz";
+      VtkWriter writer(mesh, title.str());
+      const Vector re = translations(mesh, Vector(snap.displacement.real()));
+      const Vector im = translations(mesh, Vector(snap.displacement.imag()));
+      writer.add_point_vectors("displacement_real", re);
+      writer.add_point_vectors("displacement_imag", im);
+      // The largest displacement of each node over a cycle.
+      writer.add_point_scalars("displacement_peak",
+                               harmonic_peak_displacements(model, snap.displacement));
+      std::ostringstream name;
+      name << "frequency_response_" << lc << "_" << std::setw(width) << std::setfill('0') << k
+           << ".vtk";
+      writer.write(file(name.str()));
+      json::Value entry = json::Value::make_object();
+      entry.set("name", json::Value::make_string(name.str()));
+      entry.set("time", json::Value::make_number(snap.frequency));
+      files.push_back(entry);
+    }
+    json::Value series = json::Value::make_object();
+    series.set("file-series-version", json::Value::make_string("1.0"));
+    series.set("files", files);
+    write_json("frequency_response_" + lc + ".vtk.series", series);
   }
 }
 
@@ -1439,6 +1632,236 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
       warnings.push_back(os.str());
     }
     c.set("warnings", json::array_of(warnings));
+    cases.push_back(c);
+  }
+  out.set("load_cases", cases);
+  return out;
+}
+
+namespace {
+
+json::Value amplitude_json(const Amplitude& a) {
+  json::Value out = json::Value::make_object();
+  out.set("type", json::Value::make_string(to_string(a.kind)));
+  out.set("scale", json::Value::make_number(a.scale));
+  if (a.kind == Amplitude::Kind::Table) {
+    out.set("times_s", json::array_of(a.times));
+    out.set("values", json::array_of(a.values));
+  } else if (a.kind == Amplitude::Kind::Harmonic) {
+    out.set("frequency_Hz", json::Value::make_number(a.frequency));
+    out.set("phase_rad", json::Value::make_number(a.phase));
+  }
+  return out;
+}
+
+}  // namespace
+
+json::Value transient_json(const std::vector<TransientResult>& results,
+                           const TransientOptions& options) {
+  const HhtParameters p = HhtParameters::from_alpha(options.alpha);
+  const NonlinearOptions& nl = options.nonlinear_options;
+  json::Value out = json::Value::make_object();
+  out.set("method",
+          json::Value::make_string(
+              "HHT-alpha (Hilber, Hughes and Taylor 1977) with a constant time step: Newmark "
+              "kinematics, equilibrium at the weighted point M a1 + (1 + alpha)(C v1 + K u1) - "
+              "alpha (C v0 + K u0) = (1 + alpha) f1 - alpha f0; alpha = 0 is the trapezoidal "
+              "rule (average acceleration), which conserves the energy of a linear undamped "
+              "model exactly"));
+  out.set("equations",
+          json::Value::make_string(
+              options.nonlinear
+                  ? "M a + C v + f_int(u) = f_ext(A(t)): the internal forces, loads and tangent "
+                    "of the load case's non-linear system, Newton's method at every step on the "
+                    "HHT-alpha residual with the tangent c0 M + (1 + alpha)(c3 C + K_T), the "
+                    "plastic history committed on convergence"
+                  : "M a + C v + K u = A(t) f, the prescribed displacements A(t) g; the "
+                    "effective stiffness c0 M + (1 + alpha)(c3 C + K) factorised once"));
+  out.set("alpha", json::Value::make_number(p.alpha));
+  out.set("beta", json::Value::make_number(p.beta));
+  out.set("gamma", json::Value::make_number(p.gamma));
+  out.set("time_step_s", json::Value::make_number(options.time_step));
+  out.set("end_time_s", json::Value::make_number(options.end_time));
+  out.set("mass", json::Value::make_string(to_string(options.mass_type)));
+  json::Value damping = json::Value::make_object();
+  damping.set("mass_1_per_s", json::Value::make_number(options.mass_damping));
+  damping.set("stiffness_s", json::Value::make_number(options.stiffness_damping));
+  damping.set("stiffness_matrix",
+              json::Value::make_string(options.nonlinear
+                                           ? "the linear elastic stiffness of the undeformed model"
+                                           : "the model's stiffness"));
+  out.set("rayleigh_damping", damping);
+  out.set("amplitude", amplitude_json(options.amplitude));
+  out.set("start", json::Value::make_string(to_string(options.start)));
+  out.set("snapshot_every", json::Value::make_number(options.snapshot_every));
+  out.set("linear_solver_settings", linear_solver_json(options.linear));
+  out.set("energy_balance",
+          json::Value::make_string(
+              "E_0 + W - T - U - D: the initial energy plus the trapezoidal work of the loads "
+              "and the reactions of the prescribed motion, less the kinetic, strain (stored) "
+              "and damping energies; zero to round-off for the trapezoidal rule on a linear "
+              "model, the numerical dissipation of alpha < 0, and it holds the plastic "
+              "dissipation of a plastic model"));
+  if (options.nonlinear) {
+    const bool small = nl.kinematics == Kinematics::SmallStrain;
+    json::Value n = json::Value::make_object();
+    n.set("kinematics", json::Value::make_string(to_string(nl.kinematics)));
+    n.set("material_model",
+          json::Value::make_string(small ? "linear_elastic" : to_string(nl.law)));
+    n.set("mean_dilatation", json::Value::make_string(to_string(nl.mean_dilatation)));
+    n.set("follower_pressure", json::Value::make_bool(!small && nl.follower_pressure));
+    n.set("residual_tolerance", json::Value::make_number(nl.residual_tolerance));
+    n.set("displacement_tolerance", json::Value::make_number(nl.displacement_tolerance));
+    n.set("max_iterations", json::Value::make_number(nl.max_iterations));
+    n.set("max_cuts", json::Value::make_number(options.max_cuts));
+    out.set("nonlinear", n);
+  }
+  json::Value cases = json::Value::make_array();
+  for (const TransientResult& r : results) {
+    json::Value c = json::Value::make_object();
+    c.set("load_case", json::Value::make_string(r.load_case_name));
+    c.set("completed", json::Value::make_bool(r.completed));
+    if (!r.completed) c.set("termination", json::Value::make_string(r.termination));
+    c.set("steps", json::Value::make_number(static_cast<Scalar>(r.steps.size()) - 1.0));
+    c.set("requested_steps", json::Value::make_number(r.num_steps));
+    c.set("total_mass_kg", json::Value::make_number(r.total_mass));
+    if (!r.steps.empty()) {
+      const TransientStep& first = r.steps.front();
+      const TransientStep& last = r.steps.back();
+      c.set("final_time_s", json::Value::make_number(last.time));
+      std::size_t peak = 0;
+      for (std::size_t i = 1; i < r.steps.size(); ++i) {
+        if (r.steps[i].max_displacement > r.steps[peak].max_displacement) peak = i;
+      }
+      c.set("max_displacement_m", json::Value::make_number(r.steps[peak].max_displacement));
+      c.set("max_displacement_time_s", json::Value::make_number(r.steps[peak].time));
+      c.set("final_max_displacement_m", json::Value::make_number(last.max_displacement));
+      json::Value energy = json::Value::make_object();
+      energy.set("initial_J", json::Value::make_number(first.kinetic_energy + first.strain_energy));
+      energy.set("final_kinetic_J", json::Value::make_number(last.kinetic_energy));
+      energy.set(r.plastic ? "final_stored_J" : "final_strain_J",
+                 json::Value::make_number(last.strain_energy));
+      energy.set("damping_dissipation_J", json::Value::make_number(last.damping_energy));
+      energy.set("external_work_J", json::Value::make_number(last.external_work));
+      energy.set("final_balance_J", json::Value::make_number(r.numerical_dissipation));
+      energy.set("largest_relative_balance", json::Value::make_number(r.energy_balance_error));
+      c.set("energy", energy);
+      json::Value monitors = json::Value::make_array();
+      for (std::size_t i = 0; i < r.monitor_names.size(); ++i) {
+        std::size_t lo = 0;
+        std::size_t hi = 0;
+        for (std::size_t s = 1; s < r.steps.size(); ++s) {
+          if (r.steps[s].monitors[i] < r.steps[lo].monitors[i]) lo = s;
+          if (r.steps[s].monitors[i] > r.steps[hi].monitors[i]) hi = s;
+        }
+        json::Value m = json::Value::make_object();
+        m.set("name", json::Value::make_string(r.monitor_names[i]));
+        m.set("unit", json::Value::make_string(r.monitor_units[i]));
+        m.set("max", json::Value::make_number(r.steps[hi].monitors[i]));
+        m.set("max_time_s", json::Value::make_number(r.steps[hi].time));
+        m.set("min", json::Value::make_number(r.steps[lo].monitors[i]));
+        m.set("min_time_s", json::Value::make_number(r.steps[lo].time));
+        m.set("final", json::Value::make_number(last.monitors[i]));
+        monitors.push_back(m);
+      }
+      c.set("monitors", monitors);
+    }
+    if (r.nonlinear) {
+      int most = 0;
+      int cuts = 0;
+      for (const TransientStep& s : r.steps) {
+        most = std::max(most, s.iterations);
+        cuts += s.cuts;
+      }
+      c.set("newton_iterations", json::Value::make_number(r.total_iterations));
+      c.set("max_iterations_in_a_step", json::Value::make_number(most));
+      c.set("step_halvings", json::Value::make_number(cuts));
+      if (r.plastic) {
+        json::Value pl = json::Value::make_object();
+        pl.set("max_equivalent_plastic_strain", json::Value::make_number(r.max_plastic_strain));
+        int first_yield_step = -1;
+        for (const TransientStep& s : r.steps) {
+          if (s.yielding_points > 0) {
+            first_yield_step = s.index;
+            break;
+          }
+        }
+        // The step in which a point first yielded, and the interval of time
+        // it spans (yield began within it).
+        pl.set("first_yielding_step", json::Value::make_number(first_yield_step));
+        if (first_yield_step > 0) {
+          const auto k = static_cast<std::size_t>(first_yield_step);
+          json::Value interval = json::Value::make_array();
+          interval.push_back(json::Value::make_number(r.steps[k - 1].time));
+          interval.push_back(json::Value::make_number(r.steps[k].time));
+          pl.set("first_yielding_interval_s", interval);
+        }
+        c.set("plasticity", pl);
+      }
+    }
+    c.set("linear_solver", json::Value::make_string(r.linear_solver));
+    c.set("warnings", json::array_of(r.warnings));
+    cases.push_back(c);
+  }
+  out.set("load_cases", cases);
+  return out;
+}
+
+json::Value frequency_response_json(const std::vector<FrequencyResponseResult>& results,
+                                    const FrequencyResponseOptions& options) {
+  constexpr Scalar kDegrees = 180.0 / 3.14159265358979323846;
+  json::Value out = json::Value::make_object();
+  out.set("method",
+          json::Value::make_string(
+              "steady-state harmonic response: [K (1 + i eta) - omega^2 M + i omega C] U = f on "
+              "the free DOFs, C = a M + b K, a complex sparse LU per frequency; the load case's "
+              "loads and prescribed displacements are the amplitudes of f cos(omega t) and "
+              "g cos(omega t), the response is Re(U e^{i omega t}) and a phase is arg U (the "
+              "lag behind the load is -arg U)"));
+  out.set("frequencies", json::Value::make_number(static_cast<Scalar>(options.frequencies.size())));
+  if (!options.frequencies.empty()) {
+    const auto range = std::minmax_element(options.frequencies.begin(), options.frequencies.end());
+    out.set("min_frequency_Hz", json::Value::make_number(*range.first));
+    out.set("max_frequency_Hz", json::Value::make_number(*range.second));
+  }
+  out.set("mass", json::Value::make_string(to_string(options.mass_type)));
+  json::Value damping = json::Value::make_object();
+  damping.set("mass_1_per_s", json::Value::make_number(options.mass_damping));
+  damping.set("stiffness_s", json::Value::make_number(options.stiffness_damping));
+  damping.set("structural_loss_factor", json::Value::make_number(options.structural_damping));
+  out.set("damping", damping);
+  json::Value cases = json::Value::make_array();
+  for (const FrequencyResponseResult& r : results) {
+    json::Value c = json::Value::make_object();
+    c.set("load_case", json::Value::make_string(r.load_case_name));
+    if (!r.points.empty()) {
+      std::size_t peak = 0;
+      for (std::size_t j = 1; j < r.points.size(); ++j) {
+        if (r.points[j].max_displacement > r.points[peak].max_displacement) peak = j;
+      }
+      c.set("max_displacement_m", json::Value::make_number(r.points[peak].max_displacement));
+      c.set("max_displacement_frequency_Hz", json::Value::make_number(r.points[peak].frequency));
+      json::Value monitors = json::Value::make_array();
+      for (std::size_t i = 0; i < r.monitor_names.size(); ++i) {
+        std::size_t top = 0;
+        for (std::size_t j = 1; j < r.points.size(); ++j) {
+          if (std::abs(r.points[j].monitors[i]) > std::abs(r.points[top].monitors[i])) top = j;
+        }
+        const ComplexScalar z = r.points[top].monitors[i];
+        json::Value m = json::Value::make_object();
+        m.set("name", json::Value::make_string(r.monitor_names[i]));
+        m.set("unit", json::Value::make_string(r.monitor_units[i]));
+        m.set("peak_amplitude", json::Value::make_number(std::abs(z)));
+        m.set("peak_frequency_Hz", json::Value::make_number(r.points[top].frequency));
+        m.set("phase_at_peak_deg", json::Value::make_number(std::arg(z) * kDegrees));
+        monitors.push_back(m);
+      }
+      c.set("monitors", monitors);
+    }
+    std::vector<Scalar> snapshots;
+    for (const FrequencySnapshot& s : r.snapshots) snapshots.push_back(s.frequency);
+    c.set("snapshot_frequencies_Hz", json::array_of(snapshots));
+    c.set("warnings", json::array_of(r.warnings));
     cases.push_back(c);
   }
   out.set("load_cases", cases);

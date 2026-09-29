@@ -757,6 +757,182 @@ TEST_CASE("CalculiX decks carry pressure, body, thermal and conduction loads nat
   for (const std::string& path : decks) std::remove(path.c_str());
 }
 
+namespace {
+
+/// The member `key` of a JSON object, which must exist.
+const json::Value& member(const json::Value& object, const std::string& key) {
+  const json::Value* found = object.find(key);
+  REQUIRE(found != nullptr);
+  return *found;
+}
+
+/// The minimal deck with dynamics blocks spliced in before its closing brace.
+std::string dynamic_deck(const std::string& blocks) {
+  std::string deck = minimal_deck();
+  const std::size_t end = deck.rfind('}');
+  return deck.substr(0, end) + ", " + blocks + "}";
+}
+
+}  // namespace
+
+TEST_CASE("the transient and frequency-response blocks parse and validate",
+          "[io][config][dynamics]") {
+  const Configuration config = parse_configuration(
+      json::parse(dynamic_deck(R"(
+        "transient": {
+          "enabled": true, "time_step": 1e-4, "end_time": 2e-3, "alpha": -0.05,
+          "mass": "lumped", "damping": { "mass": 2.0, "stiffness": 1e-5 },
+          "amplitude": { "type": "table", "times": [0, 1e-3], "values": [0, 1], "scale": 2 },
+          "snapshot_every": 5, "load_cases": ["tip"],
+          "monitors": [ { "name": "tip_vy", "component": "y", "quantity": "velocity",
+                          "region": { "box": { "xmin": 0.8 } } } ]
+        },
+        "frequency_response": {
+          "enabled": true,
+          "frequencies": { "start": 10, "end": 1000, "count": 3, "spacing": "log" },
+          "damping": { "structural": 0.02 }, "snapshot_frequencies": [100],
+          "monitors": [ { "name": "tip_uy", "component": "y",
+                          "region": { "box": { "xmin": 0.8 } } } ]
+        })"),
+                  "dynamic"),
+      "dynamic", /*strict=*/true);
+  const TransientOptions& t = config.transient.options;
+  REQUIRE(config.transient.enabled);
+  REQUIRE(t.time_step == 1e-4);
+  REQUIRE(t.alpha == -0.05);
+  REQUIRE(t.mass_type == MassType::Lumped);
+  REQUIRE(t.mass_damping == 2.0);
+  REQUIRE(t.stiffness_damping == 1e-5);
+  REQUIRE(t.amplitude.kind == Amplitude::Kind::Table);
+  REQUIRE(t.amplitude.value(0.5e-3) == Approx(1.0).epsilon(1e-15));
+  REQUIRE(t.snapshot_every == 5);
+  REQUIRE_FALSE(t.nonlinear);
+  REQUIRE(t.monitors.size() == 1);
+  REQUIRE(t.monitors[0].quantity == DynamicMonitor::Quantity::Velocity);
+  REQUIRE(config.transient_load_cases() == std::vector<std::size_t>{0});
+  const FrequencyResponseOptions& f = config.frequency_response.options;
+  REQUIRE(f.frequencies.size() == 3);
+  REQUIRE(f.frequencies[1] == Approx(100.0).epsilon(1e-14));
+  REQUIRE(f.structural_damping == 0.02);
+  REQUIRE(f.snapshot_frequencies == std::vector<Scalar>{100.0});
+
+  const auto rejects = [](const std::string& blocks) {
+    return parse_configuration(json::parse(dynamic_deck(blocks), "bad"), "bad", true);
+  };
+  // A duration that is not a whole number of steps.
+  REQUIRE_THROWS_AS(rejects(R"("transient": {"enabled": true, "time_step": 1e-4,
+                                             "end_time": 1.05e-4})"),
+                    ConfigError);
+  // HHT-alpha outside [-1/3, 0].
+  REQUIRE_THROWS_AS(rejects(R"("transient": {"enabled": true, "time_step": 1e-4,
+                                             "end_time": 1e-3, "alpha": 0.1})"),
+                    ConfigError);
+  // A non-linear key on a linear transient.
+  REQUIRE_THROWS_AS(rejects(R"("transient": {"enabled": true, "time_step": 1e-4,
+                                             "end_time": 1e-3, "kinematics": "finite"})"),
+                    ConfigError);
+  // A preloaded start of a non-linear transient.
+  REQUIRE_THROWS_AS(rejects(R"("transient": {"enabled": true, "time_step": 1e-4,
+                                             "end_time": 1e-3, "nonlinear": true,
+                                             "start": "static"})"),
+                    ConfigError);
+  // An unknown load case.
+  REQUIRE_THROWS_AS(rejects(R"("transient": {"enabled": true, "time_step": 1e-4,
+                                             "end_time": 1e-3, "load_cases": ["nope"]})"),
+                    ConfigError);
+  // A frequency response without frequencies, or with a log sweep from zero.
+  REQUIRE_THROWS_AS(rejects(R"("frequency_response": {"enabled": true})"), ConfigError);
+  REQUIRE_THROWS_AS(rejects(R"("frequency_response": {"enabled": true, "frequencies":
+                                  {"start": 0, "end": 10, "count": 4, "spacing": "log"}})"),
+                    ConfigError);
+  REQUIRE_THROWS_AS(rejects(R"("frequency_response": {"enabled": true, "frequencies": [5],
+                                  "damping": {"structural": -0.1}})"),
+                    ConfigError);
+}
+
+TEST_CASE("transient and frequency-response results are written as CSV, VTK and JSON",
+          "[io][writers][dynamics]") {
+  const std::string dir = "results/_test_tmp/dynamics";
+  const Configuration config = parse_configuration(
+      json::parse(dynamic_deck(R"("output": {"csv": true, "vtk": true})"), "writers"),
+      "writers", true);
+  const FemModel model = build_model(config);
+  const Assembler assembler(model);
+  DynamicMonitor tip;
+  tip.name = "tip_uy";
+  Selector right;
+  right.kind = SelectorKind::Box;
+  right.xmin = 0.8;
+  tip.region.members.push_back(right);
+  tip.component = 1;
+
+  TransientOptions transient;
+  transient.time_step = 1.0e-4;
+  transient.end_time = 1.0e-3;
+  transient.snapshot_every = 4;  // steps 0, 4, 8 and the last, 10
+  transient.monitors.push_back(tip);
+  const TransientResult t = solve_transient(model, assembler, 0, transient);
+  REQUIRE(t.snapshots.size() == 4);
+
+  FrequencyResponseOptions harmonic;
+  harmonic.frequencies = {10.0, 20.0, 30.0};
+  harmonic.structural_damping = 0.02;
+  harmonic.snapshot_frequencies = {21.0};
+  harmonic.monitors.push_back(tip);
+  const FrequencyResponseResult h = solve_frequency_response(model, assembler, 0, harmonic);
+
+  const ResultWriter writer(dir, config);
+  writer.write_transient(model, t);
+  writer.write_frequency_response(model, h);
+
+  // The history: a header with the energies and the monitor, one row per step.
+  std::ifstream history(dir + "/transient_tip.csv");
+  std::string line;
+  std::getline(history, line);
+  REQUIRE(line ==
+          "step,time[s],max_displacement[m],kinetic_energy[J],strain_energy[J],"
+          "damping_energy[J],external_work[J],energy_balance[J],tip_uy[m]");
+  int rows = 0;
+  while (std::getline(history, line)) ++rows;
+  REQUIRE(rows == 11);
+  REQUIRE(read_text(dir + "/transient_state_tip.csv").find("vx[m/s],vy[m/s],ax[m/s^2]") !=
+          std::string::npos);
+  REQUIRE(read_text(dir + "/transient_reactions_tip.csv").find("ry[N]") != std::string::npos);
+  // The snapshot series and its index of times.
+  const json::Value series = json::parse(read_text(dir + "/transient_tip.vtk.series"), "series");
+  const std::vector<json::Value> files = member(series, "files").array_items();
+  REQUIRE(files.size() == 4);
+  REQUIRE(member(files[3], "name").string_value() == "transient_tip_0003.vtk");
+  REQUIRE(member(files[3], "time").number_value() == Approx(1.0e-3).epsilon(1e-12));
+  const std::string snapshot = read_text(dir + "/transient_tip_0002.vtk");
+  REQUIRE(snapshot.find("VECTORS velocity double") != std::string::npos);
+
+  // The harmonic response: re, im, modulus and phase of each monitor.
+  std::ifstream frf(dir + "/frequency_response_tip.csv");
+  std::getline(frf, line);
+  REQUIRE(line == "point,frequency[Hz],max_displacement[m],tip_uy_re[m],tip_uy_im[m],"
+                  "tip_uy_abs[m],tip_uy_phase[deg]");
+  const json::Value fseries =
+      json::parse(read_text(dir + "/frequency_response_tip.vtk.series"), "series");
+  const std::vector<json::Value> ffiles = member(fseries, "files").array_items();
+  REQUIRE(ffiles.size() == 1);
+  REQUIRE(member(ffiles[0], "time").number_value() == 20.0);  // the nearest solved
+  const std::string field = read_text(dir + "/frequency_response_tip_0000.vtk");
+  REQUIRE(field.find("VECTORS displacement_imag double") != std::string::npos);
+  REQUIRE(field.find("SCALARS displacement_peak double 1") != std::string::npos);
+
+  // The summary blocks.
+  const json::Value tj = transient_json({t}, transient);
+  REQUIRE(member(tj, "gamma").number_value() == 0.5);
+  const json::Value tcase = member(tj, "load_cases").array_items().at(0);
+  REQUIRE(member(tcase, "steps").number_value() == 10.0);
+  REQUIRE(member(member(tcase, "energy"), "largest_relative_balance").number_value() < 1.0e-10);
+  const json::Value fj = frequency_response_json({h}, harmonic);
+  const json::Value fcase = member(fj, "load_cases").array_items().at(0);
+  REQUIRE(member(member(fcase, "monitors").array_items().at(0), "name").string_value() ==
+          "tip_uy");
+}
+
 TEST_CASE("path_join handles separators", "[io]") {
   REQUIRE(path_join("a", "b") == "a/b");
   REQUIRE(path_join("a/", "b") == "a/b");

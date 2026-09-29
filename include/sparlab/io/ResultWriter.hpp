@@ -20,6 +20,14 @@
 ///   <out>/nonlinear_stress_<lc>.csv its final Cauchy and 2nd Piola-Kirchhoff stresses
 ///   <out>/nonlinear_reactions_<lc>.csv     its final support reactions
 ///   <out>/nonlinear_<lc>.vtk        its final fields
+///   <out>/transient_<lc>.csv        time history of a transient: energies, monitors
+///   <out>/transient_state_<lc>.csv  its final displacement, velocity, acceleration
+///   <out>/transient_reactions_<lc>.csv     its final support reactions
+///   <out>/transient_<lc>_<k>.vtk    its snapshots, indexed with their times by
+///                                   transient_<lc>.vtk.series (ParaView file series)
+///   <out>/frequency_response_<lc>.csv      complex monitor amplitudes per frequency
+///   <out>/frequency_response_<lc>_<k>.vtk  complex fields at the snapshot frequencies,
+///                                   indexed by frequency_response_<lc>.vtk.series
 ///   <out>/history.csv               optimisation iteration history
 ///   <out>/density_final.csv         final design and physical density
 ///   <out>/density_history.csv       density snapshots for the animation
@@ -33,6 +41,7 @@
 #include "sparlab/core/Timer.hpp"
 #include "sparlab/core/Types.hpp"
 #include "sparlab/fem/Buckling.hpp"
+#include "sparlab/fem/Dynamics.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
 #include "sparlab/fem/ModelDiagnostics.hpp"
 #include "sparlab/fem/NonlinearStatic.hpp"
@@ -105,6 +114,20 @@ class ResultWriter {
   /// fields as VTK.
   void write_nonlinear(const FemModel& model, const NonlinearResult& result) const;
 
+  /// A transient run: the history of monitors, energies and (non-linear)
+  /// iterations (`transient_<lc>.csv`, always written); as the output
+  /// settings ask, the final displacement, velocity and acceleration with
+  /// the reactions as CSV, and the snapshots as a numbered VTK series
+  /// (`transient_<lc>_0000.vtk`, ...) with its index of times.
+  void write_transient(const FemModel& model, const TransientResult& result) const;
+
+  /// A frequency response: the complex amplitudes of the monitors at every
+  /// frequency (`frequency_response_<lc>.csv`, always written) and, as the
+  /// output settings ask, the snapshot fields (real part, imaginary part and
+  /// amplitude of the displacement) as VTK.
+  void write_frequency_response(const FemModel& model,
+                                const FrequencyResponseResult& result) const;
+
   /// Optimisation iteration history.
   void write_history(const TopologyOptimizationResult& result) const;
 
@@ -172,6 +195,16 @@ json::Value buckling_json(const std::vector<BucklingResult>& results,
 json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
                            const NonlinearOptions& options, const FemModel& model,
                            const std::vector<StaticSolution>& linear);
+
+/// The `transient` block of summary.json: the method, its options and one
+/// entry per load case (energies, peaks of the monitors, the final state).
+json::Value transient_json(const std::vector<TransientResult>& results,
+                           const TransientOptions& options);
+
+/// The `frequency_response` block of summary.json: the options and one entry
+/// per load case (the peak of every monitor and where it lies).
+json::Value frequency_response_json(const std::vector<FrequencyResponseResult>& results,
+                                    const FrequencyResponseOptions& options);
 
 /// Summary block of the overhang check of the final design.
 json::Value overhang_json(const OverhangReport& report, bool filtered);
