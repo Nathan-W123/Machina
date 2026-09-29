@@ -1,0 +1,3 @@
+model,split,n_parts,n_samples,dz_rms_mean_mm,err_rms_mean_mm,err_rms_median_mm,err_max_abs_mean_mm,rel_rms_mean,coverage90,part_coverage90_min,expected_coverage90,expected_coverage90_sd,ood_flagged_share,train_parts,data_source
+GBMEnsemble,test,10,30,0.7347,0.05773,0.04012,0.18,0.07725,0.935,0.4526,0.8738,0.1023,0,30,proxy - not physics
+GBMEnsemble,held_out_family,8,24,0.9454,0.1202,0.09892,0.2882,0.1327,0.9933,0.9451,,,0.8333,30,proxy - not physics

@@ -1,0 +1,7 @@
+model,split,n_parts,n_samples,dz_rms_mean_mm,err_rms_mean_mm,err_rms_median_mm,err_max_abs_mean_mm,rel_rms_mean,coverage90,part_coverage90_min,expected_coverage90,expected_coverage90_sd,ood_flagged_share,train_parts,data_source
+GBMEnsemble,test,10,30,0.7904,0.07103,0.05565,0.215,0.08652,0.9321,0.03306,0.8945,0.06097,0,30,proxy - not physics
+GBMEnsemble,held_out_family,8,24,0.6478,0.04789,0.04917,0.1428,0.07444,0.965,0.8279,,,0,30,proxy - not physics
+MLPEnsemble,test,10,30,0.7904,0.02622,0.02512,0.1016,0.03358,0.9759,0.9224,0.8897,0.05611,0,30,proxy - not physics
+MLPEnsemble,held_out_family,8,24,0.6478,0.03708,0.02567,0.1199,0.06045,0.974,0.8553,,,0,30,proxy - not physics
+FieldUNet,test,10,30,0.7904,0.08584,0.09369,0.2731,0.1125,0.9747,0.8973,0.8839,0.0704,0,30,proxy - not physics
+FieldUNet,held_out_family,8,24,0.6478,0.081,0.07187,0.2271,0.1269,0.9759,0.8389,,,0,30,proxy - not physics

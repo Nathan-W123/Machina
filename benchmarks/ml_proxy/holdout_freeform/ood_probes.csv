@@ -1,0 +1,5 @@
+case,n_samples,flagged_share,part_score_median,fraction_points_out_median,top_reasons,model,data_source
+test parts (in distribution),30,0,0.7195,0,,GBMEnsemble,proxy - not physics
+held-out family freeform,24,0.8333,1.33,0.05,mean_wall_angle;max_depth;depth_gyration_minor,GBMEnsemble,proxy - not physics
+"test targets, material DC04 (not trained)",10,1,1.76e+06,1,youngs_modulus;r90;r0,GBMEnsemble,proxy - not physics
+"test targets, thickness 2.5 mm (trained 0.6-1.5 mm)",10,1,1.682,0.08433,thickness;elastic_curvature;max_wall_angle,GBMEnsemble,proxy - not physics

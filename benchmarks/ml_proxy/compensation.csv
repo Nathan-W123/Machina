@@ -1,0 +1,11 @@
+sample_id,family,iterations,stopped,predicted_rms_m,achieved_rms_m,uncompensated_rms_m,achieved_max_abs_m,uncompensated_max_abs_m,achieved_normal_rms_m,improvement_factor,in_envelope,model,verified_by,data_source
+dome-s2026-0003-unco,dome,7,stagnation,3.86012e-08,8.55122e-06,0.000348775,4.77667e-05,0.000680547,8.27025e-06,40.7866,True,GBMEnsemble,proxy - not physics,proxy - not physics
+dome-s2026-0006-unco,dome,6,stagnation,8.83543e-08,2.27652e-05,0.000934763,0.00018441,0.00136683,2.08166e-05,41.061,True,GBMEnsemble,proxy - not physics,proxy - not physics
+elliptic_cone-s2026-0001-unco,elliptic_cone,7,stagnation,7.17072e-08,3.72351e-05,0.000728529,0.000110709,0.00111973,3.66857e-05,19.5656,True,GBMEnsemble,proxy - not physics,proxy - not physics
+elliptic_cone-s2026-0004-unco,elliptic_cone,6,stagnation,7.15475e-08,4.00248e-05,0.000889034,0.000138507,0.001197,3.87526e-05,22.2121,True,GBMEnsemble,proxy - not physics,proxy - not physics
+freeform-s2026-0002-unco,freeform,8,stagnation,8.50991e-08,0.000185767,0.00098369,0.000231843,0.00106274,0.000177784,5.29528,True,GBMEnsemble,proxy - not physics,proxy - not physics
+pyramid-s2026-0005-unco,pyramid,8,stagnation,8.10544e-08,5.82285e-05,0.000723753,0.000204175,0.00130827,5.7398e-05,12.4295,True,GBMEnsemble,proxy - not physics,proxy - not physics
+truncated_cone-s2026-0003-unco,truncated_cone,8,iterations,1.04891e-07,0.000110516,0.00100446,0.000283734,0.00118448,7.79941e-05,9.08882,True,GBMEnsemble,proxy - not physics,proxy - not physics
+truncated_cone-s2026-0004-unco,truncated_cone,7,stagnation,5.07295e-08,0.000102441,0.000843289,0.000542,0.00158511,0.000101896,8.23191,True,GBMEnsemble,proxy - not physics,proxy - not physics
+two_level-s2026-0000-unco,two_level,7,stagnation,3.49043e-08,9.06573e-05,0.000701789,0.000142464,0.00106337,8.30651e-05,7.74112,True,GBMEnsemble,proxy - not physics,proxy - not physics
+two_level-s2026-0003-unco,two_level,7,stagnation,3.13034e-08,7.52161e-05,0.000587419,0.000258197,0.00109609,7.51292e-05,7.80975,True,GBMEnsemble,proxy - not physics,proxy - not physics

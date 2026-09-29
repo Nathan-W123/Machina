@@ -1,0 +1,23 @@
+{
+  "command": "ml_proxy_demo.py --out benchmarks/ml_proxy --work <scratch> --n-per-family 8",
+  "created_at": "2026-09-29T19:16:39Z",
+  "data_source": "proxy - not physics",
+  "generation_failures": [],
+  "holdout_family": "saddle",
+  "n_parts": 56,
+  "n_per_family": 8,
+  "n_samples": 168,
+  "seed": 2026,
+  "threads": 2,
+  "timings_s": {
+    "compensation_s": 59.46564414000022,
+    "evaluate_FieldUNet_s": 23.38158881399977,
+    "evaluate_GBMEnsemble_s": 92.42622553100045,
+    "evaluate_MLPEnsemble_s": 24.842311600001267,
+    "generate_s": 4.760914865999439,
+    "total_s": 557.1228039999987,
+    "train_FieldUNet_s": 88.23257790599928,
+    "train_GBMEnsemble_s": 134.18585553499906,
+    "train_MLPEnsemble_s": 77.23984217700126
+  }
+}
