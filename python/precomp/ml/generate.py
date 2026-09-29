@@ -1,12 +1,14 @@
 """Design of experiments, commanded-shape variants, simulators and data generation.
 
 Design. `design_points` draws, per part family, a scrambled Sobol sequence
-(`scipy.stats.qmc`, seeded) over the family's parameter bounds, the process
-parameters (tool radius, step-down, thickness, friction) and the material
-choice; a draw that the family refuses, or whose part does not fit the
-unclamped window with the tool, is skipped and the sequence continues, so the
-design is deterministic for a seed. (Freeform parts are drawn by
-`Freeform.sample` from a seed taken from the Sobol point.)
+(`scipy.stats.qmc`, seeded by the seed and the family's NAME, so a family's
+points do not depend on which other families are drawn) over the family's
+parameter bounds, the process parameters (tool radius, step-down, thickness,
+friction) and the material choice; a draw that the family refuses, or whose
+part does not fit the unclamped window with the tool, is skipped and the
+sequence continues, so the design is deterministic for a seed and the first
+n points of a family are the same for any `n_per_family` >= n. (Freeform
+parts are drawn by `Freeform.sample` from a seed taken from the Sobol point.)
 
 Variants. Every design point yields up to three commanded surfaces:
 
@@ -27,12 +29,15 @@ content-addressed run cache (so generation is resumable and never runs a deck
 twice) and records every failure with its reason. `ProxySimulator` is a fast
 analytic deviation generator - NOT physics-validated, labelled "proxy - not
 physics" wherever it appears - for unit tests, CI and smoke runs of the
-pipeline.
+pipeline. Like the deck builder, it builds the setup's tool path of every job
+and fails the job (recorded, with the reason) when there is none - e.g. a
+spiral on a commanded surface with several pockets on one level.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import math
 from dataclasses import dataclass, field
 from typing import (Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple,
@@ -42,7 +47,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.stats import qmc
 
-from .._util import PrecompError, to_jsonable
+from .._util import PrecompError, canonical_json, read_json, to_jsonable
 from ..compensation import displacement_adjustment, limit_wall_angle
 from ..fea.setup import FormingSetup
 from ..geometry.heightmap import Grid, HeightMap
@@ -159,14 +164,22 @@ class ProxySimulator:
     the commanded shape (so displacement adjustment on it is non-trivial) and
     on every process and material descriptor that matters to it. Every
     sample, metric and plot made from it is labelled "proxy - not physics".
+
+    `run` (the `Simulator` protocol) also builds the setup's tool path of
+    every job, as the deck builder does, and fails the job without one;
+    `check_toolpath=False` skips that (the deviation does not depend on it).
     """
 
     source = "proxy"
     label = PROXY_LABEL
+    #: as a model or prior (`precomp.api`, ResidualModel): what its numbers are
+    data_source = PROXY_LABEL
 
-    def __init__(self, params: Optional[ProxyParams] = None, **changes: Any):
+    def __init__(self, params: Optional[ProxyParams] = None, *, check_toolpath: bool = True,
+                 **changes: Any):
         p = params or ProxyParams()
         self.params = dataclasses.replace(p, **changes) if changes else p
+        self.check_toolpath = bool(check_toolpath)
 
     @property
     def fidelity(self) -> str:
@@ -175,17 +188,20 @@ class ProxySimulator:
     def shifted(self, **changes: Any) -> "ProxySimulator":
         """A proxy with some coefficients changed (e.g. a 'real' process that
         differs from the simulated one, for transfer-learning tests)."""
-        return ProxySimulator(dataclasses.replace(self.params, **changes))
+        return ProxySimulator(dataclasses.replace(self.params, **changes),
+                              check_toolpath=self.check_toolpath)
 
     def describe(self) -> Dict[str, Any]:
         return {"name": "ProxySimulator", "version": PROXY_VERSION, "label": PROXY_LABEL,
                 "params": dataclasses.asdict(self.params)}
 
     def __getstate__(self) -> Dict[str, Any]:
-        return {"params": dataclasses.asdict(self.params)}
+        return {"params": dataclasses.asdict(self.params),
+                "check_toolpath": self.check_toolpath}
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
         self.params = ProxyParams(**state["params"])
+        self.check_toolpath = bool(state.get("check_toolpath", True))
 
     def deviation(self, commanded: HeightMap, setup: Any) -> np.ndarray:
         """(ny, nx) dz [m] of forming `commanded` with `setup`."""
@@ -266,6 +282,13 @@ class ProxySimulator:
         out = []
         for setup, commanded in jobs:
             try:
+                if self.check_toolpath:          # a deck needs one; so does time_frac
+                    from ..fea.deck import make_toolpath
+                    try:
+                        make_toolpath(as_setup(setup), commanded)
+                    except (ValueError, PrecompError) as exc:
+                        raise PrecompError(f"no {as_setup(setup).toolpath_style} tool path: "
+                                           f"{exc}") from exc
                 out.append(SimOutcome(True, self.formed(commanded, setup), None,
                                       {"source": "proxy", "fidelity": self.fidelity,
                                        "simulator": self.describe()}))
@@ -410,6 +433,12 @@ class DesignPoint:
                 "u": list(self.u), "material": self.setup.material.name}
 
 
+def stable_hash(text: str) -> int:
+    """A 32-bit integer of `text` that is the same in every process and
+    version (unlike hash()): seeds that follow a name, not a list position."""
+    return int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:4], "little")
+
+
 def _sobol(d: int, seed_seq: np.random.SeedSequence) -> qmc.Sobol:
     gen = np.random.default_rng(seed_seq)
     try:
@@ -429,21 +458,22 @@ def design_points(space: DesignSpace, n_per_family: int, seed: int, *,
     base.setdefault("material", get_material(space.materials[0]))
     proc_keys = sorted(space.process)
     out: List[DesignPoint] = []
-    for fi, fam in enumerate(space.families):
+    for fam in space.families:
         cls = families()[fam]
         pbounds = space.bounds_of(fam)
         pkeys = [] if cls is Freeform else sorted(pbounds)
         d = len(pkeys) + len(proc_keys) + 1 + (1 if cls is Freeform else 0)
-        sampler = _sobol(d, np.random.SeedSequence([int(seed), fi]))
+        sampler = _sobol(d, np.random.SeedSequence([int(seed), stable_hash(fam)]))
         found: List[DesignPoint] = []
         draws = 0
         rejects: Dict[str, int] = {}
         while len(found) < n_per_family:
             if draws >= max_draws:
+                top = dict(sorted(rejects.items(), key=lambda kv: -kv[1])[:5])
                 raise ValueError(
                     f"{fam}: only {len(found)} of {n_per_family} valid design points in "
-                    f"{max_draws} draws; rejections: {rejects}. Adjust part_bounds, the "
-                    "process ranges or the blank size")
+                    f"{max_draws} draws; most frequent rejections: {top}. Adjust "
+                    "part_bounds, the process ranges or the blank size")
             batch = sampler.random(1 << max(4, int(math.ceil(math.log2(n_per_family * 2)))))
             for u in batch:
                 idx = draws
@@ -571,14 +601,18 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
     """Simulate the requested variants of every design point into `dataset`.
 
     Resumable: samples already in the data set are skipped (and a SparLab run
-    is fetched from its cache). Every failure is recorded in the data set's
-    failures.jsonl with its reason and returned in the report - never
-    dropped; a compensated variant whose uncompensated run failed is recorded
-    as a failure of its own ("dependency failed").
+    is fetched from its cache) - after checking that the stored sample is
+    the same design point: the same part, setup (physics) and grid. A sample
+    id that holds another part (a design drawn from another space under the
+    same seed, say) raises PrecompError before anything runs: a data set
+    never mixes two designs under one id. Every failure is recorded in the
+    data set's failures.jsonl with its reason and returned in the report -
+    never dropped; a compensated variant whose uncompensated run failed is
+    recorded as a failure of its own ("dependency failed").
 
-    seed : seeds the perturbations; the perturbation of `points[i]` is drawn
-        from SeedSequence([seed, i, 1]), so resume with the same list of
-        points (and seed) to get the same variants.
+    seed : seeds the perturbations; that of a design point is drawn from
+        SeedSequence([seed, hash of its point id, 1]), whatever the list it
+        comes in.
     compensator : ``(target, setup) -> commanded`` for the "compensated"
         variant (e.g. surrogate DA with an earlier model); default: one DA
         step from the simulated uncompensated part.
@@ -617,9 +651,16 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
         dataset.record_failure(rec)
         report.failed.append(rec)
 
+    # samples already present must be the same design point
+    index = {r["sample_id"]: r for r in dataset.index().to_dict("records")}
+    for point in points:
+        for kind in kinds:
+            sid = sample_id(point, kind)
+            if sid in index:
+                _check_resumed(dataset, index[sid], point)
     # phase 1: variants that need no simulation result
     jobs: List[Tuple[DesignPoint, str, HeightMap, Dict[str, Any]]] = []
-    for i, point in enumerate(points):
+    for point in points:
         target = point.target()
         for kind in ("uncompensated", "perturbed"):
             if kind not in kinds:
@@ -632,7 +673,8 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
             if kind == "uncompensated":
                 cmd, info = target.copy(), {"kind": kind}
             else:
-                rng = np.random.default_rng(np.random.SeedSequence([int(seed), i, 1]))
+                rng = np.random.default_rng(np.random.SeedSequence(
+                    [int(seed), stable_hash(point.point_id), 1]))
                 try:
                     cmd, pinfo = perturbed_commanded(target, point.setup, rng, perturbation)
                 except (PrecompError, ValueError) as exc:
@@ -698,6 +740,32 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                 fail(point, kind, oc.error or "unknown failure",
                      {k: oc.provenance.get(k) for k in ("deck_hash", "runtime_s")})
     return report
+
+
+def _check_resumed(dataset: Dataset, row: Mapping[str, Any], point: DesignPoint) -> None:
+    """PrecompError unless the stored sample `row` was made from `point`
+    (same part, setup physics and grid)."""
+    from ..fea.setup import EXECUTION_FIELDS
+
+    sid = row["sample_id"]
+    doc = read_json(dataset.root / "samples" / f"{sid}.json")
+    phys = lambda d: {k: v for k, v in dict(d).items() if k not in EXECUTION_FIELDS}  # noqa
+    diffs = []
+    if canonical_json(doc.get("part")) != canonical_json(point.part.to_dict()):
+        diffs.append("part")
+    if canonical_json(phys(doc.get("setup") or {})) != canonical_json(
+            phys(point.setup.to_dict())):
+        diffs.append("setup")
+    g = point.grid
+    if (int(row["nx"]), int(row["ny"])) != (g.nx, g.ny) or not math.isclose(
+            float(row["h"]), g.h, rel_tol=1e-9):
+        diffs.append("grid")
+    if diffs:
+        raise PrecompError(
+            f"{dataset.root}: sample {sid} exists but was made from another design point "
+            f"(its {', '.join(diffs)} differ{'s' if len(diffs) == 1 else ''}); resuming "
+            "would mix two designs under one id. Generate into a new data set, or use "
+            "another seed")
 
 
 def simulate_samples(points: Sequence[DesignPoint], simulator: Simulator, *, created_at: str,

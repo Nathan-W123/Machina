@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from conftest import ML_CREATED_AT, run_count
+from precomp._util import PrecompError
 from precomp.fea import FormingSetup
 from precomp.geometry import Grid, Pyramid, TruncatedCone
 from precomp.materials import get_material
@@ -79,7 +80,7 @@ class _Flaky:
     fidelity = "flaky"
 
     def __init__(self, max_depth):
-        self.proxy = ProxySimulator()
+        self.proxy = ProxySimulator(check_toolpath=False)
         self.max_depth = max_depth
         self.jobs = 0
 
@@ -155,3 +156,49 @@ def test_generation_through_sparlab_form_records_the_run(tmp_path, fake_solver, 
     np.testing.assert_allclose(comp.commanded.z[sel], 1.1 * t.z[sel], atol=1e-9)
     generate(ds, points, sim, created_at=ML_CREATED_AT, kinds=("uncompensated", "compensated"))
     assert run_count(counter) == 4                              # resumed, nothing re-run
+
+
+def test_a_design_point_id_names_one_part_whatever_else_is_drawn(tmp_path):
+    """Families are seeded by name and perturbations by point id: a point is
+    the same with other families beside it and with more points per family,
+    and a resumed run that would put another part under an id is refused."""
+    kw = dict(grid_spacing=4e-3, materials=("AA5754-O",), process={})
+    both = {p.point_id: p for p in design_points(
+        DesignSpace(families=("truncated_cone", "dome"), **kw), 2, seed=1)}
+    alone = {p.point_id: p for p in design_points(DesignSpace(families=("dome",), **kw), 3,
+                                                  seed=1)}
+    shared = sorted(set(both) & set(alone))
+    assert shared == ["dome-s1-0000", "dome-s1-0001"]
+    assert all(both[i].describe() == alone[i].describe() for i in shared)
+    sim = ProxySimulator(check_toolpath=False)
+    a = Dataset.create(tmp_path / "a", created_at=ML_CREATED_AT)
+    b = Dataset.create(tmp_path / "b", created_at=ML_CREATED_AT)
+    generate(a, list(both.values()), sim, created_at=ML_CREATED_AT, kinds=("perturbed",),
+             seed=1)
+    generate(b, [alone["dome-s1-0001"]], sim, created_at=ML_CREATED_AT, kinds=("perturbed",),
+             seed=1)
+    assert np.array_equal(a.load("dome-s1-0001-pert").commanded.z,
+                          b.load("dome-s1-0001-pert").commanded.z)
+    # the same ids from another design (another thickness): refused, nothing run
+    other = design_points(DesignSpace(families=("dome",), base_setup={"thickness": 1.2e-3},
+                                      **kw), 2, seed=1)
+    n = len(a)
+    with pytest.raises(PrecompError, match="another design point .*setup"):
+        generate(a, other, sim, created_at=ML_CREATED_AT, kinds=("perturbed",), seed=1)
+    assert len(a) == n
+
+
+def test_the_proxy_fails_a_job_without_a_tool_path_as_the_deck_would(tmp_path):
+    kw = dict(families=("pyramid",), grid_spacing=4e-3, materials=("AA5754-O",), process={})
+    points = design_points(DesignSpace(**kw), 1, seed=1)
+    ds = Dataset.create(tmp_path / "d", created_at=ML_CREATED_AT)
+    rep = generate(ds, points, ProxySimulator(), created_at=ML_CREATED_AT,
+                   kinds=("uncompensated", "perturbed"), seed=1)
+    assert rep.created == ["pyramid-s1-0000-unco"]
+    assert rep.failed[0]["sample_id"] == "pyramid-s1-0000-pert"
+    assert "no spiral tool path" in rep.failed[0]["reason"]
+    contour = design_points(DesignSpace(base_setup={"toolpath_style": "contour"}, **kw), 1,
+                            seed=1)
+    rep = generate(Dataset.create(tmp_path / "e", created_at=ML_CREATED_AT), contour,
+                   ProxySimulator(), created_at=ML_CREATED_AT, kinds=("perturbed",), seed=1)
+    assert not rep.failed

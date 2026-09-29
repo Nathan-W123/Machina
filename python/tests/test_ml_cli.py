@@ -15,10 +15,12 @@ from precomp.materials import get_material
 
 def test_the_ml_commands_end_to_end(tmp_path, capsys, ml_threads, fake_solver, counter):
     d = tmp_path
+    (d / "base.json").write_text(json.dumps({"toolpath_style": "contour"}))
     assert main(["dataset", "generate", "--out", str(d / "data"), "--simulator", "proxy",
                  "--families", "truncated_cone", "dome", "pyramid", "--n-per-family", "3",
                  "--materials", "AA5754-O", "--process", "--grid-spacing", "4e-3",
-                 "--seed", "2", "--created-at", ML_CREATED_AT]) == 0
+                 "--setup", str(d / "base.json"), "--seed", "2",
+                 "--created-at", ML_CREATED_AT]) == 0
     out = capsys.readouterr()
     assert json.loads(out.out)["created"] == 27 and "NOT physics" in out.err
     assert main(["dataset", "info", "--data", str(d / "data")]) == 0

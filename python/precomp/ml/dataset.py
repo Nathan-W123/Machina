@@ -337,7 +337,10 @@ def sample_table(sample: Sample, config: FeatureConfig = DEFAULT_CONFIG, *,
     if target != "dz":
         raise ValueError(f"target must be 'dz' (the vertical deviation), got {target!r}")
     rng = np.random.default_rng(0) if rng is None else rng
-    fm = feature_maps(sample.commanded, sample.setup, sample.toolpath, config)
+    try:
+        fm = feature_maps(sample.commanded, sample.setup, sample.toolpath, config)
+    except (ValueError, PrecompError) as exc:
+        raise PrecompError(f"sample {sample.sample_id}: {exc}") from exc
     cand = _mask_of(sample, fm.part, mask)
     if not cand.any():
         raise PrecompError(f"sample {sample.sample_id}: no valid node in mask {mask!r}")

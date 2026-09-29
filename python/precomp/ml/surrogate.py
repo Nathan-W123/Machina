@@ -249,8 +249,11 @@ def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
     mus, sds, ys, gs, rs = [], [], [], [], []
     rng = np.random.default_rng(seed)
     for s in samples:
-        mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
-        fm = surrogate.feature_maps(s.commanded, s.setup)
+        try:
+            mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
+            fm = surrogate.feature_maps(s.commanded, s.setup)
+        except (ValueError, PrecompError) as exc:
+            raise PrecompError(f"sample {s.sample_id}: {exc}") from exc
         sel = np.flatnonzero((fm.part & s.valid).ravel())
         if points_per_sample is not None and sel.size > points_per_sample:
             sel = np.sort(rng.choice(sel, size=points_per_sample, replace=False))

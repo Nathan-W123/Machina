@@ -116,8 +116,11 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
     has_cal = surrogate.calibrator is not None and surrogate.calibrator.fitted
     rows, pooled = [], []
     for s in samples:
-        mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
-        fm = surrogate.feature_maps(s.commanded, s.setup)
+        try:
+            mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
+            fm = surrogate.feature_maps(s.commanded, s.setup)
+        except (ValueError, PrecompError) as exc:
+            raise PrecompError(f"sample {s.sample_id}: {exc}") from exc
         sel = fm.part & s.valid
         if not sel.any():
             raise PrecompError(f"sample {s.sample_id} has no valid part node")

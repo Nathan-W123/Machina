@@ -84,6 +84,10 @@ def rng():
 # ---------------------------------------------------------------------------
 ML_CREATED_AT = "2026-09-29T00:00:00+00:00"
 #: The family no ML fixture model is trained on (out-of-distribution tests).
+#: Freeform, because its dents give it part descriptors no other family has:
+#: the envelope detects new DESCRIPTORS, not new family names, and a family
+#: that resembles the others (dome, saddle, two_level) is not flagged - see
+#: test_the_envelope_across_every_held_out_family.
 ML_HELD_OUT_FAMILY = "freeform"
 
 
@@ -107,12 +111,16 @@ def ml_features():
 
 @pytest.fixture(scope="session")
 def proxy_samples(ml_threads):
-    """7 parts of every family (AA5754-O, the default process), three commanded
-    variants each, on a 4 mm grid, formed by the ProxySimulator."""
+    """7 parts of every family (AA5754-O, the default process, contour tool
+    paths), three commanded variants each, on a 4 mm grid, formed by the
+    ProxySimulator. (Every job has a contour path; the proxy's own check of
+    that, which costs 10 s here, is tested in test_ml_generate.)"""
     from precomp.ml import DesignSpace, ProxySimulator, design_points, simulate_samples
-    space = DesignSpace(grid_spacing=4e-3, materials=("AA5754-O",), process={})
+    space = DesignSpace(grid_spacing=4e-3, materials=("AA5754-O",), process={},
+                        base_setup={"toolpath_style": "contour"})
     points = design_points(space, 7, seed=11)
-    return simulate_samples(points, ProxySimulator(), created_at=ML_CREATED_AT,
+    return simulate_samples(points, ProxySimulator(check_toolpath=False),
+                            created_at=ML_CREATED_AT,
                             kinds=("uncompensated", "perturbed", "compensated"))
 
 

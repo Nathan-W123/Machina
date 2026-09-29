@@ -99,6 +99,12 @@ def test_tables_share_the_points_among_regions_and_are_reproducible():
     full = build_table([s], cfg, points_per_sample=None, mask="all")
     assert len(full) == s.grid.nx * s.grid.ny and t.data_source == "proxy - not physics"
     np.testing.assert_allclose(y, s.dz.ravel()[t.node])
+    # a sample that cannot be featurised is named
+    coarse = _sample("cone-coarse")
+    st = FormingSetup.from_dict(coarse.setup).replace(tool_radius=3e-3)
+    coarse.setup = st.to_dict()
+    with pytest.raises(PrecompError, match="sample cone-coarse: grid spacing"):
+        build_table([s, coarse], cfg, points_per_sample=50)
 
 
 def test_grouped_splits_never_put_a_part_on_both_sides(proxy_samples):
