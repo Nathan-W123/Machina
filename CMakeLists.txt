@@ -49,6 +49,10 @@ endif()
 
 set(SPARLAB_CHOLMOD_FOUND FALSE)
 string(TOUPPER "${SPARLAB_WITH_CHOLMOD}" _sparlab_cholmod_mode)
+if(NOT _sparlab_cholmod_mode MATCHES "^(AUTO|ON|OFF)$")
+  message(FATAL_ERROR "SparLab: SPARLAB_WITH_CHOLMOD must be AUTO, ON or OFF, got "
+                      "'${SPARLAB_WITH_CHOLMOD}'")
+endif()
 if(NOT _sparlab_cholmod_mode STREQUAL "OFF")
   find_path(SPARLAB_CHOLMOD_INCLUDE_DIR cholmod.h PATH_SUFFIXES suitesparse)
   find_path(SPARLAB_UMFPACK_INCLUDE_DIR umfpack.h PATH_SUFFIXES suitesparse)
