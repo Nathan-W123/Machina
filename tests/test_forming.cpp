@@ -1,26 +1,41 @@
 /// \file test_forming.cpp
-/// \brief Incremental forming: tool trajectories and the penalty contact of
-///        rigid tools in the current configuration with Coulomb friction.
+/// \brief Incremental forming: tool trajectories, the penalty contact of
+///        rigid tools in the current configuration with Coulomb friction,
+///        and the forming analysis (form and release steps).
 ///
 /// The contact kernel is checked against central finite differences of its
 /// own residual (sphere, plane and cylinder; frictionless, sticking and
-/// slipping), and the trajectories against their definition.
+/// slipping), and the analysis against exact solutions: a flat punch on an
+/// elastic block (uniaxial stress, the penalty compliance in series), tools
+/// ironing a block with friction (in steady sliding every contact node
+/// slips, so the friction load is mu times the normal load - for a flat
+/// punch the resultants too), rigid-body invariance of a release, and the
+/// springback of an elastic-perfectly plastic beam bent past yield and
+/// released onto statically determinate supports, against the exact elastic
+/// unloading of its moment-curvature relation. A small single-point
+/// incremental forming case runs the whole sequence.
 #include "TestSupport.hpp"
 
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
+#include "sparlab/core/Timer.hpp"
+#include "sparlab/fem/Forming.hpp"
 #include "sparlab/fem/RigidTool.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <Eigen/Geometry>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <string>
 
 using namespace sparlab;
@@ -48,11 +63,32 @@ SelectorGroup box(Scalar xmin, Scalar xmax, Scalar ymin = -kInf, Scalar ymax = k
   return g;
 }
 
+SelectorGroup node_set(const std::vector<Index>& nodes, const std::string& name = "nodes") {
+  SelectorGroup g;
+  g.name = name;
+  Selector s;
+  s.kind = SelectorKind::NodeIds;
+  s.ids = nodes;
+  g.members.push_back(s);
+  return g;
+}
+
 ToolTrajectory path(std::vector<Scalar> times, std::vector<Vector3> points) {
   ToolTrajectory t;
   t.times = std::move(times);
   t.points = std::move(points);
   return t;
+}
+
+StepConstraint constraint(const SelectorGroup& region, std::vector<int> components,
+                          StepConstraint::Mode mode = StepConstraint::Mode::Hold,
+                          const Vector3& value = Vector3::Zero()) {
+  StepConstraint c;
+  c.name = region.name;
+  c.constraint.region = region;
+  for (int k : components) c.constraint.set(k, true, value(k));
+  c.mode = mode;
+  return c;
 }
 
 /// A finalised model with one load case that applies nothing.
@@ -317,4 +353,546 @@ TEST_CASE("tool contact refuses what it cannot model", "[forming]") {
   ToolContact contact(model, {tool});
   Vector u = Vector::Zero(model.dofs().num_dofs());
   CHECK_THROWS_AS(contact.evaluate(u, 1.0, false), SolverError);
+}
+
+// ---------------------------------------------------------------------------
+// 3. A flat punch on an elastic block
+// ---------------------------------------------------------------------------
+TEST_CASE("a flat punch compresses an elastic block by the exact force, penalty compliance in "
+          "series",
+          "[forming]") {
+  // A column H tall of one Hex8 in section (every top node with the same
+  // area, so the same penalty stiffness), on rollers at its base and free
+  // to expand sideways, pressed by a rigid plane lowered by delta:
+  // uniaxial stress. The top nodes penetrate the punch by p / kappa, so
+  // F = E A (delta - F / (A kappa)) / H exactly, F = E A delta / H / (1 +
+  // E / (kappa H)) - which tends to the rigid-contact force as the penalty
+  // grows.
+  const IsotropicMaterial m = default_material();
+  const Scalar e = m.youngs_modulus();
+  const Scalar a_side = 0.004;
+  const Scalar height = 0.01;
+  const Scalar delta = 1.0e-5;
+  const Scalar area = a_side * a_side;
+  const Scalar rigid = e * area * delta / height;
+  std::vector<Scalar> errors_rigid;
+  for (const Scalar s : {10.0, 100.0, 1000.0}) {
+    for (const Index nxy : {Index{1}, Index{3}}) {
+      INFO("penalty scale " << s << ", " << nxy << " x " << nxy << " in section");
+      std::vector<DisplacementConstraint> bcs;
+      DisplacementConstraint base;
+      base.region = box(-kInf, kInf, -kInf, kInf, -kInf, 0.0, "base");
+      base.set(2, true, 0.0);
+      bcs.push_back(base);
+      DisplacementConstraint corner;
+      corner.region = box(-kInf, 0.0, -kInf, 0.0, -kInf, 0.0, "corner");
+      corner.set(0, true, 0.0);
+      corner.set(1, true, 0.0);
+      bcs.push_back(corner);
+      DisplacementConstraint edge;
+      edge.region = box(a_side, kInf, -kInf, 0.0, -kInf, 0.0, "edge");
+      edge.set(1, true, 0.0);
+      bcs.push_back(edge);
+      FemModel model = finalised(hex_block(nxy, nxy, 4, a_side, a_side, height), m, 1.0,
+                                 StressState::ThreeDimensional, bcs);
+      Assembler assembler(model);
+      RigidTool punch;
+      punch.name = "punch";
+      punch.shape = RigidTool::Shape::Plane;
+      punch.normal = Vector3(0, 0, -1);  // out of the punch, down into the block
+      punch.penalty = s;
+      punch.surface = box(-kInf, kInf, -kInf, kInf, height, kInf, "top");
+      punch.trajectory = path({0.0, 1.0}, {Vector3(0, 0, height), Vector3(0, 0, height - delta)});
+      FormingOptions o;
+      o.kinematics = Kinematics::SmallStrain;
+      o.residual_tolerance = 1.0e-12;
+      o.displacement_tolerance = 1.0e-12;
+      o.tools.push_back(punch);
+      FormingStep step;
+      step.name = "press";
+      step.tools = {"punch"};
+      o.steps.push_back(step);
+      const FormingResult r = FormingAnalysis(model, assembler, o).run();
+      REQUIRE(r.completed);
+      const FormingIncrement& last = r.steps.back().increments.back();
+      REQUIRE(last.tools.size() == 1);
+      const Scalar force = last.tools[0].force.z();  // on the punch, upwards
+      CHECK(std::abs(last.tools[0].force.x()) < 1.0e-9 * force);
+      CHECK(last.tools[0].active_nodes == (nxy + 1) * (nxy + 1));
+      if (nxy == 1) {
+        const Scalar kappa = s * e / std::sqrt(area / 4.0);
+        const Scalar exact = rigid / (1.0 + e / (kappa * height));
+        CHECK(std::abs(force - exact) / exact < 1.0e-9);
+        CHECK(last.tools[0].max_penetration == Approx(exact / (area * kappa)).epsilon(1e-9));
+        errors_rigid.push_back(std::abs(force - rigid) / rigid);
+      } else {
+        // Edge and corner nodes have smaller areas, so stiffer springs: no
+        // longer uniaxial, but within the compliance bound and converging.
+        const Scalar kappa_min = s * e / std::sqrt(area / 9.0);
+        CHECK(force < rigid);
+        CHECK(force > rigid / (1.0 + e / (kappa_min * height)) * (1.0 - 1.0e-3));
+      }
+    }
+  }
+  // The force converges to the rigid-contact one as 1/s.
+  REQUIRE(errors_rigid.size() == 3);
+  CHECK(errors_rigid[1] / errors_rigid[0] == Approx(0.1).epsilon(0.02));
+  CHECK(errors_rigid[2] / errors_rigid[1] == Approx(0.1).epsilon(0.02));
+}
+
+// ---------------------------------------------------------------------------
+// 4. Ironing with friction
+// ---------------------------------------------------------------------------
+TEST_CASE("a tool dragged along a block with friction slides at mu times its normal force",
+          "[forming]") {
+  // An elastic block, its base clamped, pressed by a tool that is then
+  // dragged along x. Once every node in contact slips, each carries the
+  // Coulomb force mu p_N: the tool's friction load is mu times its normal
+  // load. For a flat punch every node's normal is the same and its slip
+  // lies along the drag, so the resultants obey F_x = mu F_z too; a sphere's
+  // resultants differ from that by its contact normals' tilt (ploughing).
+  const IsotropicMaterial m = default_material();
+  const Scalar mu = 0.2;
+  for (const RigidTool::Shape shape : {RigidTool::Shape::Sphere, RigidTool::Shape::Plane}) {
+    INFO(to_string(shape));
+    std::vector<DisplacementConstraint> bcs;
+    DisplacementConstraint base;
+    base.region = box(-kInf, kInf, -kInf, kInf, -kInf, -0.004, "base");
+    base.set(0, true);
+    base.set(1, true);
+    base.set(2, true);
+    bcs.push_back(base);
+    FemModel model = finalised(hex_block(20, 10, 4, 0.02, 0.01, 0.004, 0.0, 0.0, -0.004), m,
+                               1.0, StressState::ThreeDimensional, bcs);
+    Assembler assembler(model);
+    RigidTool tool;
+    tool.name = "tool";
+    tool.shape = shape;
+    tool.radius = 0.02;
+    tool.normal = Vector3(0, 0, -1);
+    tool.friction = mu;
+    tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
+    const Scalar depth = shape == RigidTool::Shape::Sphere ? 1.0e-4 : 2.0e-6;
+    const Scalar lift = shape == RigidTool::Shape::Sphere ? tool.radius : 0.0;
+    tool.trajectory = path({0.0, 1.0, 2.0}, {Vector3(0.005, 0.005, lift + 1.0e-4),
+                                             Vector3(0.005, 0.005, lift - depth),
+                                             Vector3(0.015, 0.005, lift - depth)});
+    FormingOptions o;
+    o.residual_tolerance = 1.0e-10;
+    o.displacement_tolerance = 1.0e-10;
+    o.tools.push_back(tool);
+    FormingStep step;
+    step.name = "iron";
+    step.tools = {"tool"};
+    step.max_tool_travel = 5.0e-4;
+    o.steps.push_back(step);
+    const FormingResult r = FormingAnalysis(model, assembler, o).run();
+    REQUIRE(r.completed);
+    const FormingIncrement& last = r.steps.back().increments.back();
+    const ToolRecord& t = last.tools.at(0);
+    INFO("F = " << t.force.transpose() << " N, " << t.active_nodes << " node(s), "
+                << t.slipping_nodes << " slipping");
+    CHECK(t.active_nodes >= 4);
+    CHECK(t.slipping_nodes == t.active_nodes);
+    CHECK(t.friction_load == Approx(mu * t.normal_load).epsilon(1.0e-6));
+    CHECK(t.force.z() > 0.0);  // the block pushes the tool up
+    CHECK(t.force.x() < 0.0);  // and resists the drag
+    if (shape == RigidTool::Shape::Plane) {
+      CHECK(-t.force.x() == Approx(mu * t.force.z()).epsilon(1.0e-6));
+      CHECK(std::abs(t.force.y()) < 1.0e-6 * t.force.z());
+    } else {
+      CHECK(-t.force.x() / t.force.z() == Approx(mu).epsilon(0.1));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Rigid-body invariance of a release
+// ---------------------------------------------------------------------------
+namespace {
+
+/// Nodes nearest to a point (one node each).
+Index nearest(const Mesh& mesh, const Vector3& p) {
+  Index best = 0;
+  for (Index n = 1; n < mesh.num_nodes(); ++n) {
+    if ((mesh.node(n) - p).norm() < (mesh.node(best) - p).norm()) best = n;
+  }
+  return best;
+}
+
+/// 3-2-1 supports: A fixed in x, y, z; B in y, z; C in z, holding where they
+/// are, or moved to the absolute values `target` (per node, full vectors).
+std::vector<StepConstraint> three_two_one(Index a, Index b, Index c, const Vector* target = nullptr,
+                                          int dim = 3) {
+  const auto mode = target ? StepConstraint::Mode::Absolute : StepConstraint::Mode::Hold;
+  const auto value = [&](Index node) {
+    Vector3 v = Vector3::Zero();
+    if (target) v.head(dim) = target->segment(node * dim, dim);
+    return v;
+  };
+  std::vector<StepConstraint> out;
+  if (dim == 3) {
+    out.push_back(constraint(node_set({a}, "A"), {0, 1, 2}, mode, value(a)));
+    out.push_back(constraint(node_set({b}, "B"), {1, 2}, mode, value(b)));
+    out.push_back(constraint(node_set({c}, "C"), {2}, mode, value(c)));
+  } else {
+    out.push_back(constraint(node_set({a}, "A"), {0, 1}, mode, value(a)));
+    out.push_back(constraint(node_set({b}, "B"), {1}, mode, value(b)));
+  }
+  return out;
+}
+
+IsotropicMaterial aluminium_plastic() {
+  IsotropicMaterial m(70.0e9, 0.33, 2700.0, "aluminium");
+  PlasticityParameters p;
+  p.yield_stress = 150.0e6;
+  p.hardening_modulus = 500.0e6;
+  m.set_plasticity(p);
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("a release onto 3-2-1 supports is invariant under a rigid motion of the supports",
+          "[forming]") {
+  const Scalar length = 0.04;
+  const Scalar width = 0.006;
+  const Scalar thick = 0.002;
+  const Mesh mesh0 = hex_block(20, 3, 2, length, width, thick);
+  const Index a = nearest(mesh0, Vector3(0, 0, 0));
+  const Index b = nearest(mesh0, Vector3(length, 0, 0));
+  const Index c = nearest(mesh0, Vector3(0, width, 0));
+
+  // A stress-free body released stays where it is, and follows its supports
+  // rigidly.
+  {
+    FemModel model = finalised(mesh0, default_material());
+    Assembler assembler(model);
+    FormingOptions o;
+    FormingStep release;
+    release.name = "release";
+    release.type = FormingStep::Type::Release;
+    release.constraints = three_two_one(a, b, c);
+    o.steps.push_back(release);
+    const FormingResult r = FormingAnalysis(model, assembler, o).run();
+    REQUIRE(r.completed);
+    CHECK(r.final_state.displacement.cwiseAbs().maxCoeff() == 0.0);
+    const Vector3 shift(1.0e-3, -2.0e-3, 5.0e-4);
+    Vector target = Vector::Zero(model.dofs().num_dofs());
+    for (Index n = 0; n < mesh0.num_nodes(); ++n) target.segment(n * 3, 3) = shift;
+    o.steps[0].constraints = three_two_one(a, b, c, &target);
+    const FormingResult moved = FormingAnalysis(model, assembler, o).run();
+    REQUIRE(moved.completed);
+    CHECK((moved.final_state.displacement - target).cwiseAbs().maxCoeff() < 1.0e-12);
+  }
+
+  // A plastically bent strip (finite kinematics), released from its clamp
+  // twice from the same state - restarted - once holding the 3-2-1 nodes,
+  // once moving them by a finite rotation and a translation: the second
+  // result is the first moved rigidly.
+  FemModel model = finalised(mesh0, aluminium_plastic());
+  Assembler assembler(model);
+  FormingOptions o;
+  o.residual_tolerance = 1.0e-10;
+  o.displacement_tolerance = 1.0e-10;
+  FormingStep bend;
+  bend.name = "bend";
+  bend.increments = 5;
+  bend.constraints.push_back(constraint(box(-kInf, 0.0, -kInf, kInf, -kInf, kInf, "root"),
+                                        {0, 1, 2}, StepConstraint::Mode::Absolute));
+  bend.constraints.push_back(constraint(box(length, kInf, -kInf, kInf, -kInf, kInf, "tip"), {2},
+                                        StepConstraint::Mode::Absolute, Vector3(0, 0, 0.004)));
+  o.steps.push_back(bend);
+  const FormingResult formed = FormingAnalysis(model, assembler, o).run();
+  REQUIRE(formed.completed);
+  REQUIRE(formed.steps[0].max_plastic_strain > 1.0e-3);
+
+  FormingOptions ro = o;
+  ro.steps.clear();
+  FormingStep release;
+  release.name = "release";
+  release.type = FormingStep::Type::Release;
+  release.constraints = three_two_one(a, b, c);
+  ro.steps.push_back(release);
+  const FormingResult held = FormingAnalysis(model, assembler, ro).run(formed.final_state);
+  REQUIRE(held.completed);
+  const Vector& ua = held.final_state.displacement;
+  CHECK(held.steps[0].max_displacement_change > 1.0e-4);  // it springs back
+  CHECK(held.steps[0].warnings.empty());
+  CHECK(held.steps[0].reaction_norm < 1.0e-8 * held.steps[0].reference_force);
+
+  // A translation, then a finite rotation with it. (The imbalance a release
+  // ramps out is a dead load, fixed in space: supports that turned the body
+  // through a large angle while it springs back would change the path of
+  // its unloading, and with it any reverse yielding - the end state is
+  // invariant, to round-off, for rotations that do not.)
+  for (const Scalar angle : {0.0, 0.03}) {
+    const Matrix3 rotation = (Eigen::AngleAxisd(angle, Vector3::UnitZ()) *
+                              Eigen::AngleAxisd(-0.5 * angle, Vector3(1, 1, 0).normalized()))
+                                 .toRotationMatrix();
+    const Vector3 shift(2.0e-3, -1.0e-3, 3.0e-3);
+    Vector rigid(ua.size());
+    for (Index n = 0; n < mesh0.num_nodes(); ++n) {
+      const Vector3 x = mesh0.node(n) + ua.segment(n * 3, 3);
+      rigid.segment(n * 3, 3) = rotation * x + shift - mesh0.node(n);
+    }
+    ro.steps[0].constraints = three_two_one(a, b, c, &rigid);
+    const FormingResult moved = FormingAnalysis(model, assembler, ro).run(formed.final_state);
+    REQUIRE(moved.completed);
+    const Scalar err = (moved.final_state.displacement - rigid).cwiseAbs().maxCoeff();
+    INFO("rotation " << angle << " rad: largest deviation from the rigid motion " << err
+                     << " m");
+    CHECK(err < 1.0e-14);
+    CHECK(moved.steps[0].max_plastic_strain ==
+          Approx(held.steps[0].max_plastic_strain).epsilon(1e-12));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Springback of an elastoplastic beam against the exact unloading
+// ---------------------------------------------------------------------------
+namespace {
+
+/// The exact moment of a rectangle t x h at curvature k, elastic-perfectly
+/// plastic in uniaxial stress (apps/verify_plasticity.cpp).
+Scalar bending_moment(Scalar k, Scalar youngs, Scalar sy, Scalar t, Scalar h) {
+  const Scalar ky = 2.0 * sy / (youngs * h);
+  const Scalar inertia = t * h * h * h / 12.0;
+  if (std::abs(k) <= ky) return youngs * inertia * k;
+  const Scalar mp = sy * t * h * h / 4.0;
+  const Scalar ratio = ky / std::abs(k);
+  return std::copysign(mp * (1.0 - ratio * ratio / 3.0), k);
+}
+
+/// The curvature of the beam's mid-depth line over its central part: twice
+/// the leading coefficient of the least-squares parabola through u_y.
+Scalar curvature(const Mesh& mesh, const Vector& u, Scalar length, Scalar h, Scalar margin) {
+  std::vector<std::array<Scalar, 3>> rows;
+  std::vector<Scalar> values;
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    const Vector3 x = mesh.node(n);
+    if (std::abs(x.y() - 0.5 * h) > 1.0e-12 || x.x() < margin || x.x() > length - margin) continue;
+    const Scalar s = x.x() - 0.5 * length;
+    rows.push_back({1.0, s, s * s});
+    values.push_back(u(2 * n + 1));
+  }
+  Matrix a(static_cast<Eigen::Index>(rows.size()), 3);
+  Vector y(static_cast<Eigen::Index>(rows.size()));
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    for (int k = 0; k < 3; ++k) {
+      a(static_cast<Eigen::Index>(i), k) = rows[i][static_cast<std::size_t>(k)];
+    }
+    y(static_cast<Eigen::Index>(i)) = values[i];
+  }
+  const Vector coef = a.colPivHouseholderQr().solve(y);
+  return 2.0 * coef(2);
+}
+
+}  // namespace
+
+TEST_CASE("an elastoplastic beam bent past yield springs back by the exact elastic unloading",
+          "[forming]") {
+  // A plane-stress beam L = 8 h (E = 200 GPa, sigma_y = 250 MPa, no
+  // hardening), small strain, bent by end displacements
+  // u_x = -k1 (x - L/2)(y - h/2) to k1 = 3 k_y in step 1 - the section in
+  // uniaxial stress, M(k1) = M_p (1 - (k_y/k1)^2/3) - then released onto
+  // 3-2-1 supports (a node fixed in x and y at the left end's mid-depth, one
+  // in y at the right end's) in step 2, which ramps out the end forces. The
+  // unloading is elastic (the outer fibre reverses by 1.44 sigma_y, short of
+  // reverse yield at 2 sigma_y), so the curvature springs back by
+  // M(k1) / (E I). Measured in the central half (the end forces' self-
+  // equilibrated part decays within a depth of the ends, Saint-Venant).
+  const Scalar h = 0.05;
+  const Scalar length = 8.0 * h;
+  const Scalar t = 0.01;
+  const Scalar youngs = 200.0e9;
+  const Scalar sy = 250.0e6;
+  const Scalar ky = 2.0 * sy / (youngs * h);
+  const Scalar k1 = 3.0 * ky;
+  const Scalar inertia = t * h * h * h / 12.0;
+  const Scalar springback = bending_moment(k1, youngs, sy, t, h) / (youngs * inertia);
+  IsotropicMaterial material(youngs, 0.3, 7800.0, "steel");
+  PlasticityParameters params;
+  params.yield_stress = sy;
+  material.set_plasticity(params);
+  std::vector<Scalar> errors;
+  for (const Index ny : {Index{4}, Index{8}, Index{16}}) {
+    StructuredMeshSpec spec;
+    spec.nx = 8 * ny;
+    spec.ny = ny;
+    spec.lx = length;
+    spec.ly = h;
+    const Mesh mesh = make_structured_quad_mesh(spec);
+    FemModel model = finalised(mesh, material, t, StressState::PlaneStress);
+    Assembler assembler(model);
+    FormingOptions o;
+    o.kinematics = Kinematics::SmallStrain;
+    o.residual_tolerance = 1.0e-10;
+    o.displacement_tolerance = 1.0e-10;
+    FormingStep bend;
+    bend.name = "bend";
+    bend.increments = 10;
+    Index left_mid = -1;
+    Index right_mid = -1;
+    for (Index n = 0; n < mesh.num_nodes(); ++n) {
+      const Vector3 x = mesh.node(n);
+      const bool left = x.x() <= 1.0e-12;
+      const bool right = x.x() >= length - 1.0e-12;
+      if (!left && !right) continue;
+      const bool mid = std::abs(x.y() - 0.5 * h) < 1.0e-12;
+      if (mid) (left ? left_mid : right_mid) = n;
+      bend.constraints.push_back(constraint(
+          node_set({n}), left && mid ? std::vector<int>{0, 1} : std::vector<int>{0},
+          StepConstraint::Mode::Absolute,
+          Vector3(-k1 * (x.x() - 0.5 * length) * (x.y() - 0.5 * h), 0.0, 0.0)));
+    }
+    o.steps.push_back(bend);
+    FormingStep release;
+    release.name = "release";
+    release.type = FormingStep::Type::Release;
+    release.constraints = {constraint(node_set({left_mid}, "A"), {0, 1}),
+                           constraint(node_set({right_mid}, "B"), {1})};
+    o.steps.push_back(release);
+    const FormingResult r = FormingAnalysis(model, assembler, o).run();
+    REQUIRE(r.completed);
+    const Scalar margin = 2.0 * h;
+    const Scalar bent = curvature(mesh, r.steps[0].displacement, length, h, margin);
+    const Scalar released = curvature(mesh, r.steps[1].displacement, length, h, margin);
+    const Scalar error = std::abs((bent - released) - springback) / springback;
+    INFO("ny = " << ny << ": bent to " << bent / ky << " k_y, released to " << released / ky
+                 << " k_y; springback " << (bent - released) / ky << " k_y, exact "
+                 << springback / ky << " k_y, error " << error);
+    log::info("springback, ny = ", ny, ": bent to ", bent / ky, " k_y, released to ",
+              released / ky, " k_y, springback ", (bent - released) / ky, " k_y (exact ",
+              springback / ky, " k_y), error ", error);
+    CHECK(std::abs(bent - k1) / k1 < 1.0e-6);
+    CHECK(r.steps[1].reaction_norm < 1.0e-6 * r.steps[1].reference_force);
+    CHECK(r.steps[1].warnings.empty());
+    errors.push_back(error);
+  }
+  // Converges under refinement, to within half a percent on the finest mesh.
+  CHECK(errors[1] < errors[0]);
+  CHECK(errors[2] < errors[1]);
+  CHECK(errors[2] < 5.0e-3);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Single-point incremental forming, smoke test
+// ---------------------------------------------------------------------------
+namespace {
+
+/// A two-level contour path of a sphere of radius r over a sheet whose top
+/// is at z = 0: plunge at (r1, 0), a circle of radius r1 at depth d1, step
+/// down and in, a circle of radius r2 at depth d2, retract.
+ToolTrajectory contour_path(Scalar r, Scalar r1, Scalar d1, Scalar r2, Scalar d2, int segments) {
+  ToolTrajectory p;
+  const auto add = [&](Scalar t, const Vector3& x) {
+    p.times.push_back(t);
+    p.points.push_back(x);
+  };
+  add(0.0, Vector3(r1, 0.0, r + 5.0e-4));
+  add(1.0, Vector3(r1, 0.0, r - d1));
+  const Scalar pi = std::acos(-1.0);
+  for (int i = 1; i <= segments; ++i) {
+    const Scalar a = 2.0 * pi * i / segments;
+    add(1.0 + static_cast<Scalar>(i) / segments,
+        Vector3(r1 * std::cos(a), r1 * std::sin(a), r - d1));
+  }
+  add(2.1, Vector3(r2, 0.0, r - d2));
+  for (int i = 1; i <= segments; ++i) {
+    const Scalar a = 2.0 * pi * i / segments;
+    add(2.1 + static_cast<Scalar>(i) / segments,
+        Vector3(r2 * std::cos(a), r2 * std::sin(a), r - d2));
+  }
+  add(3.2, Vector3(r2, 0.0, r + 1.0e-3));
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("single-point incremental forming of a clamped blank completes and springs back",
+          "[forming][slow]") {
+  // A 40 mm x 40 mm x 1 mm aluminium blank (Hex8, 2 layers, mean dilatation),
+  // clamped on a 5 mm frame, formed by a 5 mm radius sphere along two
+  // contour levels to 2 mm depth, the tool retracted, the blank unclamped
+  // onto 3-2-1 supports at three corners.
+  IsotropicMaterial m(70.0e9, 0.33, 2700.0, "aa1050");
+  PlasticityParameters p;
+  p.yield_stress = 100.0e6;
+  p.hardening_modulus = 300.0e6;
+  m.set_plasticity(p);
+  const Scalar half = 0.02;
+  const Scalar t = 0.001;
+  const Mesh mesh = hex_block(20, 20, 2, 2 * half, 2 * half, t, -half, -half, -t);
+  FemModel model = finalised(mesh, m);
+  Assembler assembler(model);
+  const Scalar frame = 0.015;
+  SelectorGroup clamp;
+  clamp.name = "frame";
+  for (const Selector& s : {box(-kInf, -frame).members[0], box(frame, kInf).members[0],
+                            box(-kInf, kInf, -kInf, -frame).members[0],
+                            box(-kInf, kInf, frame, kInf).members[0]}) {
+    clamp.members.push_back(s);
+  }
+  RigidTool tool;
+  tool.name = "tool";
+  tool.radius = 0.005;
+  tool.friction = 0.05;
+  tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
+  tool.trajectory = contour_path(tool.radius, 0.008, 0.001, 0.007, 0.002, 24);
+  FormingOptions o;
+  o.tools.push_back(tool);
+  FormingStep form;
+  form.name = "form";
+  form.tools = {"tool"};
+  form.t_begin = 0.0;
+  form.t_end = 3.1;
+  form.max_tool_travel = 1.0e-3;
+  form.constraints.push_back(constraint(clamp, {0, 1, 2}));
+  o.steps.push_back(form);
+  FormingStep retract = form;
+  retract.name = "retract";
+  retract.t_begin = 3.1;
+  retract.t_end = 3.2;
+  o.steps.push_back(retract);
+  FormingStep release;
+  release.name = "unclamp";
+  release.type = FormingStep::Type::Release;
+  release.constraints = three_two_one(nearest(mesh, Vector3(-half, -half, 0)),
+                                      nearest(mesh, Vector3(half, -half, 0)),
+                                      nearest(mesh, Vector3(-half, half, 0)));
+  o.steps.push_back(release);
+  Timer timer;
+  const FormingResult r = FormingAnalysis(model, assembler, o).run();
+  const Scalar seconds = timer.elapsed_seconds();
+  {
+    std::ostringstream os;
+    os << "SPIF smoke case: " << seconds << " s, " << r.total_increments << " increments, "
+       << r.total_iterations << " iterations, " << r.total_cuts << " cuts; timing [s]:";
+    for (const auto& [k, v] : r.timing.totals()) os << " " << k << " " << v;
+    os << "; " << r.linear_solver;
+    log::info(os.str());
+  }
+  REQUIRE(r.completed);
+  REQUIRE(r.steps.size() == 3);
+  // The centre of the formed blank lies about the contour depth down.
+  const Index centre = nearest(mesh, Vector3(0, 0, 0));
+  const Scalar formed = r.steps[1].displacement(centre * 3 + 2);
+  const Scalar released = r.steps[2].displacement(centre * 3 + 2);
+  log::info("SPIF smoke case: centre depth ", formed, " m formed, ", released,
+            " m released; largest plastic strain ", r.steps[2].max_plastic_strain,
+            "; springback (largest displacement change of the release) ",
+            r.steps[2].max_displacement_change, " m");
+  CHECK(formed < -0.5e-3);
+  CHECK(formed > -3.0e-3);
+  CHECK(r.steps[2].max_displacement_change > 1.0e-6);  // it springs back
+  CHECK(r.steps[0].max_plastic_strain > 0.01);
+  // The tool is pushed up by the sheet at every increment in contact.
+  int in_contact = 0;
+  for (const FormingIncrement& inc : r.steps[0].increments) {
+    if (inc.tools.at(0).active_nodes == 0) continue;
+    ++in_contact;
+    CHECK(inc.tools[0].force.z() > 0.0);
+  }
+  CHECK(in_contact > 50);
 }

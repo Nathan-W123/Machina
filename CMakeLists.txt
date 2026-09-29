@@ -13,6 +13,12 @@ option(SPARLAB_BUILD_APPS      "Build the command-line applications"    ON)
 option(SPARLAB_ENABLE_WARNINGS "Enable a strict warning set"            ON)
 option(SPARLAB_WARNINGS_AS_ERRORS "Treat compiler warnings as errors"   OFF)
 option(SPARLAB_ENABLE_OPENMP   "Use OpenMP where the code supports it"  ON)
+# SuiteSparse (CHOLMOD supernodal Cholesky, UMFPACK LU) for the forming
+# analysis's tangents: AUTO uses it when found, ON requires it, OFF never
+# uses it. Everything builds and passes without it (Eigen's own sparse
+# factorisations are the fallback).
+set(SPARLAB_WITH_CHOLMOD AUTO CACHE STRING "Use SuiteSparse CHOLMOD/UMFPACK: AUTO, ON or OFF")
+set_property(CACHE SPARLAB_WITH_CHOLMOD PROPERTY STRINGS AUTO ON OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,6 +44,29 @@ if(SPARLAB_ENABLE_OPENMP)
     message(STATUS "SparLab: OpenMP enabled (${OpenMP_CXX_VERSION})")
   else()
     message(STATUS "SparLab: OpenMP not found, building single-threaded")
+  endif()
+endif()
+
+set(SPARLAB_CHOLMOD_FOUND FALSE)
+string(TOUPPER "${SPARLAB_WITH_CHOLMOD}" _sparlab_cholmod_mode)
+if(NOT _sparlab_cholmod_mode STREQUAL "OFF")
+  find_path(SPARLAB_CHOLMOD_INCLUDE_DIR cholmod.h PATH_SUFFIXES suitesparse)
+  find_path(SPARLAB_UMFPACK_INCLUDE_DIR umfpack.h PATH_SUFFIXES suitesparse)
+  find_library(SPARLAB_CHOLMOD_LIBRARY NAMES cholmod)
+  find_library(SPARLAB_UMFPACK_LIBRARY NAMES umfpack)
+  find_library(SPARLAB_SUITESPARSECONFIG_LIBRARY NAMES suitesparseconfig)
+  find_library(SPARLAB_AMD_LIBRARY NAMES amd)
+  find_library(SPARLAB_COLAMD_LIBRARY NAMES colamd)
+  if(SPARLAB_CHOLMOD_INCLUDE_DIR AND SPARLAB_UMFPACK_INCLUDE_DIR AND SPARLAB_CHOLMOD_LIBRARY
+     AND SPARLAB_UMFPACK_LIBRARY AND SPARLAB_SUITESPARSECONFIG_LIBRARY AND SPARLAB_AMD_LIBRARY
+     AND SPARLAB_COLAMD_LIBRARY)
+    set(SPARLAB_CHOLMOD_FOUND TRUE)
+    message(STATUS "SparLab: SuiteSparse CHOLMOD/UMFPACK enabled (${SPARLAB_CHOLMOD_LIBRARY})")
+  elseif(_sparlab_cholmod_mode STREQUAL "ON")
+    message(FATAL_ERROR "SparLab: SPARLAB_WITH_CHOLMOD=ON but CHOLMOD/UMFPACK were not found")
+  else()
+    message(STATUS "SparLab: SuiteSparse not found, the forming analysis uses Eigen's "
+                   "factorisations")
   endif()
 endif()
 
@@ -80,6 +109,7 @@ add_library(sparlab STATIC
   src/fem/Dynamics.cpp
   src/fem/Contact.cpp
   src/fem/RigidTool.cpp
+  src/fem/Forming.cpp
   src/topopt/SimpInterpolation.cpp
   src/topopt/DensityFilter.cpp
   src/topopt/DesignDomain.cpp
@@ -108,6 +138,15 @@ target_include_directories(sparlab PUBLIC
 )
 
 target_link_libraries(sparlab PUBLIC Eigen3::Eigen)
+
+if(SPARLAB_CHOLMOD_FOUND)
+  target_include_directories(sparlab SYSTEM PRIVATE ${SPARLAB_CHOLMOD_INCLUDE_DIR}
+                             ${SPARLAB_UMFPACK_INCLUDE_DIR})
+  target_link_libraries(sparlab PUBLIC ${SPARLAB_CHOLMOD_LIBRARY} ${SPARLAB_UMFPACK_LIBRARY}
+                        ${SPARLAB_AMD_LIBRARY} ${SPARLAB_COLAMD_LIBRARY}
+                        ${SPARLAB_SUITESPARSECONFIG_LIBRARY})
+  target_compile_definitions(sparlab PRIVATE SPARLAB_HAVE_CHOLMOD=1)
+endif()
 
 if(SPARLAB_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
   target_link_libraries(sparlab PUBLIC OpenMP::OpenMP_CXX)
@@ -174,3 +213,4 @@ message(STATUS "  build type : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ std    : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  tests      : ${SPARLAB_BUILD_TESTS}")
 message(STATUS "  apps       : ${SPARLAB_BUILD_APPS}")
+message(STATUS "  SuiteSparse: ${SPARLAB_CHOLMOD_FOUND}")
