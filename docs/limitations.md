@@ -30,18 +30,31 @@ or a compressible neo-Hookean law (large strain), follower pressures, a
 centrifugal load at the deformed position, the finite-strain thermal split,
 J2 or Hill48 (anisotropic) plasticity with isotropic (linear and Voce) and
 kinematic (Prager, and Chaboche's sum of Armstrong-Frederick backstresses)
-hardening in small strain or in the Green-Lagrange strain at large rotation,
-load paths that unload and reverse, load control that stops at limit and
-bifurcation points and at a plastic collapse and says so, and the arc-length
-method through limit points. What it does not do:
+hardening in small strain, in the Green-Lagrange strain at large rotation,
+or - large-strain plasticity - in the logarithmic strain
+(`kinematics: finite_logarithmic`), load paths that unload and reverse,
+load control that stops at limit and bifurcation points and at a plastic
+collapse and says so, and the arc-length method through limit points. What
+it does not do:
 
-* plasticity is rate-independent and at small strain: no finite-strain
-  plasticity (with `finite` kinematics the return in the Green-Lagrange
-  strain is sound for large rotation with small strains, and the run warns
-  beyond a strain of 0.05), no creep, viscoplasticity, damage, fracture,
-  non-associative or pressure-dependent yield, or temperature-dependent
-  properties; the elastic part of the neo-Hookean law cannot be combined
-  with plasticity. The anisotropy is Hill's quadratic 1948 criterion only
+* plasticity is rate-independent: no creep, viscoplasticity, damage,
+  fracture, non-associative or pressure-dependent yield, or
+  temperature-dependent properties; the elastic part of the neo-Hookean law
+  cannot be combined with plasticity. With `finite` kinematics the return in
+  the Green-Lagrange strain is sound for large rotation with small strains
+  (the run warns beyond a strain of 0.05). Large strains take
+  `finite_logarithmic`: plasticity additive in the logarithmic strain (Miehe,
+  Apel and Lambrecht 2002) with Hencky elasticity, exact for coaxial
+  stretches of any size and objective. It is not the multiplicative
+  `F = F_e F_p` theory: the two agree when the elastic strains are small, as
+  in metals, but differ for large elastic strains under rotating principal
+  axes; the Hencky energy is not convex at large elastic stretches (the
+  elastica's first Newton iterate, far off equilibrium, meets negative
+  pivots there and load control halves the step until it does not); the
+  Hill48 axes stay those of the reference configuration (no plastic spin of
+  the texture); the kinematic hardening is additive in the log strain; the
+  return is first-order accurate on a non-proportional path as before; and
+  the neo-Hookean law and CalculiX export do not combine with it. The anisotropy is Hill's quadratic 1948 criterion only
   (no Yld2000-2d or other non-quadratic criterion, which fit aluminium's
   yield locus better), with isotropic elasticity and a fixed material
   frame; its out-of-plane shear coefficients L and M are not measured by the

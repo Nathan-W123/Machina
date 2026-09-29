@@ -2,7 +2,8 @@
 /// \brief One element of an elastoplastic analysis: internal force,
 ///        consistent tangent and updated internal variables from the return
 ///        of Plasticity.hpp (J2, or Hill48 and Chaboche) at each integration
-///        point, with small-strain or finite (total Lagrangian) kinematics.
+///        point, with small-strain, finite (total Lagrangian, Green-Lagrange
+///        strain) or logarithmic-strain finite kinematics.
 ///
 /// **Small strain.** With the linear strain operator \f$B\f$ (the element's
 /// own, in the 3-D Voigt order - a plane model's out-of-plane row carries the
@@ -54,6 +55,64 @@
 /// constraint (the thickness strain is free) and keeps \f$B\f$. On a
 /// constant-strain element (Tri3, Tet4) the average is the point value and
 /// nothing changes - those elements lock.
+///
+/// **Logarithmic-strain finite kinematics** (large strain; Miehe, Apel and
+/// Lambrecht 2002, *Anisotropic additive plasticity in the logarithmic
+/// strain space*). Total Lagrangian: the return of Plasticity.hpp - the same
+/// J2, Hill48, Chaboche, plane-stress and thermal return, unchanged - takes
+/// the logarithmic strain \f$E_{\log} = \tfrac12\ln C\f$ of
+/// LogarithmicStrain.hpp as its strain and gives the stress T conjugate to
+/// it and \f$C_{alg} = dT/dE_{\log}\f$. The additive split
+/// \f$E_{\log} = E_{\log}^e + E_{\log}^p\f$ with \f$T = D E_{\log}^e\f$ is
+/// exact for a coaxial homogeneous stretch (the log strains of successive
+/// coaxial stretches add), so uniaxial J2 at any strain is the 1-D law in
+/// the log strain, with T the Kirchhoff stress; the plastic flow is
+/// isochoric in \f$\det F\f$; the Hill48 axes are those of the reference
+/// configuration and convect with the material; and the model is objective
+/// (C, hence everything but the push-forward, ignores a superposed
+/// rotation). With \f$dE_{\log} = P\,dE\f$ (P = \f$2\,\partial
+/// E_{\log}/\partial C\f$) and \f$dE = B_{NL}\,du\f$,
+/// \f[
+///   S = P^T T ,\qquad f_e = \int B_{NL}^T S\,dV_0 ,\qquad
+///   K_e = \int B_{NL}^T\big(P^T C_{alg} P + T : \mathbb{L}\big) B_{NL}\,dV_0
+///       + \int (G^T\mathbf{S}\,G)\otimes I\,dV_0 ,
+/// \f]
+/// \f$T : \mathbb{L}\f$ the Hessian of \f$T : E_{\log}(E)\f$ at fixed T.
+/// The elasticity is Hencky's (quadratic in \f$E_{\log}\f$), elastic
+/// elements included. The thermal strain is the log strain of the free
+/// thermal stretch \f$1 + \alpha\Delta T\f$ (the stretch of the finite
+/// path), \f$\ln(1 + \alpha\Delta T)\,I\f$, which the return takes as the
+/// change \f$\ln(1 + \alpha\Delta T)/\alpha\f$: a freely heated body is
+/// stress-free. In plane stress the return finds \f$E_{\log,33}\f$ with
+/// \f$T_{33} = 0\f$ (which is \f$S_{33} = 0\f$: the normal is principal),
+/// and the thickness stretches by \f$\exp E_{\log,33}\f$.
+///
+/// *Mean dilatation* on the logarithmic volumetric strain: since
+/// \f$\mathrm{tr}\,E_{\log} = \ln J\f$, the average replaces each point's
+/// \f$\ln J\f$ by the element's volume average,
+/// \f$\bar E_{\log} = E_{\log} + \tfrac13\,m\,(\overline{\ln J} - \ln J)\f$ -
+/// exactly the log strain of the modified deformation
+/// \f$\bar F = (\bar J/J)^{1/3}F\f$, so it stays objective. Its variation
+/// is \f$\bar B = P B_{NL} + \tfrac13 m(\bar b - b)\f$ with
+/// \f$b = m^TPB_{NL}\f$ the variation of \f$\ln J\f$, and the force is
+/// \f$\int\bar B^T T\f$. The second variation of
+/// \f$\int T : \bar E_{\log}\f$ at fixed T is
+/// \f$\int (T - p\,m) : d^2E_{\log} + \big(\int p\big)\,d^2\overline{\ln J}\f$
+/// with the Kirchhoff mean stress \f$p = \mathrm{tr}\,T/3\f$, and since
+/// \f$\ln J = m : E_{\log}\f$ both are initial-stress terms of the
+/// stress \f$T' = \mathrm{dev}\,T + \bar p\,m\f$ - the point's deviator
+/// with the element's mean pressure \f$\bar p\f$:
+/// \f[
+///   K_e = \int \big[\bar B^T C_{alg}\bar B + B_{NL}^T(T' : \mathbb{L})B_{NL}
+///         + (G^T\mathbf{S}'G)\otimes I\big] dV_0 ,\qquad S' = P^T T' ,
+/// \f]
+/// the classical mean-dilatation result, consistent (tested against the
+/// derivative of the force) and assembled after all the element's returns.
+///
+/// *Stress recovery*: the Kirchhoff stress \f$\tau = F S F^T\f$ (with the
+/// modified \f$\bar F\f$, \f$\bar F\bar S\bar F^T\f$, the same), the Cauchy
+/// stress \f$\sigma = \tau/\bar J\f$ with \f$\bar J = \exp\mathrm{tr}\,\bar
+/// E_{\log}\f$ (J itself without averaging), and the log strain itself.
 #pragma once
 
 #include "sparlab/core/Types.hpp"
@@ -67,12 +126,15 @@ namespace sparlab {
 
 /// Kinematics of a non-linear analysis.
 enum class Kinematics {
-  Finite,      ///< total Lagrangian: large displacement and rotation
-  SmallStrain  ///< linear strain: small displacement and rotation
+  Finite,       ///< total Lagrangian, Green-Lagrange strain: large displacement and rotation
+  SmallStrain,  ///< linear strain: small displacement and rotation
+  /// total Lagrangian, logarithmic strain: large displacement, rotation and
+  /// strain (Hencky elasticity, plasticity in the log strain)
+  FiniteLogarithmic
 };
 
 std::string to_string(Kinematics kinematics);
-/// "finite" or "small_strain".
+/// "finite", "small_strain" or "finite_logarithmic".
 Kinematics parse_kinematics(const std::string& text);
 
 struct ElastoplasticElement {
@@ -113,13 +175,19 @@ struct ElastoplasticStress {
   Scalar max_equivalent_plastic_strain = 0.0; ///< \f$\max\bar\alpha\f$ over its points [-]
   int plastic_points = 0;                     ///< points with \f$\bar\alpha > 0\f$
   /// The largest tensor strain component over its points: \f$\varepsilon\f$
-  /// (small strain) or \f$E\f$ (finite, with the thickness strain) [-].
+  /// (small strain), \f$E\f$ (finite) or \f$E_{\log}\f$ (logarithmic), with
+  /// the thickness strain [-].
   Scalar max_strain = 0.0;
   /// Small strain: the largest infinitesimal rotation \f$|\mathrm{skew}\,H|\f$
   /// and the largest component of the neglected \f$\tfrac12 H^TH\f$ [-].
   Scalar max_rotation = 0.0;
   Scalar max_quadratic_strain = 0.0;
   Scalar min_jacobian = 1.0;                  ///< finite: the smallest det F [-]
+  /// Logarithmic kinematics: the point averages of the Kirchhoff stress
+  /// \f$\tau\f$ [Pa] and of the (Lagrangian) log strain \f$E_{\log}\f$ the
+  /// return took, tensor components [-]; 3-D Voigt. Zero otherwise.
+  Vector6 kirchhoff = Vector6::Zero();
+  Vector6 logarithmic_strain = Vector6::Zero();
 };
 ElastoplasticStress elastoplastic_stress(const FemModel& model, Index e, const Vector& ue,
                                          const std::vector<PlasticState>& committed,

@@ -164,7 +164,13 @@ class NonlinearSystem {
   NonlinearSystem(const FemModel& model, const Assembler& assembler, std::size_t lc,
                   const NonlinearOptions& options)
       : model_(model), assembler_(assembler), options_(options),
-        small_(options.kinematics == Kinematics::SmallStrain) {
+        small_(options.kinematics == Kinematics::SmallStrain),
+        logarithmic_(options.kinematics == Kinematics::FiniteLogarithmic) {
+    if (logarithmic_ && options.law != HyperelasticModel::SaintVenantKirchhoff) {
+      throw ConfigError("the \"finite_logarithmic\" kinematics has its own elastic law, "
+                        "Hencky's (quadratic in the logarithmic strain); the \"neo_hookean\" "
+                        "material model is for \"finite\" kinematics");
+    }
     const LoadCaseSpec& spec = model.load_case_specs()[lc];
     const LoadCaseData& data = model.load_case_data(lc);
     const Index n = model.dofs().num_dofs();
@@ -255,6 +261,12 @@ class NonlinearSystem {
   }
 
   bool symmetric() const { return symmetric_; }
+  /// Element e is evaluated by the return of Elastoplastic.hpp: every element
+  /// with small-strain or logarithmic kinematics (linear or Hencky
+  /// elasticity), the elastoplastic ones with finite kinematics.
+  bool routed_through_return(Index e) const {
+    return small_ || logarithmic_ || elastoplastic(e);
+  }
   const Vector& dead() const { return dead_; }
   /// Some material is elastoplastic.
   bool plastic() const { return plastic_; }
@@ -319,7 +331,7 @@ class NonlinearSystem {
           for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
         }
         TotalLagrangianElement tl;
-        if (small_ || elastoplastic(e)) {
+        if (routed_through_return(e)) {
           ElastoplasticElement ep = elastoplastic_element(
               model_, e, ue, committed(e), averaged(e), temperature, lambda, want_tangent,
               options_.kinematics);
@@ -430,6 +442,7 @@ class NonlinearSystem {
   const Assembler& assembler_;
   const NonlinearOptions& options_;
   bool small_ = false;
+  bool logarithmic_ = false;
   bool plastic_ = false;
   std::vector<std::vector<PlasticState>> committed_;  ///< per element; empty if elastic
   std::vector<char> averaged_;                        ///< per element: mean dilatation

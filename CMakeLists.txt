@@ -52,6 +52,7 @@ add_library(sparlab STATIC
   src/material/IsotropicMaterial.cpp
   src/material/Hyperelastic.cpp
   src/material/Plasticity.cpp
+  src/material/LogarithmicStrain.cpp
   src/elements/Quadrature.cpp
   src/elements/Element.cpp
   src/elements/Quad4.cpp

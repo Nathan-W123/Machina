@@ -189,6 +189,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   std::string contact_failure;  // why the last contact iteration gave up
   const bool arc = options_.method == NonlinearOptions::Method::ArcLength;
   const bool small = options_.kinematics == Kinematics::SmallStrain;
+  const bool logarithmic = options_.kinematics == Kinematics::FiniteLogarithmic;
   // The jump test compares the converged state with the elastic tangent's
   // prediction: meaningful with finite kinematics and elastic materials only
   // (see the file comment).
@@ -206,7 +207,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   NonlinearResult result;
   result.load_case_name = spec.name;
   result.method = to_string(options_.method);
-  result.law = to_string(options_.law);
+  result.law = logarithmic ? "hencky" : to_string(options_.law);
   result.kinematics = to_string(options_.kinematics);
   result.plastic = system.plastic();
   for (Index e = 0; e < mesh.num_elements(); ++e) {
@@ -940,6 +941,10 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   result.element_von_mises = Vector::Zero(ne);
   result.element_cauchy_zz = Vector::Zero(ne);
   if (system.plastic()) result.element_plastic_strain = Vector::Zero(ne);
+  if (logarithmic) {
+    result.element_kirchhoff = Matrix::Zero(6, ne);
+    result.element_log_strain = Matrix::Zero(6, ne);
+  }
   const LoadCaseData& data = model_.load_case_data(load_case);
   const Vector* temperature = data.temperature.size() > 0 ? &data.temperature : nullptr;
   result.min_jacobian = std::numeric_limits<Scalar>::infinity();
@@ -957,7 +962,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     for (int a = 0; a < npe; ++a) {
       for (int k = 0; k < dim; ++k) ue(dim * a + k) = u(nodes[a] * dim + k);
     }
-    if (small || system.elastoplastic(e)) {
+    if (system.routed_through_return(e)) {
       const ElastoplasticStress st =
           elastoplastic_stress(model_, e, ue, system.committed(e), system.averaged(e),
                                temperature, lambda, options_.kinematics);
@@ -969,6 +974,10 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       result.min_jacobian = std::min(result.min_jacobian, st.min_jacobian);
       result.max_rotation = std::max(result.max_rotation, st.max_rotation);
       result.max_quadratic_strain = std::max(result.max_quadratic_strain, st.max_quadratic_strain);
+      if (logarithmic) {
+        result.element_kirchhoff.col(e) = st.kirchhoff;
+        result.element_log_strain.col(e) = st.logarithmic_strain;
+      }
       if (system.elastoplastic(e)) {
         result.element_plastic_strain(e) = st.max_equivalent_plastic_strain;
         result.max_plastic_strain =
@@ -1005,7 +1014,8 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
        << " rad); \"finite\" kinematics models it";
     warn(os.str());
   }
-  if ((small || system.plastic()) && result.max_green_strain > kStrainWarning) {
+  // (The logarithmic kinematics is meant for large strain.)
+  if ((small || system.plastic()) && !logarithmic && result.max_green_strain > kStrainWarning) {
     std::ostringstream os;
     os << "the largest strain is " << result.max_green_strain << ", beyond the small strains "
        << (system.plastic() ? "the elastoplastic law assumes"
@@ -1032,7 +1042,8 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   } else {
     log::info("non-linear analysis of load case '", spec.name, "': ", result.steps.size(),
               " step(s), ", result.total_iterations, " iteration(s), ", result.total_cuts,
-              " cut(s), lambda = ", lambda, ", largest ", small ? "strain " : "Green strain ",
+              " cut(s), lambda = ", lambda, ", largest ",
+              small ? "strain " : logarithmic ? "log strain " : "Green strain ",
               result.max_green_strain);
     if (system.plastic()) {
       log::info("  ", result.plastic_points, " of ", result.total_points,

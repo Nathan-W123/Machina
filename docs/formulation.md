@@ -1105,11 +1105,126 @@ in scikit-fem reproduces four large-deflection decks - a Tet10 cantilever,
 and a clamped beam driven into membrane action and back with combined
 hardening on Hex8 and Q4 (E-bar) and in plane stress
 (`docs/verification.md`, section 24). The model is not finite-strain
-plasticity: beyond a Green strain of 0.05 the run warns. A large rotation
+plasticity: beyond a Green strain of 0.05 the run warns - large strains
+take the logarithmic kinematics below. A large rotation
 superposed on plastic flow also sharpens a real effect: under a large
 hydrostatic pressure (a 3 % volume change, 5 GPa) the
 geometric stiffness outweighs a small plastic tangent and a homogeneous
 state loses stability - at strains well beyond the model's range.
+
+**Logarithmic-strain finite plasticity.** With `kinematics:
+finite_logarithmic` the strains may be large (Miehe, Apel and Lambrecht,
+*Anisotropic additive plasticity in the logarithmic strain space*, CMAME
+191, 2002; `src/material/LogarithmicStrain.cpp`). Total Lagrangian as
+above, but the return - the same J2, Hill48, Chaboche, plane-stress and
+thermal return, unchanged - takes the logarithmic (Hencky) strain
+
+```
+  E_log = ln(C) / 2 = sum_a (ln lambda_a / 2) N_a N_a ,   C = F^T F = I + 2 E ,
+  tr E_log = ln J ,
+```
+
+from the spectral decomposition of E (`lambda_a = 1 + 2 mu_a`, and
+`ln(lambda_a) / 2 = log1p(2 mu_a) / 2`, which keeps the relative accuracy of
+E at a strain of `1e-6`), and gives the stress T conjugate to it with its
+algorithmic tangent `C_alg = dT/dE_log`. The additive split
+`E_log = E_log,e + E_log,p` with `T = D E_log,e` is exact for a coaxial
+homogeneous stretch - the log strains of successive coaxial stretches add -
+so uniaxial J2 at any strain is the 1-D small-strain law in the log strain,
+with T the Kirchhoff stress. The flow stays isochoric (`det F_p = 1`), the
+Hill48 axes are those of the reference configuration and turn with the
+material (no plastic spin of the texture), and the model is objective: C,
+and so everything but the push-forward, ignores a superposed rotation.
+
+With `dE_log = P dE` (`P = 2 dE_log/dC`) and `dE = B_NL du`:
+
+```
+  S = P^T T ,   f = int B_NL^T S dV_0 ,
+  K = int B_NL^T (P^T C_alg P + T : L) B_NL dV_0 + int (G^T S G) x I dV_0 ,
+```
+
+`T : L` the Hessian of `T : E_log(E)` at fixed T (`L = 4 d2E_log/dC dC`,
+the sixth-order term). By the Daleckii-Krein formulas, in the principal axes
+of C,
+
+```
+  [dE_log]_ab = l[lambda_a, lambda_b] [dE]_ab ,
+  T : d2E_log[dE1, dE2] = 2 sum_abc T_ab l[lambda_a, lambda_c, lambda_b]
+                            ([dE1]_ac [dE2]_cb + [dE2]_ac [dE1]_cb) ,
+```
+
+with the divided differences of ln, `l[x, y] = (ln x - ln y)/(x - y)` and
+`l[x, y, z] = (l[x, y] - l[y, z])/(x - z)`, `l[x, x] = 1/x`,
+`l[x, x, x] = -1/(2 x^2)`. They carry the whole treatment of equal and nearly
+equal eigenvalues: `l[x, y]` is evaluated as `log1p((x - y)/y)/(x - y)`,
+exact to round-off at any gap and at none; `l[x, y, z]` as the difference
+quotient when the spread `x - z` exceeds `5e-3 y`, and otherwise as the
+Taylor series about the middle eigenvalue to fifth order,
+`y^-2 sum_n (-1)^(n+1) h_n(u, w)/(n + 2)` with `u = (x - y)/y`,
+`w = (z - y)/y` and `h_n` the complete homogeneous symmetric polynomials -
+the threshold balancing the cancellation of the quotient (about
+`4 eps / 5e-3 = 2e-13`) against the truncation of the series
+(`(5e-3)^6 = 2e-14`), so that distinct, two equal, three equal and nearly
+equal eigenvalues are all evaluated to about `1e-13` and continuously.
+Checked against an independent matrix logarithm (Schur-Pade, `4.8e-15`) and
+against fourth-order central differences of `E_log(E)` at distinct
+eigenvalues, two equal, `C = I`, `C = s^2 I`, and gaps of `1e-9`, `1e-7`,
+`1e-4` (two and three eigenvalues) and on both sides of the series threshold
+(`P` to `4.1e-12`, `T : L` to `4.3e-12`: the differences' own accuracy).
+
+The elasticity is Hencky's, quadratic in `E_log`, for elastic elements too
+(the `material_model` is then not used; `neo_hookean` is refused). The
+thermal strain is the log strain of the free thermal stretch
+`1 + alpha dT` - the stretch of `finite` kinematics - `ln(1 + alpha dT) I`,
+which the return takes as the temperature change `ln(1 + alpha dT)/alpha`:
+a freely heated body expands stress-free by `1 + alpha dT`. In plane stress
+the return finds `E_log,33` with `T_33 = 0`, which is `S_33 = 0` (the
+normal is a principal direction of C), and the thickness stretches by
+`exp(E_log,33)`.
+
+*Mean dilatation* acts on the logarithmic volumetric strain `ln J`: each
+point's `ln J` is replaced by the element's volume average,
+`E_log_bar = E_log + (1/3) m (mean(ln J) - ln J)`, exactly the log strain of
+the modified deformation `F_bar = (J_bar/J)^(1/3) F`, so it stays objective.
+With `b = m^T P B_NL` the variation of `ln J` and `B_bar = P B_NL +
+(1/3) m (mean(b) - b)`, the force is `int B_bar^T T` and the consistent
+tangent
+
+```
+  K = int [ B_bar^T C_alg B_bar + B_NL^T (T' : L) B_NL + (G^T S' G) x I ] dV_0 ,
+  T' = dev T + p_bar m ,   S' = P^T T' ,
+```
+
+`p_bar` the element's mean Kirchhoff pressure: the second variation of
+`int T : E_log_bar` is that of `int (T - p m) : E_log` plus `int p` times the
+second variation of `mean(ln J)`, and both are initial-stress terms because
+`ln J = m : E_log`. On the thick tube driven past its collapse at finite
+strain (`--study logarithmic-tube`), Q4 and Hex8 with this averaging
+converge at second order to the collapse pressure of the locking-free Tet10
+(`4.7e-4 p_L` on 16 cells through the wall), while the fully integrated Q4
+locks (`0.117 p_L` too high on 4 cells).
+
+*Stress recovery* reports the Kirchhoff stress `tau = F S F^T` (with the
+modified `F_bar`, `F_bar S_bar F_bar^T`, the same), the Cauchy stress
+`tau / J_bar` with `J_bar = exp(tr E_log_bar)`, the second Piola-Kirchhoff
+stress `S = P^T T`, and the log strain the return took (with the thickness
+strain in plane stress).
+
+Uniaxial tension to a stretch of 2 with linear and Voce hardening, a
+tension-compression cycle to `+-0.3` log strain with Armstrong-Frederick
+backstresses, and Hill48 pulled along RD and TD to a stretch of 1.6 (whose
+plastic lateral log strains keep the ratio `r` exactly) are exact to
+`1.2e-13` on a distorted Hex8 patch (`--study logarithmic-uniaxial`); the
+element tangent is the central difference of the internal force (`1.1e-9`)
+for Hex8, Q4 in plane strain and plane stress and Tet10, elastic and
+plastic, J2, Hill48 and Chaboche, with and without mean dilatation at a
+stretch of 1.35 and a turn of 0.6 rad; at strains of `1e-6` the element
+agrees with the Green-Lagrange one to the order of the strain; every
+non-linear verification deck runs with it (`docs/verification.md`,
+section 24). On the plastic clamped beam deck it costs 1.45 times the
+Green-Lagrange run (3.07 s against 2.12 s single-threaded, the same 81 Newton
+iterations): an averaged Hex8 with its tangent takes 35 us against 23 us, for
+the 3 x 3 eigen-decomposition (0.5 us a point) and the `T : L` term.
 
 **History.** Each point keeps `(eps_p, beta, a)` of the last converged step.
 Every Newton iterate, line-search probe and rejected step returns from

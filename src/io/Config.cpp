@@ -1068,6 +1068,12 @@ Configuration parse_configuration(const json::Value& document, const std::string
           previous = f;
         }
       }
+      if (o.kinematics == Kinematics::FiniteLogarithmic &&
+          o.law == HyperelasticModel::NeoHookean) {
+        throw ConfigError("'nonlinear.kinematics' \"finite_logarithmic\" has its own elastic "
+                          "law (Hencky's, quadratic in the logarithmic strain); the "
+                          "\"neo_hookean\" material_model needs \"finite\" kinematics");
+      }
       if (o.kinematics == Kinematics::SmallStrain) {
         if (o.law == HyperelasticModel::NeoHookean) {
           throw ConfigError("'nonlinear.kinematics' \"small_strain\" is linear elasticity; "
@@ -1286,6 +1292,12 @@ Configuration parse_configuration(const json::Value& document, const std::string
             nl.law == HyperelasticModel::NeoHookean) {
           throw ConfigError("'transient.kinematics' \"small_strain\" is linear elasticity; "
                             "the \"neo_hookean\" material_model needs \"finite\" kinematics");
+        }
+        if (nl.kinematics == Kinematics::FiniteLogarithmic &&
+            nl.law == HyperelasticModel::NeoHookean) {
+          throw ConfigError("'transient.kinematics' \"finite_logarithmic\" has its own elastic "
+                            "law (Hencky's); the \"neo_hookean\" material_model needs "
+                            "\"finite\" kinematics");
         }
         if (nl.law == HyperelasticModel::NeoHookean &&
             config.stress_state == StressState::PlaneStress) {
