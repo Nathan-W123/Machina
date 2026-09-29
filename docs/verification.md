@@ -57,6 +57,10 @@ All numbers in this document come from `results/verification/summary.json`,
 | Thick tube to plastic collapse vs the exact limit load (Q4, Hex8, Tet10; mean dilatation and locking) | verification | largest collapse-pressure error of the default elements, finest mesh (order `>= 1.8` and the fully plastic stress field also required) | `4.82e-04` | `1e-3` | PASS |
 | Pure bending: moment-curvature and residual stress vs exact (plane-stress Q4) | verification | largest moment error over `M_p` on the loading branch, finest mesh (order, residual moment and residual stress also required) | `6.17e-04` | `1e-3` | PASS |
 | Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
+| Uniaxial cycle with Chaboche backstresses vs exact (distorted Hex8, Q4) | verification | largest stress error over `sigma_y` along the cycle | `3.86e-15` | `1e-9` | PASS |
+| Hill48 directional yield stress and r-value vs exact (distorted Q4, Hex8) | verification | largest relative error of the stress, the r-value and the homogeneous field, 0 to 90 deg | `5.63e-15` | `1e-9` | PASS |
+| Large-strain uniaxial tension and cycle in the logarithmic strain vs exact (distorted Hex8) | verification | largest Kirchhoff-stress error over `sigma_y` and relative r-value error, to a stretch of 2 | `1.15e-13` | `1e-12` | PASS |
+| Thick tube to collapse at finite strain, logarithmic strain (Q4, Hex8 with mean dilatation of `ln J`; Tet10) | verification | peak-pressure difference of the averaged Q4 and Hex8 on the finest mesh to the finest Tet10 (order `>= 1.8` also required) | `4.73e-04` | `1e-3` | PASS |
 | HHT-alpha transient vs the exact discrete modal solution (Q4, Hex8; consistent and lumped mass) | verification | largest relative displacement difference over the steps, models, masses and cases (trapezoidal energy balance `<= 1e-10` and positive numerical dissipation also required) | `3.28e-10` | `1e-9` | PASS |
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
@@ -1421,6 +1425,15 @@ were taken:
   effect), the surface keeping its size (kinematic) or growing (isotropic);
   with Voce saturation the stress solves `sigma = sigma_y(eps - sigma/E)` at
   three strains to `1e-11`;
+* *far outside the surface* (deviatoric trial increments of order one, as
+  the Newton iterates of a large-strain run reach, where one ulp of
+  `||xi_tr||` exceeds the multiplier's `1e-13`-of-the-radius tolerance and
+  the Voce return used to throw on up to 6 of 401 such strains): three Voce
+  laws, with and without Prager's modulus, from the virgin state at 401
+  strains `(ln 2.2, ln 1.3, e33)`, `e33` in `[-1, 1]`, and 41 isochoric ones
+  with shear, and a plane-stress step to `(ln 2.2, ln 1.3)` - every return
+  converges onto its yield surface, to `2.5e-13 sigma_y` (tolerance
+  `1e-12`), and the plane-stress one to its `sigma_33` tolerance;
 * *the consistent tangent* is the central difference of the returned stress
   to `1e-6` - in 3-D, plane strain and plane stress, with every hardening
   mechanism at once, on a non-proportional second step from a state with
@@ -1474,6 +1487,110 @@ were taken:
   keeps a permanent set, and thirteen malformed blocks are refused; *the
   CalculiX export* writes one fixed-increment step per leg and a hardening
   table whose chords stay within `1e-4 Q` of the Voce curve.
+
+**Unit tests of Hill48 and Chaboche** (`tests/test_anisotropy.cpp`, 15
+cases; the measured worst case of each check in brackets):
+
+* *the coefficients and the frame*: F, G, H, N from the r-values
+  (`1.9, 1.5, 2.3`) and `r0 = H/G`, `r90 = H/F`, `r45` (exact to `1e-15`);
+  `r = 1` gives von Mises and its matrix (exact); P annihilates the pressure
+  and is symmetric in a tilted frame (`2.2e-16`), whose axes are orthonormal
+  and right-handed; a quarter turn of RD leaves the criterion unchanged when
+  `r0 = r90` (`1.5e-17`); the stress-ratio and explicit calibrations of the
+  same sheet reproduce it (`3.9e-16`); thirteen malformed parameter sets are
+  refused (non-positive r-values, a non-convex quadratic form, RD along ND,
+  five backstresses or four and Prager's modulus, a backstress without
+  modulus or with negative recovery, a criterion or backstresses without a
+  yield stress);
+* *uniaxial stress at 0 to 90 deg from RD* (3-D, five stress components
+  found by Newton; plane stress, two), perfectly plastic past yield in one
+  step: the stress is `sigma_y phi(theta)^(-1/2)` and the plastic width over
+  thickness strain Hill's `r_theta` (`1.1e-13` and `3.3e-14`, tolerance
+  `1e-12`), the flow is isochoric with no out-of-plane shear, and the
+  accumulated strain is work-conjugate; equibiaxial plane stress yields at
+  `sigma_y sqrt(r90 (1 + r0) / (r0 + r90))` with `eps_22 / eps_11 = r0 / r90`
+  (`2.3e-15`);
+* *Hill48 with linear hardening* along 0 to 90 deg follows
+  `E (k sigma_y0 + k^2 H eps) / (E + k^2 H)` in one step and in forty
+  (`6.2e-14`, tolerance `1e-12`), with `alpha = k eps_p` and the stored energy;
+* *frame indifference*: a sheet and a strain history turned together (in
+  the sheet plane, and about a general axis) return the turned stress,
+  plastic strain and back stress with Voce hardening and recovering
+  backstresses on a non-proportional path (`9.2e-16`);
+* *the von Mises limit*: the general return with `r = 1`, and with Prager's
+  rule as one backstress without recovery, reproduces the radial return -
+  stress, tangent, plastic strain, back stress, energy - along the random
+  non-proportional path of the J2 tangent test with every hardening
+  mechanism and a temperature, in 3-D, plane strain and plane stress
+  (`1.2e-15`, tolerance `1e-12`);
+* *Chaboche with Voce* (three backstresses, `gamma = 600, 60, 0`): the
+  monotonic curve `sigma_y(p) + sum C_i/gamma_i (1 - exp(-gamma_i p))` at
+  strains of `0.2 %`, `2 %` and `20 %`, in one step and 25 (`3.7e-14`,
+  tolerance `1e-11`), with every backstress on its own curve; backward Euler
+  at first order - errors `6.6e-3, 3.4e-3, 1.7e-3, 8.6e-4` at 10, 20, 40, 80
+  steps, ratios within 2.3 % of 2;
+* *the reversed branch* `X_i = nu C_i/gamma_i + (X_i0 - nu C_i/gamma_i)
+  exp(-gamma_i D)`: loading, the early reverse yield at `sum X_i - sigma_y`
+  (the Bauschinger effect), and the reversed branch in one step and twenty
+  (`8.3e-16`); *strain cycles* of `+-0.8 %`: each half-cycle's backstress
+  follows the recursion (`1.5e-15`), and a stabilised loop started at its
+  tip peaks at `sigma_y + (C/gamma) tanh(gamma D / 2)` (`3.5e-15`);
+* *the consistent tangent* against central differences (`1.3e-10`,
+  tolerance `1e-8`) for Hill48 with Voce, Chaboche with Voce, Hill48 with
+  recovering and linear backstresses, Prager's modulus and Voce (in a
+  tilted frame and in the sheet plane), exponential and backward Euler, and
+  Hill48 with linear backstresses - in 3-D, plane strain and plane stress
+  (the tilted frame in 3-D only; the plane states refuse it), with a
+  temperature: symmetric to round-off without recovery (`7.2e-16`),
+  non-symmetric (above `1e-4`) with it; the converged point is on its
+  surface to `1e-13 sigma_y`, so the return from it at the same strain is
+  elastic; plane stress returns the 3-D state at its `eps_33`; after a
+  plastic step a zero increment gives the continuum tangent, which a
+  further increment of `1e-9` along the flow follows (tolerance `1e-6`);
+* *the returned state on its surface*: 100 random Hill48 sheets with Voce, a
+  recovering and a linear backstress, each along six random increments of
+  up to `1e-3`, `1e-2` and `1e-1` per strain component, in 3-D and plane
+  stress (3,055 plastic returns): the yield function of the returned state
+  is at most `9.1e-15 sigma_y` up to `1e-2` (tolerance `1e-13`) and
+  `9.3e-14 sigma_y` at `1e-1`, where the trial stress is some hundred
+  `sigma_y` (tolerance `3e-13`); not one re-return from it is plastic, and
+  each reproduces the stress to `1e-12`;
+* *an independent reference on a non-proportional path*: Hill48 (r-values
+  1.9, 1.5, 2.3, L = 1.3, M = 1.7) in a frame tilted out of every
+  coordinate plane, Voce and linear hardening, two recovering backstresses,
+  a linear one and Prager's modulus, along three straight 3-D strain
+  segments with a reversal, against the rate equations integrated by the
+  classical Runge-Kutta method in 40,000 substeps a segment (its own Hill
+  matrix, polarised from the quadratic form in its own frame; it leaves the
+  surface by `2.2e-14 sigma_y`): the return converges at first order,
+  errors `1.27e-3, 6.32e-4, 3.16e-4, 1.58e-4` (exponential) and
+  `1.36e-3, 6.81e-4, 3.41e-4, 1.70e-4` (backward Euler) at 100 to 800 steps
+  a segment, ratios `2.000 +- 0.003` (tolerance `2 +- 0.05`);
+* *the plane models*: a Hill48 frame whose axes miss z is refused by the
+  plane-strain and plane-stress return (`ConfigError`) and by the
+  non-linear analysis before its first step, as by the deck;
+* *the element*: Hill48 with recovering backstresses on Q4 (plane strain,
+  plane stress), Hex8 and Tet10, small strain and finite kinematics turned
+  by 0.5 rad, with and without mean dilatation - the unsymmetrised tangent
+  is the central difference of the internal force (`5.8e-10`, tolerance
+  `1e-8`) and is non-symmetric; without recovery it stays symmetric; a
+  rigidly rotated finite state of a sheet in a tilted frame keeps its
+  plastic state and energy and turns its forces;
+* *a homogeneous deformation* of Hill48 (a tilted frame in 3-D, a rolling
+  angle of 35 deg in plane strain) with recovering backstresses and Voce,
+  loaded and reversed past reverse yield on distorted Q4, Hex8 and Tet10
+  meshes with small strain and finite kinematics: every node to `1e-12` m
+  (`9.5e-18` m) and every element's stress - every component, `sigma_33` of
+  plane strain too - and plastic strain the point history in the solver's
+  steps (`1.8e-13`, tolerance `1e-11`);
+* *the deck*: the Hill48, Chaboche and integration keys parse in their three
+  calibrations and with a rolling angle, a Hill48-Chaboche strip is loaded
+  and unloaded through the non-symmetric tangent (at most 5 Newton
+  iterations a step; 7 with the tangent symmetrised), which its plastic
+  steps factorise by LU (no inertia reported) where the same strip without
+  recovery keeps LDL^T, `summary.json`
+  reports the law, the CalculiX export refuses it with the reason, and
+  twenty-three malformed blocks are refused.
 
 **Studies** (`apps/verify_plasticity.cpp`; `docs/results/README.md` has the
 full tables).
@@ -1540,6 +1657,34 @@ hardening (4 GPa). The end force over the area matches the exact uniaxial
 response - the algebraic equations of the uniaxial state, solved at every
 step - to `1.98e-14 sigma_y`: the reversal yields early (the Bauschinger
 effect) and the loop grows as the isotropic hardening accumulates.
+
+*A uniaxial cycle with Chaboche backstresses* (`--study chaboche-cycle`).
+The same cycle, `0 -> 1 % -> -1 % -> 1 %` in 20 steps a leg, on a
+distorted `4 x 2 x 2` Hex8 bar (mean dilatation) and a distorted `4 x 2`
+plane-stress Q4 bar, of a steel with `sigma_y = 170 MPa`, Voce 90 MPa at
+rate 12 and three Armstrong-Frederick backstresses
+`(C, gamma) = (60 GPa, 600), (8 GPa, 60), (1 GPa, 0)`, integrated
+exponentially. The exact response solves, step by step, the branch solution
+`X_i = nu C_i/gamma_i + (X_i0 - nu C_i/gamma_i) exp(-gamma_i D)` with the
+consistency condition; the end force over the area matches it to
+`3.9e-15 sigma_y` (tolerance `1e-9`) over the 120 steps. The reverse yield
+stress at the first turn is `-18.6 MPa` against a forward flow stress of
+about 400 MPa - the Bauschinger effect of the saturating backstresses - and
+Newton needs at most 4 iterations a step on the non-symmetric tangent.
+
+*Hill48 directional properties* (`--study hill-directional`). A unit
+square (distorted `4 x 4` plane-stress Q4) and a `1 x 1 x 0.5` block
+(distorted `3 x 3 x 2` Hex8) of a sheet with `r0 = 1.9, r45 = 1.5,
+r90 = 2.3`, `sigma_y = 170 MPa` and linear hardening 1 GPa, rolled at
+`-theta` from x for `theta = 0, 15, ..., 90 deg`, are pulled along x to a
+strain of 1 % in 10 steps, with supports that leave the lateral strains and
+the in-plane shear of off-axis flow free so that uniaxial stress is exact.
+The end force over the area matches the directional hardening curve
+`E (k sigma_y + k^2 H eps) / (E + k^2 H)`, `k = phi(theta)^(-1/2)`, to
+`1.2e-15`; the plastic width over thickness strain, from the corner
+displacements (and incompressibility in plane stress), matches Hill's
+`r_theta` to `5.6e-15`; every node lies on the homogeneous field to
+`1.0e-15` of the applied displacement (tolerance `1e-9` on all three).
 
 **Cross-validation** (`python/scripts/cross_validate.py`, the ten
 `plastic_*` decks). scikit-fem solves every deck with an independent J2
@@ -1620,6 +1765,119 @@ were taken:
   floor SparLab's run sat on (`3.4e-11`, within its `1e-10`). It now accepts,
   as SparLab does, a residual at its round-off floor, once Newton has
   stopped reducing it.
+
+### Logarithmic-strain finite plasticity
+
+`kinematics: finite_logarithmic` (formulation, section 7d). **Unit tests**
+(`tests/test_logarithmic.cpp`, 14 cases):
+
+* *the strain and its derivatives* at C = Q diag(lambda) Q^T in a general
+  frame: distinct eigenvalues, two equal, `C = I`, `C = s^2 I`, two and three
+  eigenvalues within `1e-9`, `1e-7` and `1e-4`, three spread over `4e-3`
+  (the Taylor series) and `6e-3` (the difference quotient), and a stretch of
+  2 with two lateral eigenvalues `1e-8` apart. `E_log` matches an independent
+  matrix logarithm (Eigen's Schur-Pade) to `4.8e-15` (tolerance `1e-14`) and
+  `ln J` its trace; `P` and `T : L`, for a stress not coaxial with C, match
+  fourth-order central differences of `E_log(E)` and of `S(E) = P^T T` to
+  `4.1e-12` and `4.3e-12` (tolerance `1e-11`: the differences' own
+  accuracy, their round-off `eps / h`); `T : L` is symmetric and `S = P^T T` to `1e-15`; two eigenvalues
+  `1e-9` apart give the `P` and `T : L` of the equal pair to `2e-9`; `C = I`
+  gives `P = I`; at strains of `1e-6` the strain is `E - E^2 + (4/3) E^3` to
+  `1e-15` (the `log1p` of the eigenvalues of E); an E that no deformation
+  has (`C` not positive definite) or a non-finite one throws `SolverError`;
+* *the element tangent* of Hex8, Q4 in plane strain and in plane stress and
+  Tet10, with and without mean dilatation, elastic (Hencky), J2 with Voce,
+  linear and Prager hardening, Hill48 with Voce, and Chaboche (non-symmetric),
+  from a plastic state at a stretch of 1.35 with shear and a turn of 0.6 rad
+  to a second one: the central difference of the internal force to `1.1e-9`
+  (tolerance `1e-8`), symmetric exactly when the law is; the thermal load
+  rate the derivative of the force with respect to the temperature scale
+  (`2.1e-11` in 3-D, `9.3e-10` in plane stress; tolerance `1e-8`);
+* *objectivity*: Hill48 in a tilted frame with a recovering backstress, Hex8
+  and Tet10, with and without mean dilatation - a superposed rotation of
+  0.9 rad leaves the energy (`1e-12`), the plastic strain, back stress and
+  accumulated strain (`1e-11`), `S` and the log strain unchanged, and turns
+  the forces, the Kirchhoff and the Cauchy stress (`1e-11`);
+* *inverted points*: Hex8, Q4 in plane strain and plane stress and Tet10,
+  with and without mean dilatation - a reflection `diag(-1/2, 1, 1)` (whose
+  C, log strain and energy are those of a valid compression) and a general
+  inverted F are refused by the element and by the stress recovery with
+  `SolverError`, while a compression to `det F = 0.05` evaluates and a turn
+  by pi (`det F = +1`, negative entries) gives the energy of the unturned
+  state (`1e-12`); a Hex8 block, elastic and with J2, whose end is pushed to
+  `u_x = -1.5 L` in 10 steps stops short of zero volume (`lambda < 2/3`)
+  with every converged state valid - without the check the elastic run
+  converged through it to `lambda = 1` at `det F = -0.76`;
+* *the small-strain limit*: at strains of `1e-6` the forces and tangents of
+  the logarithmic and the Green-Lagrange Hex8, Tet10 and Q4 differ by
+  `3.3` to `11.9` times the strain (tolerance 20 times), elastic or yielding,
+  and ten times less at `1e-7` (ratio `10.000`, within 5 %) - first order;
+* *uniaxial tension to a stretch of 2* (log strain 0.69) of one Hex8 and of
+  a distorted `2 x 2 x 2` patch on symmetry planes, J2 with linear and with
+  Voce hardening, 20 steps: the Kirchhoff stress (end force times stretch
+  over the reference area) against the 1-D law at `ln(l1)` at every step to
+  `4.3e-14` (tolerance `1e-12`), the two lateral log strains equal and adding
+  with the axial one to the elastic volume change `(1 - 2 nu) tau / E`
+  (`7.2e-16`), the accumulated plastic strain exact (`6.4e-16`), and every
+  element's Kirchhoff stress, log strain and Cauchy stress `tau / J` those of
+  the exact state (`4.8e-14`; tolerance `1e-12` throughout); no small-strain
+  warning;
+* *a tension-compression cycle to `+-0.3` log strain* with Voce hardening
+  and two Armstrong-Frederick backstresses (exponential), through
+  `0 -> e^0.3 -> e^-0.3 -> e^0.3`: the Kirchhoff stress follows the exact
+  branch solutions to `7.0e-14 sigma_y` and the accumulated plastic strain to
+  `3.6e-15` (tolerance `1e-12`), with reverse yielding;
+* *Hill48 along RD and along TD* to a stretch of 1.6: the Kirchhoff stress
+  follows `E (k sigma_y + k^2 H eps) / (E + k^2 H)` to `2.4e-14` and the
+  plastic lateral log strains keep the ratio `r0 = 1.9` and `r90 = 2.3` to
+  `6.3e-15` (tolerance `1e-12`) at every plastic step;
+* *plane stress*: a distorted Q4 strip pulled to a stretch of 1.6 follows the
+  1-D law (`9.8e-15`), and its thickness log strain, found by the return,
+  equals the in-plane lateral one (`2.1e-15`), with `J = l1 l2
+  exp(E_log,33)` (`1.2e-14`; tolerance `1e-12` throughout);
+* *free heating*: Q4 (plane stress), Hex8 and Tet10 blocks heated by 500 K on
+  determinate supports take `u = alpha dT x` (to `1e-13` m), stress-free
+  (`2.8e-6` Pa against `E alpha dT = 1.2 GPa`; tolerance `1e-12 E alpha dT`),
+  with the log strain `ln(1 + alpha dT)` in every direction, the thickness's
+  included (`2.2e-15`; tolerance `1e-12`);
+* *the verification decks*: every deck of `configs/verification` with a
+  non-linear static or transient analysis, switched to
+  `finite_logarithmic` - small-strain decks included - completes (17 runs);
+  the neo-Hookean one is refused. The plastic clamped beam, driven 20 mm
+  down (strains to 2.1 %, 2 % plastic) and back, agrees with its
+  Green-Lagrange run to the order of that strain: mid-span force within
+  `1.42e-2` of its largest value, end tension within `1.57e-2 sigma_y A`,
+  accumulated plastic strain within `0.5 %`;
+* *the deck*: `"kinematics": "finite_logarithmic"` parses, the run reports
+  `hencky` and the largest log strain, the stress CSV and VTK carry the
+  Kirchhoff stress and the log strain, CalculiX export says why it cannot,
+  and `neo_hookean` with it is refused.
+
+**Studies.** *Large-strain uniaxial tension and cycle*
+(`--study logarithmic-uniaxial`): the tests' five uniaxial runs on the
+distorted `2 x 2 x 2` Hex8 patch (J2 linear and Voce to a stretch of 2,
+Chaboche to `+-0.3` log strain, Hill48 along RD and TD to 1.6; 122 steps,
+accumulated plastic strain up to 1.48): the Kirchhoff stress against the 1-D
+law in the log strain to `1.15e-13 sigma_y` and the r-values to `6.3e-15`
+(tolerance `1e-12`).
+
+*The thick tube at finite strain* (`--study logarithmic-tube`): the tube of
+`plastic-cylinder` with logarithmic kinematics and a follower bore pressure,
+along the arc-length path past its peak (strains to 4 - 5 %). At finite
+strain the peak falls below the small-strain limit as the wall thins:
+`0.99160 p_L` and `0.99156 p_L` for Tet10 with 4 and 8 cells through the
+wall, the reference. Q4 and Hex8 with the mean dilatation of `ln J` reach it
+at second order - `7.6e-3`, `1.9e-3`, `4.7e-4` above it on 4, 8, 16 cells
+(order `2.01`; tolerance `1e-3` on the finest) - while the fully integrated
+Q4 locks: `0.117`, `8.8e-3`, `1.9e-3` above it.
+
+What remains: no cross-validation of the logarithmic kinematics against
+another code (CalculiX's finite-strain plasticity is multiplicative, and its
+elasticity under `NLGEOM` Saint Venant-Kirchhoff), no exact solution with
+rotating principal axes at large strain, and the elastica deck, which
+completes, needs 74 steps instead of 10: the first Newton iterate from the
+linear predictor lands where the Hencky tangent has negative pivots, and
+load control halves the first step three times.
 
 ## 25. Dynamics
 
@@ -1814,20 +2072,27 @@ Stated plainly, since the absence matters as much as the presence:
   models only buckle in their plane. The non-linear analysis has no branch
   switching, so a post-buckling path is computed only from an imperfect mesh,
   and none is verified;
-* plasticity is small-strain J2 with rate-independent linear, Voce and
-  Prager hardening: no finite-strain plasticity (with `finite` kinematics
+* plasticity is small-strain J2 or Hill48 with rate-independent linear,
+  Voce, Prager and Chaboche (Armstrong-Frederick) hardening: no finite-strain
+  plasticity (with `finite` kinematics
   the return works in the Green-Lagrange strain, sound for large rotation
   with small strain; it is cross-validated against an independent
   implementation of that model, and against CalculiX's finite-strain model
   only as an informational comparison), no rate dependence, creep, damage,
-  fracture or non-associative flow, no nonlinear kinematic hardening
-  (Armstrong-Frederick), no anisotropic yield. The exact solutions cover the
+  fracture or non-associative flow, no non-quadratic anisotropic yield. The
+  exact solutions cover the
   collapse load and fully plastic field of a tube, pure bending with
-  unloading and a uniaxial cycle; locking was measured on the tube only, so
+  unloading and uniaxial cycles (Prager and Chaboche), and for Hill48 the
+  directional yield stress and r-value of homogeneous states; locking was
+  measured on the tube only, so
   the Tri3 result there (no locking with the checkerboard split) does not
   carry to other meshes. Kinematic hardening is not cross-validated against
   CalculiX (its implementation does not reproduce Prager's rule), only
-  against scikit-fem and the exact uniaxial solutions;
+  against scikit-fem and the exact uniaxial solutions; Hill48 and the
+  Chaboche backstresses are not cross-validated against another code at
+  all; on a non-proportional path the general return is measured against
+  an independent Runge-Kutta integration of the rate equations (first
+  order), not against an exact solution;
 * the non-linear analysis is verified against exact solutions of a beam
   theory (the elastica, small strain), of plane-strain finite elasticity
   (the tube: inflation, spin, heating) and by the consistency of three

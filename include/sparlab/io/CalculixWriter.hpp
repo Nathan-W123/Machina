@@ -47,7 +47,8 @@
 /// hardening is not exported: CalculiX 2.21's `HARDENING=KINEMATIC`, given
 /// the table of a linear rule, softens a single element in uniaxial tension
 /// at the rate the rule hardens it (measured), so such a case gets no
-/// non-linear deck. Under NLGEOM CalculiX's
+/// non-linear deck; nor does a Hill48 material (CalculiX's `*PLASTIC` is von
+/// Mises) or one with Armstrong-Frederick backstresses. Under NLGEOM CalculiX's
 /// `*ELASTIC` material is Saint Venant-Kirchhoff (second Piola-Kirchhoff
 /// stress linear in the Green-Lagrange strain) and its `*DLOAD` pressure
 /// follows the deforming face, so a follower pressure stays a face load
@@ -115,6 +116,17 @@ struct CalculixTransientExport {
 std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
                                         const TransientOptions& options);
 
+/// Why a non-linear or transient case with `finite_logarithmic` kinematics
+/// cannot go out to CalculiX (no counterpart of its laws).
+std::string calculix_logarithmic_obstacle();
+
+/// Why a material's plasticity cannot go out as CalculiX's `*PLASTIC` in a
+/// non-linear or transient deck - Hill48 anisotropy, Armstrong-Frederick
+/// backstresses with recovery, or linear kinematic hardening (Prager's
+/// modulus or backstresses without recovery) - or an empty string when it
+/// can (elastic, or von Mises with isotropic hardening).
+std::string calculix_plasticity_obstacle(const IsotropicMaterial& material);
+
 /// Write `<stem>_<load case>.inp` for every load case of `model`, followed by
 /// `<stem>_<load case>_conduction.inp` for a case whose temperature is
 /// conducted, `<stem>_<load case>_nlgeom.inp` for each case `nonlinear`
@@ -123,8 +135,10 @@ std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
 /// \return the paths written, in load-case order.
 /// \throws IoError when a file cannot be written, for a thermal case whose
 ///         materials have different reference temperatures (CalculiX measures
-///         thermal strain from the initial nodal temperature), or for a
-///         transient that calculix_transient_obstacle refuses.
+///         thermal strain from the initial nodal temperature), for a
+///         transient that calculix_transient_obstacle refuses, or for a
+///         non-linear case with a material that calculix_plasticity_obstacle
+///         refuses.
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
                                               const std::string& case_name,
                                               const CalculixNonlinearExport* nonlinear = nullptr,

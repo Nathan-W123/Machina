@@ -18,6 +18,8 @@
 ///   <out>/nonlinear_<lc>.csv        load-displacement path of a non-linear run
 ///   <out>/nonlinear_displacement_<lc>.csv  its final nodal displacements
 ///   <out>/nonlinear_stress_<lc>.csv its final Cauchy and 2nd Piola-Kirchhoff stresses
+///                                   (with logarithmic kinematics also the Kirchhoff
+///                                   stress and the log strain)
 ///   <out>/nonlinear_reactions_<lc>.csv     its final support reactions
 ///   <out>/nonlinear_<lc>.vtk        its final fields
 ///   <out>/transient_<lc>.csv        time history of a transient: energies, monitors

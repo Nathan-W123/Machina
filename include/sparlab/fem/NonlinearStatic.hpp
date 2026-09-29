@@ -6,11 +6,14 @@
 ///
 /// **Kinematics.** `finite` (the default) is the total Lagrangian
 /// formulation of TotalLagrangian.hpp: large displacement and rotation.
-/// `small_strain` keeps the linear strain \f$\varepsilon = Bu\f$ and the
-/// undeformed geometry - no geometric stiffness, pressures on the undeformed
-/// faces, the centrifugal load of the undeformed body - so that with elastic
-/// materials it is the linear analysis and with plastic ones the classical
-/// materially-non-linear-only analysis. The solver reports the rotation and
+/// `finite_logarithmic` is the total Lagrangian formulation in the
+/// logarithmic strain (Elastoplastic.hpp): large strain too, every element
+/// through the return of Plasticity.hpp with Hencky elasticity, plasticity
+/// additive in the log strain. `small_strain` keeps the linear strain
+/// \f$\varepsilon = Bu\f$ and the undeformed geometry - no geometric
+/// stiffness, pressures on the undeformed faces, the centrifugal load of the
+/// undeformed body - so that with elastic materials it is the linear analysis
+/// and with plastic ones the classical materially-non-linear-only analysis. The solver reports the rotation and
 /// the neglected quadratic part of the Green strain, and warns when they are
 /// not small.
 ///
@@ -130,7 +133,8 @@ enum class MeanDilatation {
 
 struct NonlinearOptions {
   /// The elastic law with finite kinematics (small strain is linear
-  /// elasticity); an elastoplastic material takes the Saint Venant-Kirchhoff
+  /// elasticity, logarithmic kinematics Hencky's law, which leaves it at its
+  /// default); an elastoplastic material takes the Saint Venant-Kirchhoff
   /// form.
   HyperelasticModel law = HyperelasticModel::SaintVenantKirchhoff;
   Kinematics kinematics = Kinematics::Finite;
@@ -231,7 +235,8 @@ struct NonlinearResult {
   int total_cuts = 0;
   Scalar strain_energy = 0.0; ///< stored energy at the final state (elastic + hardening) [J]
   /// The largest strain component: Green-Lagrange with finite kinematics,
-  /// the linear strain with small strain [-].
+  /// the logarithmic strain with logarithmic kinematics, the linear strain
+  /// with small strain [-].
   Scalar max_green_strain = 0.0;
   Scalar min_jacobian = 1.0;
   /// Small strain: the largest infinitesimal rotation [rad] and the largest
@@ -252,8 +257,9 @@ struct NonlinearResult {
   std::vector<std::string> warnings;
   EquilibriumCheck equilibrium;  ///< final force balance, deformed loads
   /// The final tangent was symmetric and factorised by LDL^T (which reports
-  /// its inertia); false when a follower pressure left it non-symmetric and
-  /// LU factorised it.
+  /// its inertia); false when a follower pressure or a recovering
+  /// (Armstrong-Frederick) backstress left it non-symmetric and LU
+  /// factorised it.
   bool symmetric_tangent = true;
   std::string linear_solver;
   /// Final element stresses (Voigt): Cauchy and second Piola-Kirchhoff
@@ -263,6 +269,12 @@ struct NonlinearResult {
   Matrix element_piola_kirchhoff;
   Vector element_von_mises;
   Vector element_cauchy_zz;
+  /// Logarithmic kinematics: the final Kirchhoff stress [Pa] and
+  /// (Lagrangian) logarithmic strain [-] of each element, point averages,
+  /// 3-D Voigt tensor components (6 x elements, in 2-D too: the thickness
+  /// strain of plane stress is component zz); empty otherwise.
+  Matrix element_kirchhoff;
+  Matrix element_log_strain;
   /// Contact at the final state: every slave node that takes part, and the
   /// pair totals; empty without contact. The contact forces of rigid
   /// obstacles count as reactions in `equilibrium`.

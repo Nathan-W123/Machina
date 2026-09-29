@@ -230,21 +230,23 @@ int main(int argc, char** argv) {
         const CalculixNonlinearExport* nonlinear_export = nullptr;
         if (config.nonlinear.enabled) {
           const NonlinearOptions& o = config.nonlinear.options;
-          bool kinematic = false;
+          std::string plasticity_obstacle;
           for (const IsotropicMaterial& m : model.materials()) {
-            kinematic = kinematic || m.plasticity().kinematic_hardening_modulus > 0.0;
+            if (plasticity_obstacle.empty()) plasticity_obstacle = calculix_plasticity_obstacle(m);
           }
           if (o.contact.enabled) {
             log::warn("the non-linear cases are not exported to CalculiX: the export does not "
                       "write contact, and without it the deck would be a different problem");
+          } else if (o.kinematics == Kinematics::FiniteLogarithmic) {
+            log::warn("the non-linear cases are not exported to CalculiX: " +
+                      calculix_logarithmic_obstacle());
           } else if (o.kinematics == Kinematics::Finite &&
                      o.law != HyperelasticModel::SaintVenantKirchhoff) {
             log::warn("the non-linear cases are not exported to CalculiX: its NEO HOOKE is a "
                       "different strain energy from SparLab's neo-Hookean law");
-          } else if (kinematic) {
-            log::warn("the non-linear cases are not exported to CalculiX: its "
-                      "HARDENING=KINEMATIC does not reproduce Prager's linear kinematic "
-                      "hardening (a single element in uniaxial tension softens)");
+          } else if (!plasticity_obstacle.empty()) {
+            log::warn("the non-linear cases are not exported to CalculiX: " +
+                      plasticity_obstacle);
           } else {
             nlgeom.load_cases = config.nonlinear_load_cases();
             nlgeom.increments = o.steps;

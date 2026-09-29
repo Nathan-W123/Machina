@@ -36,6 +36,8 @@ set(SPARLAB_TEST_SOURCES
   test_loads_thermal.cpp
   test_nonlinear.cpp
   test_plasticity.cpp
+  test_anisotropy.cpp
+  test_logarithmic.cpp
   test_dynamics.cpp
   test_contact.cpp
 )
@@ -43,6 +45,8 @@ set(SPARLAB_TEST_SOURCES
 add_executable(sparlab_tests ${SPARLAB_TEST_SOURCES})
 target_link_libraries(sparlab_tests PRIVATE sparlab Catch2::Catch2WithMain)
 target_include_directories(sparlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The verification decks, which test_logarithmic.cpp runs.
+target_compile_definitions(sparlab_tests PRIVATE SPARLAB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 if(SPARLAB_ENABLE_WARNINGS AND NOT MSVC)
   target_compile_options(sparlab_tests PRIVATE -Wall -Wextra -Wpedantic)
