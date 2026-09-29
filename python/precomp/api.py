@@ -11,8 +11,18 @@ std)``), optionally extended by
 * ``assess(commanded, setup) -> dict``: an out-of-distribution report.
 
 When the model has them, `compensate` reports the interval and the OOD
-assessment; otherwise those fields are None. `precomp.ml` provides such
-models; nothing here imports it.
+assessment; otherwise those fields are None. A model with `assess` is held
+to its envelope: `compensate` refuses a target, or a compensated shape,
+outside it unless `allow_out_of_envelope`. `precomp.ml` provides such models
+(`DeviationSurrogate`); it is imported only when `model` is given as the
+directory of a saved bundle, which is then loaded with
+`precomp.ml.registry.load_model`.
+
+A model may declare what it predicts in `target`: "dz", the total vertical
+deviation of the formed surface from the commanded one (every precomp.ml
+bundle), or "residual", a correction of a simulation. Method "hybrid" adds
+the model to a simulation, so it refuses a "dz" model - that would count
+the springback twice; models without the attribute are taken as residuals.
 """
 
 from __future__ import annotations
@@ -23,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ._util import PathLike, to_jsonable, write_json
+from ._util import PathLike, PrecompError, to_jsonable, write_json
 from .compensation import (CompositePredictor, DAResult, FEAPredictor, FieldModel,
                            SurrogatePredictor, displacement_adjustment)
 from .fea.deck import make_toolpath
@@ -53,6 +63,18 @@ class PredictionResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
+def resolve_model(model: Union[None, FieldModel, PathLike]) -> Optional[FieldModel]:
+    """A model object, or a `precomp.ml` bundle directory loaded with
+    `precomp.ml.registry.load_model` (imported only then)."""
+    if model is None or hasattr(model, "predict_deviation"):
+        return model
+    if isinstance(model, (str, Path)) or hasattr(model, "__fspath__"):
+        from .ml.registry import load_model
+        return load_model(model)
+    raise TypeError("model must implement predict_deviation(commanded, setup) or be a "
+                    "precomp.ml model directory")
+
+
 def _predictor(setup: FormingSetup, model: Optional[FieldModel], method: str,
                work_dir: Optional[PathLike]):
     if method not in METHODS:
@@ -65,6 +87,12 @@ def _predictor(setup: FormingSetup, model: Optional[FieldModel], method: str,
         return FEAPredictor(setup, work_dir)
     if method == "surrogate":
         return SurrogatePredictor(model, setup)
+    if getattr(model, "target", "residual") == "dz":
+        raise ValueError(
+            "method 'hybrid' adds the model's prediction to a simulation, but this model "
+            "predicts the total deviation dz (formed - commanded), not a residual over a "
+            "simulation: the springback would be counted twice. Use method 'surrogate' (a "
+            "precomp.ml ResidualModel runs its FE prior itself)")
     return CompositePredictor(FEAPredictor(setup, work_dir), model, setup)
 
 
@@ -74,8 +102,10 @@ def predict(commanded: HeightMap, setup: FormingSetup, model: Optional[FieldMode
 
     method "fea" simulates with sparlab_form (cached in `work_dir`);
     "surrogate" evaluates `model`; "hybrid" simulates and adds the model's
-    learned residual.
+    learned residual. `model` may be a model object or a `precomp.ml` bundle
+    directory; its training data source is reported in `details`.
     """
+    model = resolve_model(model)
     pred = _predictor(setup, model, method, work_dir)
     std = None
     if isinstance(pred, SurrogatePredictor):
@@ -83,6 +113,8 @@ def predict(commanded: HeightMap, setup: FormingSetup, model: Optional[FieldMode
     else:
         formed = pred(commanded)
     details: Dict[str, Any] = {}
+    if model is not None and method != "fea":
+        details["model_data_source"] = getattr(model, "data_source", "unknown")
     fea = pred if isinstance(pred, FEAPredictor) else getattr(pred, "base", None)
     if isinstance(fea, FEAPredictor) and fea.results:
         details["fea"] = {k: v for k, v in fea.results[-1].provenance.items()
@@ -99,12 +131,19 @@ class CompensationResult:
     predicted : the predicted formed surface of `compensated` [m].
     interval : (lower, upper) formed surfaces [m] at the model's interval
         level, when the model provides `predict_interval`; else None.
-    ood : the model's out-of-distribution assessment, or None.
+    ood : the model's out-of-distribution assessment of `compensated`, or None.
     verification : when verified by simulation, the metrics [m] of the
         simulated formed surface against the target per region ("all",
         "part", "wall", "flange"), plus the run's content hash; else None.
-    history : the displacement-adjustment history (see `DAResult`).
+    history : the displacement-adjustment history (see `DAResult`) - for
+        "surrogate" and "hybrid", predictions of the model.
     method : "fea", "surrogate" or "hybrid".
+    ood_target : the assessment of the target itself, or None.
+    verified : the simulated formed surface of `compensated` when verified.
+    model_data_source : what the model learned from (None for "fea").
+    allowed_out_of_envelope : whether the envelope was overridden.
+    interval_note : why there is no interval although the model has
+        `predict_interval` (e.g. too few calibration parts for the level).
     """
 
     target: HeightMap
@@ -116,22 +155,44 @@ class CompensationResult:
     verification: Optional[Dict[str, Any]]
     history: List[Dict[str, Any]]
     method: str
+    ood_target: Optional[Dict[str, Any]] = None
+    verified: Optional[HeightMap] = None
+    model_data_source: Optional[str] = None
+    allowed_out_of_envelope: bool = False
+    interval_note: Optional[str] = None
+
+    @property
+    def in_envelope(self) -> Optional[bool]:
+        """Target and compensated shape both inside the envelope (None without one)."""
+        if self.ood is None:
+            return None
+        return bool(self.ood["in_envelope"] and (self.ood_target is None
+                                                 or self.ood_target["in_envelope"]))
 
     def save(self, out_dir: PathLike) -> Path:
-        """Write compensated.npz, predicted.npz, toolpath.csv (SparLab
-        trajectory) and compensation.json (history, verification, OOD)."""
+        """Write compensated.npz, predicted.npz (and verified.npz when
+        verified), toolpath.csv (SparLab trajectory) and compensation.json
+        (history, verification, envelope, with what each number is)."""
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         self.compensated.save(out / "compensated.npz")
         self.predicted.save(out / "predicted.npz")
+        if self.verified is not None:
+            self.verified.save(out / "verified.npz")
         self.toolpath.to_sparlab_csv(out / "toolpath.csv")
         if self.interval is not None:
             self.interval[0].save(out / "predicted_lower.npz")
             self.interval[1].save(out / "predicted_upper.npz")
+        what = ("simulations (sparlab_form)" if self.method == "fea" else
+                f"predictions of the model (data source: {self.model_data_source}), "
+                "not simulations")
         write_json(out / "compensation.json", to_jsonable({
-            "method": self.method, "history": self.history,
-            "verification": self.verification, "ood": self.ood,
-            "toolpath": self.toolpath.summary()}))
+            "method": self.method, "model_data_source": self.model_data_source,
+            "history_quantity": what, "history": self.history,
+            "verification": self.verification, "in_envelope": self.in_envelope,
+            "allowed_out_of_envelope": self.allowed_out_of_envelope,
+            "ood": self.ood, "ood_target": self.ood_target,
+            "interval_note": self.interval_note, "toolpath": self.toolpath.summary()}))
         return out
 
 
@@ -149,7 +210,8 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
                method: str = "fea", iterations: int = 3, alpha: float = 1.0,
                verify: bool = True, work_dir: Optional[PathLike] = None,
                smoothing: Optional[float] = None, direction: str = "vertical",
-               tolerance: Optional[float] = None, interval_level: float = 0.9) -> CompensationResult:
+               tolerance: Optional[float] = None, interval_level: float = 0.9,
+               allow_out_of_envelope: bool = False) -> CompensationResult:
     """Compensate `target` for springback by displacement adjustment.
 
     method "fea": every DA iteration is a sparlab_form simulation (cached in
@@ -161,27 +223,68 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
 
     iterations, alpha, smoothing [m], direction, tolerance [m]: as for
     `displacement_adjustment`. interval_level: coverage passed to the model's
-    `predict_interval`.
+    `predict_interval`. `model` may be a model object or a `precomp.ml`
+    bundle directory.
+
+    allow_out_of_envelope : with a model that has `assess` (an envelope), a
+        target outside it, or a compensated shape outside it, raises
+        PrecompError unless this is True; the verdicts are in `ood_target`,
+        `ood` and each history entry either way. (`precomp.ml.compensate`
+        stops at the first iterate outside instead.)
     """
+    model = resolve_model(model)
     pred = _predictor(setup, model, method, work_dir)
+    learned = model is not None and method in ("surrogate", "hybrid")
+    assess = learned and hasattr(model, "assess") and getattr(model, "ood", True) is not None
+    ood_target = None
+    if assess:
+        ood_target = dict(model.assess(target, setup))
+        if not ood_target["in_envelope"] and not allow_out_of_envelope:
+            raise PrecompError(
+                "the target is outside the model's training envelope (reasons: "
+                f"{', '.join(ood_target.get('reasons', [])[:5]) or 'not given'}): the "
+                "model would extrapolate. Pass allow_out_of_envelope=True "
+                "(--allow-out-of-envelope) to compensate anyway")
+    verdicts: List[Dict[str, Any]] = []
+
+    def record(k: int, c: HeightMap, f: HeightMap, e: HeightMap) -> None:
+        if assess:
+            verdicts.append(dict(model.assess(c, setup)))
+
     da: DAResult = displacement_adjustment(target, pred, iterations=iterations, alpha=alpha,
                                            direction=direction, smoothing=smoothing,
-                                           tolerance=tolerance)
+                                           tolerance=tolerance, callback=record)
     comp = da.commanded
+    history = [dict(h) for h in da.history]
+    for h, v in zip(history, verdicts):
+        h["in_envelope"] = bool(v["in_envelope"])
+        h["ood_part_score"] = v.get("part_score")
+    if learned:
+        for h in history:
+            h["predicted"] = True
     path = make_toolpath(setup, comp)
     interval = None
-    ood = None
-    if model is not None and method in ("surrogate", "hybrid"):
-        if hasattr(model, "predict_interval"):
-            # The interval of the learned deviation, placed around the
-            # prediction: predicted + (bound - mean).
+    interval_note = None
+    ood = verdicts[da.best_iteration] if assess else None
+    if ood is not None and not ood["in_envelope"] and not allow_out_of_envelope:
+        raise PrecompError(
+            f"the compensated shape (iteration {da.best_iteration}) is outside the model's "
+            f"training envelope (reasons: {', '.join(ood.get('reasons', [])[:5]) or 'not given'}"
+            "): its prediction is an extrapolation. Use fewer iterations, or pass "
+            "allow_out_of_envelope=True (--allow-out-of-envelope)")
+    if learned and hasattr(model, "predict_interval"):
+        # The interval of the learned deviation, placed around the
+        # prediction: predicted + (bound - mean).
+        try:
             lo, hi = model.predict_interval(comp, setup, interval_level)
+        except PrecompError as exc:     # not calibrated, or too few parts for the level
+            interval_note = str(exc)
+        else:
             mean = np.asarray(model.predict_deviation(comp, setup)[0], float)
             interval = (da.formed.with_z(da.formed.z + np.asarray(lo, float) - mean),
                         da.formed.with_z(da.formed.z + np.asarray(hi, float) - mean))
-        if hasattr(model, "assess"):
-            ood = dict(model.assess(comp, setup))
     verification = None
+    verified = None
     if method == "fea":
         fea_res = pred.results[da.best_iteration]
         dev = signed_deviation(da.formed, target)
@@ -194,14 +297,19 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
         if work_dir is None:
             raise ValueError("verify=True needs a work_dir to simulate the compensated part")
         res = simulate(setup, comp, work_dir)
-        formed = res.formed_surface(grid=target.grid)
-        dev = signed_deviation(formed, target)
+        verified = res.formed_surface(grid=target.grid)
+        dev = signed_deviation(verified, target)
         verification = {"source": "fea", "key": res.provenance.get("key"),
                         "normal_deviation": _region_metrics(dev, target),
-                        "vertical_deviation": _region_metrics(vertical_deviation(formed, target),
+                        "vertical_deviation": _region_metrics(vertical_deviation(verified,
+                                                                                 target),
                                                               target)}
     return CompensationResult(target, comp, path, da.formed, interval, ood, verification,
-                              da.history, method)
+                              history, method, ood_target=ood_target, verified=verified,
+                              model_data_source=getattr(model, "data_source", "unknown")
+                              if learned else None,
+                              allowed_out_of_envelope=bool(allow_out_of_envelope),
+                              interval_note=interval_note)
 
 
 @dataclass

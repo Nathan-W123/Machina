@@ -9,9 +9,10 @@
     precomp scan compare   align a scan to its target and measure the deviation
     precomp scan update    one DA step of the commanded surface from a scan
     precomp report      Markdown report and figures of target / formed / deviation
-    precomp dataset generate, precomp train, precomp evaluate
+    precomp dataset generate|info, precomp train, precomp evaluate, precomp active
                         machine learning (delegated to precomp.ml, imported only
-                        when one of these runs)
+                        when one of these runs); `compensate --method surrogate
+                        --model DIR` loads a bundle through precomp.ml.registry
 
 Every number on the command line is SI (metres, pascals, seconds); a point
 cloud in millimetres is read with --scale 0.001. Configuration files are
@@ -31,7 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import __version__
 from ._util import PrecompError, canonical_json, read_json, to_jsonable, write_json
 
-ML_COMMANDS = ("dataset", "train", "evaluate")
+ML_COMMANDS = ("dataset", "train", "evaluate", "active")
 
 
 def _parse_value(text: str) -> Any:
@@ -192,17 +193,62 @@ def cmd_compensate(args: argparse.Namespace) -> int:
             raise ValueError(f"--method {args.method} needs --model DIR")
         registry = _import_ml("precomp.ml.registry")
         model = registry.load_model(args.model)
+    if args.verify_fea and args.no_verify:
+        raise ValueError("--verify-fea and --no-verify contradict each other")
+    if args.verify_fea and args.method == "fea":
+        raise ValueError("--verify-fea applies to --method surrogate or hybrid; the fea "
+                         "method's result is a simulation already")
+    if args.verify_fea and not args.work_dir:
+        raise ValueError("--verify-fea simulates the compensated part and needs --work-dir")
     result = compensate(target, setup, model, method=args.method, iterations=args.iterations,
                         alpha=args.alpha, verify=not args.no_verify, work_dir=args.work_dir,
-                        smoothing=args.smoothing, direction=args.direction)
+                        smoothing=args.smoothing, direction=args.direction,
+                        tolerance=args.stop_tolerance,
+                        allow_out_of_envelope=args.allow_out_of_envelope)
     out = result.save(args.out)
     from .metrology import signed_deviation
+    prov: Dict[str, Any] = {"method": result.method, "verification": result.verification,
+                            "setup": setup.physics_dict()}
+    notes: List[str] = []
+    if model is not None:
+        prov["model"] = str(args.model)
+        prov["model_data_source"] = result.model_data_source
+        prov["predicted_surface"] = "surrogate prediction, not a simulation or measurement"
+        if result.ood is not None:
+            env = {"in_envelope": result.in_envelope,
+                   "target": {k: (result.ood_target or {}).get(k) for k in
+                              ("in_envelope", "part_score", "reasons")},
+                   "compensated": {k: result.ood.get(k) for k in
+                                   ("in_envelope", "part_score", "reasons")},
+                   "overridden": result.allowed_out_of_envelope}
+            prov["envelope"] = env
+            verdict = "inside" if result.in_envelope else "OUTSIDE"
+            line = (f"training envelope: target and compensated shape {verdict}"
+                    + ("" if result.in_envelope else " (reasons: "
+                       + ", ".join(((result.ood_target or {}).get("reasons", [])
+                                    + result.ood.get("reasons", []))[:5])
+                       + "; allowed by --allow-out-of-envelope)"))
+            print(line, file=sys.stderr)
+            notes.append(line)
+        if result.interval_note:
+            print(f"no prediction interval: {result.interval_note}", file=sys.stderr)
+            notes.append(f"No prediction interval: {result.interval_note}")
+    if result.verified is not None:
+        # the check, not the model's own prediction, is what the report shows
+        shown, what = result.verified, ("sparlab_form simulation of the compensated shape "
+                                        "(verification run)")
+    else:
+        shown, what = result.predicted, (
+            "simulation (best DA iterate)" if result.method == "fea" else
+            f"PREDICTION of the model (data source: {result.model_data_source}) - not "
+            "verified; run with --verify-fea")
+    prov["shown_formed_surface"] = what
+    notes.insert(0, f"Formed surface and deviation shown: {what}.")
     write_report(out / "report", target, title="Compensation report",
-                 deviation=signed_deviation(result.predicted, target),
-                 formed=result.predicted, commanded=result.compensated,
-                 tolerance=args.tolerance, history=result.history,
-                 provenance={"method": result.method, "verification": result.verification,
-                             "setup": setup.physics_dict()})
+                 deviation=signed_deviation(shown, target),
+                 formed=shown, commanded=result.compensated,
+                 tolerance=args.tolerance, history=result.history, notes=notes,
+                 provenance=prov)
     print(f"wrote {out}")
     return 0
 
@@ -345,8 +391,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--smoothing", type=float, help="update smoothing length [m]")
     s.add_argument("--direction", choices=["vertical", "normal"], default="vertical")
     s.add_argument("--tolerance", type=float, help="report tolerance [m]")
+    s.add_argument("--stop-tolerance", type=float,
+                   help="stop DA when the (predicted) RMS error over the part is below [m]")
     s.add_argument("--work-dir", help="run cache directory")
-    s.add_argument("--no-verify", action="store_true")
+    s.add_argument("--verify-fea", action="store_true",
+                   help="simulate the surrogate-compensated part with sparlab_form and report "
+                        "the achieved deviation (the default for surrogate/hybrid; needs "
+                        "--work-dir)")
+    s.add_argument("--no-verify", action="store_true",
+                   help="skip the verification run (the result is then a prediction only)")
+    s.add_argument("--allow-out-of-envelope", action="store_true",
+                   help="compensate even when the target or the compensated shape lies "
+                        "outside the model's training envelope (refused otherwise)")
     s.add_argument("--out", required=True, help="output directory")
     s.set_defaults(func=cmd_compensate)
 
@@ -386,7 +442,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, text in (("dataset", "simulated data sets (precomp.ml)"),
                        ("train", "train a surrogate (precomp.ml)"),
-                       ("evaluate", "evaluate a surrogate (precomp.ml)")):
+                       ("evaluate", "evaluate a surrogate (precomp.ml)"),
+                       ("active", "rank candidate parts for the next runs (precomp.ml)")):
         s = sub.add_parser(name, help=text, add_help=False)
         s.add_argument("ml_args", nargs=argparse.REMAINDER)
         s.set_defaults(func=None)
