@@ -567,14 +567,20 @@ int ToolContact::anticipate(const Vector& u, const Vector& du, Scalar t, Vector&
         x(comp) += u(node * dim + comp);
         dx(comp) = du(node * dim + comp);
       }
-      Vector3 nrm;
+      Vector3 nrm = Vector3::Zero();
       Matrix3 dn;
       Scalar d = 0.0;
       Scalar g = 0.0;
-      Scalar g_next = 0.0;
       try {
         g = tool.gap(x, c, dim, nrm, dn, d);
-        if (!(g > 0.0)) continue;  // already active: in the tangent
+      } catch (const SolverError&) {
+        // Deep in the tool: not a node outside it to anticipate (and a state
+        // that evaluate() refuses).
+        continue;
+      }
+      if (!(g > 0.0)) continue;  // already active: in the tangent
+      Scalar g_next = 0.0;
+      try {
         Vector3 n_next;
         g_next = tool.gap(x + dx, c, dim, n_next, dn, d);
       } catch (const SolverError&) {

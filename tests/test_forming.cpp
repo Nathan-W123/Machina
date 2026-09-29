@@ -359,6 +359,14 @@ TEST_CASE("tool contact refuses what it cannot model", "[forming]") {
   ToolContact contact(model, {tool});
   Vector u = Vector::Zero(model.dofs().num_dofs());
   CHECK_THROWS_AS(contact.evaluate(u, 1.0, false), SolverError);
+  // The active-set prediction skips such a node (it is not outside the tool)
+  // rather than use the normal of a gap it could not evaluate; the others
+  // stay clear of the tool after the correction, so none is added.
+  Vector extra = Vector::Zero(u.size());
+  std::vector<ToolContactEvaluation::NodeBlock> blocks;
+  CHECK(contact.anticipate(u, Vector::Constant(u.size(), 1.0e-4), 1.0, extra, blocks) == 0);
+  CHECK(blocks.empty());
+  CHECK(extra.cwiseAbs().maxCoeff() == 0.0);
 }
 
 // ---------------------------------------------------------------------------
