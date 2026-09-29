@@ -78,6 +78,7 @@ add_library(sparlab STATIC
   src/fem/NonlinearStatic.cpp
   src/fem/Elastoplastic.cpp
   src/fem/Dynamics.cpp
+  src/fem/Contact.cpp
   src/topopt/SimpInterpolation.cpp
   src/topopt/DensityFilter.cpp
   src/topopt/DesignDomain.cpp

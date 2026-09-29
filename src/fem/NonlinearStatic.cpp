@@ -17,6 +17,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
 #include <sstream>
 
 namespace sparlab {
@@ -120,6 +121,17 @@ NonlinearStaticAnalysis::NonlinearStaticAnalysis(const FemModel& model,
     throw ConfigError("the neo-Hookean law needs plane strain or a solid mesh; in plane "
                       "stress use \"saint_venant_kirchhoff\"");
   }
+  if (options_.contact.enabled) {
+    if (options_.kinematics != Kinematics::SmallStrain) {
+      throw ConfigError("contact is formulated for small displacements - the contact geometry "
+                        "of the reference configuration and a gap linear in the displacement - "
+                        "so it needs \"small_strain\" kinematics in the non-linear analysis");
+    }
+    if (options_.method == NonlinearOptions::Method::ArcLength) {
+      throw ConfigError("contact is solved under load control; the arc-length method is not "
+                        "available with it");
+    }
+  }
   if (!options_.load_path.empty()) {
     if (options_.method == NonlinearOptions::Method::ArcLength) {
       throw ConfigError("'load_path' is followed by load control; the arc-length method "
@@ -169,6 +181,12 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     }
   }
   NonlinearSystem system(model_, assembler_, load_case, options_);
+  std::unique_ptr<ContactProblem> contact;
+  if (options_.contact.enabled) contact = std::make_unique<ContactProblem>(model_, options_.contact);
+  // The contact status of the last converged state (all open at the start).
+  std::vector<ContactStatus> contact_status;
+  if (contact) contact_status.assign(contact->nodes().size(), ContactStatus::Open);
+  std::string contact_failure;  // why the last contact iteration gave up
   const bool arc = options_.method == NonlinearOptions::Method::ArcLength;
   const bool small = options_.kinematics == Kinematics::SmallStrain;
   // The jump test compares the converged state with the elastic tangent's
@@ -257,10 +275,16 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   Vector previous_increment;  // free DOFs, the last converged step's
   int cuts_in_a_row = 0;
 
-  // Record the converged state (u, lambda) with its full residual.
+  // Record the converged state (u, lambda) with its full residual; with
+  // contact, the pair totals of the step (from the state it started at).
+  std::vector<ContactPairResult> step_contact;
   const auto record = [&](int iterations, Scalar residual, int cuts, int pivots,
                           const Vector& full_residual, int yielding) {
     NonlinearStep s;
+    for (const ContactPairResult& p : step_contact) {
+      s.contact_active.push_back(p.active);
+      s.contact_force.push_back(p.force);
+    }
     s.index = static_cast<int>(result.steps.size()) + 1;
     s.load_factor = lambda;
     s.iterations = iterations;
@@ -285,6 +309,10 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     if (system.plastic()) {
       os << ", " << yielding << " point(s) yielding, largest plastic strain "
          << s.max_plastic_strain;
+    }
+    for (const ContactPairResult& p : step_contact) {
+      os << ", contact '" << p.name << "' " << p.active << " node(s), force "
+         << p.force.head(dim).transpose();
     }
     log::info(os.str());
   };
@@ -456,6 +484,66 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     return false;
   };
 
+  // Newton iterations with contact from the converged state `state` (at
+  // lambda) to lambda_new: a semismooth Newton method on the condensed
+  // contact equations (Contact.hpp), from the converged state with the
+  // prescribed displacements of lambda_new. Converged when the contact status
+  // of every node is that of the previous iteration and the condensed
+  // residual - equilibrium, the gap of the nodes in contact, the slip
+  // conditions - is within tolerance (or at its round-off floor).
+  const auto newton_contact = [&](Vector& state, Scalar lambda_new, int& iterations,
+                                  Scalar& residual_out, Vector& full_residual, int& yielding,
+                                  std::vector<ContactStatus>& status_out) -> bool {
+    Vector trial = state;
+    for (std::size_t i = 0; i < fixed.size(); ++i) {
+      trial(fixed[i]) = lambda_new * prescribed(static_cast<Eigen::Index>(i));
+    }
+    std::vector<ContactStatus> previous;
+    for (int it = 1; it <= options_.max_iterations; ++it) {
+      Evaluation ev = system.evaluate(trial, lambda_new, true);
+      const ContactProblem::Linearization lin =
+          contact->linearize(trial, lambda_new, ev.residual, ev.tangent, state, lambda);
+      const Scalar scale = std::max(residual_scale(ev), lin.force_scale);
+      const Scalar norm = lin.rhs.norm();
+      if (!std::isfinite(norm)) return false;
+      const Scalar k_gross = stiffness_gross(ev.tangent, trial, free_dofs);
+      const bool settled = !previous.empty() && lin.status == previous;
+      int in_contact = 0;
+      for (ContactStatus st : lin.status) in_contact += st != ContactStatus::Open ? 1 : 0;
+      log::debug("  contact newton ", it, " at lambda = ", lambda_new, ": |R| = ", norm,
+                 " (scale ", scale, "), ", in_contact, " node(s) in contact",
+                 settled ? ", status settled" : "");
+      if (settled && (norm <= options_.residual_tolerance * scale ||
+                      norm <= residual_floor(ev, k_gross, scale))) {
+        state = trial;
+        iterations = it;
+        residual_out = norm / scale;
+        full_residual = ev.residual;
+        yielding = ev.yielding_points;
+        status_out = lin.status;
+        system.commit(ev);
+        return true;
+      }
+      if (norm > 1.0e8 * scale) return false;  // diverging
+      previous = lin.status;
+      Eigen::SparseLU<SparseMatrix> lu;
+      lu.analyzePattern(lin.matrix);
+      lu.factorize(lin.matrix);
+      if (lu.info() != Eigen::Success) {
+        contact_failure =
+            "the contact system is singular: a body is not restrained against a rigid-body "
+            "motion that the contact leaves free (a body held only by frictionless contact "
+            "can slide along it) - restrain it with supports or prescribed displacements";
+        return false;
+      }
+      const Vector du = lu.solve(lin.rhs);
+      if (!du.allFinite()) return false;
+      add_to(trial, free_dofs, du, 1.0);
+    }
+    contact_failure = "the contact status did not settle within max_iterations";
+    return false;
+  };
+
   bool path_completed = false;
   if (!arc) {
     // The load levels to pass through exactly: the turning points of the
@@ -512,9 +600,16 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       Vector full_residual;
       StepFailure failure = StepFailure::Diverged;
       bool ok = false;
+      std::vector<ContactStatus> new_status;
       try {
-        ok = newton_load_control(state, lambda_new, iterations, residual, pivots, full_residual,
-                                 yielding, failure);
+        if (contact) {
+          ok = newton_contact(state, lambda_new, iterations, residual, full_residual, yielding,
+                              new_status);
+          failure = ok ? StepFailure::None : StepFailure::Diverged;
+        } else {
+          ok = newton_load_control(state, lambda_new, iterations, residual, pivots,
+                                   full_residual, yielding, failure);
+        }
       } catch (const SolverError& ex) {
         log::debug("non-linear step at lambda = ", lambda_new, " failed: ", ex.what());
         ok = false;
@@ -566,6 +661,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
             os << " - or a plastic collapse load, beyond which a material without hardening "
                   "has no equilibrium";
           }
+          if (contact && !contact_failure.empty()) os << ". With contact: " << contact_failure;
           result.termination = os.str();
           break;
         }
@@ -576,6 +672,14 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
                                                    : " did not converge",
                   "; halving to ", step);
         continue;
+      }
+      if (contact) {
+        // The step's contact totals (its slip measured from the state it
+        // started at), then commit the slip.
+        step_contact = contact->pair_results(
+            contact->node_results(state, lambda_new, full_residual, new_status, u, lambda));
+        contact->commit(state, lambda_new, new_status, u, lambda);
+        contact_status = new_status;
       }
       u = state;
       lambda = lambda_new;
@@ -777,6 +881,27 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   result.reactions = Vector::Zero(n);
   for (Index d : fixed) result.reactions(d) = final_ev.residual(d);
 
+  // Contact at the final state (its slip committed). A rigid obstacle is a
+  // support: the forces it exerts - the residual at the free DOFs of its
+  // slave nodes - join the reactions in the force balance below.
+  Vector obstacle = Vector::Zero(n);
+  if (contact) {
+    result.contact_nodes =
+        contact->node_results(u, lambda, final_ev.residual, contact_status, u, lambda);
+    result.contact_pairs = contact->pair_results(result.contact_nodes);
+    for (const ContactProblem::Node& c : contact->nodes()) {
+      if (!options_.contact.pairs[c.pair].rigid) continue;
+      for (int comp : c.free) {
+        const Index d = c.node * dim + comp;
+        obstacle(d) = final_ev.residual(d);
+      }
+    }
+    for (const std::string& note : contact->exclusions()) {
+      result.warnings.push_back(note);
+      log::warn("load case '", spec.name, "': ", note);
+    }
+  }
+
   // Force and moment balance of the deformed body.
   EquilibriumCheck& eq = result.equilibrium;
   Scalar force_scale = 0.0;
@@ -789,7 +914,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     for (int k = 0; k < dim; ++k) {
       xd(k) += u(node * dim + k);
       fa(k) = final_ev.external(node * dim + k);
-      fr(k) = result.reactions(node * dim + k);
+      fr(k) = result.reactions(node * dim + k) + obstacle(node * dim + k);
     }
     eq.applied_force += fa;
     eq.reaction_force += fr;

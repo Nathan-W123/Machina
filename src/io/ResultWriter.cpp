@@ -778,6 +778,13 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     for (std::size_t i = 0; i < result.monitor_names.size(); ++i) {
       header.push_back(result.monitor_names[i] + "[" + result.monitor_units[i] + "]");
     }
+    // Contact: per pair the slave nodes in contact and the resultant contact
+    // force on the slave body.
+    for (const ContactPairResult& p : result.contact_pairs) {
+      const std::string name = sanitise(p.name);
+      header.push_back(name + "_active[-]");
+      for (int k = 0; k < dim; ++k) header.push_back(name + "_f" + "xyz"[k] + "[N]");
+    }
     CsvWriter csv(file("nonlinear_" + lc + ".csv"), header);
     for (const NonlinearStep& s : result.steps) {
       std::vector<Scalar> row{s.load_factor, static_cast<Scalar>(s.iterations),
@@ -788,6 +795,11 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
         row.push_back(s.max_plastic_strain);
       }
       row.insert(row.end(), s.monitors.begin(), s.monitors.end());
+      for (std::size_t k = 0; k < result.contact_pairs.size(); ++k) {
+        const bool have = k < s.contact_active.size();
+        row.push_back(have ? static_cast<Scalar>(s.contact_active[k]) : 0.0);
+        for (int c = 0; c < dim; ++c) row.push_back(have ? s.contact_force[k](c) : 0.0);
+      }
       csv.row(s.index, row);
     }
     csv.close();
@@ -832,6 +844,42 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     }
     csv.close();
   }
+  if (config_.output.write_csv && !result.contact_nodes.empty()) {
+    // One row per slave node taking part in contact: its reference position,
+    // the direction of the pressure on the slave body, the weight D_j, the
+    // gap, the pressure, the friction traction, the accumulated slip and
+    // the status.
+    std::vector<std::string> header{"node", "pair"};
+    header = concat(header, coordinate_headers(dim, ""));
+    for (int k = 0; k < dim; ++k) header.push_back(std::string("n") + "xyz"[k] + "[-]");
+    header.push_back("weight[m2]");
+    header.push_back("gap[m]");
+    header.push_back("pressure[Pa]");
+    for (int k = 0; k < dim; ++k) header.push_back(std::string("t") + "xyz"[k] + "[Pa]");
+    for (int k = 0; k < dim; ++k) header.push_back(std::string("slip_") + "xyz"[k] + "[m]");
+    header.push_back("status");
+    CsvWriter csv(file("contact_" + lc + ".csv"), header);
+    const auto number = [](Scalar v) {
+      std::ostringstream os;
+      os << std::setprecision(17) << v;
+      return os.str();
+    };
+    for (const ContactNodeResult& c : result.contact_nodes) {
+      std::vector<std::string> row{std::to_string(c.node),
+                                   sanitise(result.contact_pairs.at(c.pair).name)};
+      const Vector3 x = mesh.node(c.node);
+      for (int k = 0; k < dim; ++k) row.push_back(number(x(k)));
+      for (int k = 0; k < dim; ++k) row.push_back(number(c.normal(k)));
+      row.push_back(number(c.weight));
+      row.push_back(number(c.gap));
+      row.push_back(number(c.pressure));
+      for (int k = 0; k < dim; ++k) row.push_back(number(c.traction(k)));
+      for (int k = 0; k < dim; ++k) row.push_back(number(c.slip(k)));
+      row.push_back(to_string(c.status));
+      csv.raw_row(row);
+    }
+    csv.close();
+  }
   if (config_.output.write_vtk) {
     std::ostringstream title;
     title << "SparLab non-linear solution: " << config_.name << " / " << result.load_case_name
@@ -852,6 +900,25 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     writer.add_cell_scalars("von_mises", result.element_von_mises);
     if (result.plastic) {
       writer.add_cell_scalars("equivalent_plastic_strain", result.element_plastic_strain);
+    }
+    if (!result.contact_nodes.empty()) {
+      // -1 marks a node that is not a contact node; 0 open, 1 stick, 2 slip.
+      Vector pressure = Vector::Zero(mesh.num_nodes());
+      Vector gap = Vector::Zero(mesh.num_nodes());
+      Vector status = Vector::Constant(mesh.num_nodes(), -1.0);
+      Vector traction = Vector::Zero(dim * mesh.num_nodes());
+      for (const ContactNodeResult& c : result.contact_nodes) {
+        pressure(c.node) = c.pressure;
+        gap(c.node) = c.gap;
+        status(c.node) = c.status == ContactStatus::Open ? 0.0
+                         : c.status == ContactStatus::Stick ? 1.0
+                                                             : 2.0;
+        for (int k = 0; k < dim; ++k) traction(c.node * dim + k) = c.traction(k);
+      }
+      writer.add_point_scalars("contact_pressure", pressure);
+      writer.add_point_scalars("contact_gap", gap);
+      writer.add_point_scalars("contact_status", status);
+      writer.add_point_vectors("contact_traction", traction);
     }
     writer.write(file("nonlinear_" + lc + ".vtk"));
   }
@@ -1540,6 +1607,51 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
     opts.set("max_arc_ratio", json::Value::make_number(options.max_arc_ratio));
   }
   out.set("options", opts);
+  if (options.contact.enabled) {
+    json::Value ct = json::Value::make_object();
+    ct.set("formulation",
+           json::Value::make_string(
+               "unilateral contact for small displacements and small sliding (the contact "
+               "geometry of the reference configuration, the gap linear in the "
+               "displacement): the pressure interpolated with the dual basis of the slave "
+               "faces (dual mortar); against a rigid obstacle the nodal gap to its surface, "
+               "against a master surface the mortar integrals (segment by segment in 2-D, on "
+               "auxiliary planes with polygon clipping in 3-D); Coulomb friction on the slip "
+               "of each step; the pressure condensed and the contact status found by a "
+               "semismooth Newton (primal-dual active set) method"));
+    ct.set("note", json::Value::make_string(
+                       "only the non-linear analysis models contact; the linear static, "
+                       "modal and buckling results of the run are those of the model without "
+                       "it"));
+    ct.set("complementarity", json::Value::make_number(options.contact.complementarity));
+    ct.set("search_factor", json::Value::make_number(options.contact.search_factor));
+    json::Value pairs = json::Value::make_array();
+    for (const ContactPairSpec& p : options.contact.pairs) {
+      json::Value q = json::Value::make_object();
+      q.set("name", json::Value::make_string(p.name));
+      q.set("kind", json::Value::make_string(p.rigid ? "rigid obstacle" : "mortar"));
+      if (p.rigid) {
+        json::Value ob = json::Value::make_object();
+        ob.set("type", json::Value::make_string(to_string(p.obstacle.kind)));
+        ob.set("point_m", point_json(p.obstacle.point, 3));
+        if (p.obstacle.kind == RigidObstacle::Kind::Plane) {
+          ob.set("normal", point_json(p.obstacle.direction, 3));
+        } else {
+          if (p.obstacle.kind == RigidObstacle::Kind::Cylinder) {
+            ob.set("axis", point_json(p.obstacle.direction, 3));
+          }
+          ob.set("radius_m", json::Value::make_number(p.obstacle.radius));
+          ob.set("inside", json::Value::make_bool(p.obstacle.inside));
+        }
+        ob.set("motion_m", point_json(p.obstacle.motion, 3));
+        q.set("obstacle", ob);
+      }
+      q.set("friction", json::Value::make_number(p.friction));
+      pairs.push_back(q);
+    }
+    ct.set("pairs", pairs);
+    out.set("contact", ct);
+  }
 
   const int dim = model.dim();
   json::Value cases = json::Value::make_array();
@@ -1633,6 +1745,27 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
       }
     }
     c.set("final_monitors", monitors);
+    if (!r.contact_pairs.empty()) {
+      json::Value pairs = json::Value::make_array();
+      for (const ContactPairResult& p : r.contact_pairs) {
+        json::Value q = json::Value::make_object();
+        q.set("name", json::Value::make_string(p.name));
+        q.set("slave_nodes", json::Value::make_number(p.nodes));
+        q.set("excluded_nodes", json::Value::make_number(p.excluded));
+        q.set("nodes_in_contact", json::Value::make_number(p.active));
+        if (p.friction > 0.0) {
+          q.set("sticking", json::Value::make_number(p.sticking));
+          q.set("slipping", json::Value::make_number(p.slipping));
+        }
+        q.set("contact_area", json::Value::make_number(p.area));
+        q.set("force_on_slave_N", point_json(p.force, dim));
+        q.set("max_pressure_Pa", json::Value::make_number(p.max_pressure));
+        q.set("min_gap_m", json::Value::make_number(p.min_gap));
+        q.set("max_slip_m", json::Value::make_number(p.max_slip));
+        pairs.push_back(q);
+      }
+      c.set("contact", pairs);
+    }
     c.set("equilibrium", equilibrium_json(r.equilibrium, dim));
     c.set("symmetric_tangent", json::Value::make_bool(r.symmetric_tangent));
     c.set("linear_solver", json::Value::make_string(r.linear_solver));

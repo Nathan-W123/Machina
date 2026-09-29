@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <set>
 #include <sstream>
 
 namespace sparlab {
@@ -979,6 +980,84 @@ Configuration parse_configuration(const json::Value& document, const std::string
                           "solid mesh; in plane stress use \"saint_venant_kirchhoff\"");
       }
       (void)config.nonlinear_load_cases();  // validates the names
+    }
+  }
+
+  // --- contact ------------------------------------------------------------
+  {
+    const ConfigNode ct = root.child("contact");
+    ContactOptions& o = config.nonlinear.options.contact;
+    o.enabled = ct.boolean_or("enabled", false);
+    o.complementarity = ct.number_or("complementarity", o.complementarity);
+    o.search_factor = ct.number_or("search_factor", o.search_factor);
+    int index = 0;
+    for (const ConfigNode& p : ct.array("pairs")) {
+      ContactPairSpec pair;
+      pair.name = p.string_or("name", "pair" + std::to_string(index++));
+      pair.slave = parse_region(p.require("slave"), pair.name + "_slave", dim);
+      pair.friction = p.number_or("friction", 0.0);
+      const ConfigNode obstacle = p.child("obstacle");
+      const ConfigNode master = p.child("master");
+      if (obstacle.exists() == master.exists()) {
+        throw ConfigError("'" + p.path() + "' needs either an 'obstacle' (rigid) or a "
+                          "'master' surface, not both and not neither");
+      }
+      if (obstacle.exists()) {
+        pair.rigid = true;
+        RigidObstacle& r = pair.obstacle;
+        r.kind = parse_obstacle_kind(obstacle.require("type").string());
+        switch (r.kind) {
+          case RigidObstacle::Kind::Plane:
+            r.point = obstacle.vector3_or("point", Vector3::Zero(), dim);
+            r.direction = obstacle.require("normal").vector3(dim);
+            break;
+          case RigidObstacle::Kind::Cylinder:
+            r.point = obstacle.require("point").vector3(dim);
+            r.direction = obstacle.vector3_or("axis", Vector3::UnitZ(), 3);
+            r.radius = obstacle.positive_number("radius");
+            r.inside = obstacle.boolean_or("inside", false);
+            break;
+          case RigidObstacle::Kind::Sphere:
+            r.point = obstacle.require("center").vector3(dim);
+            r.radius = obstacle.positive_number("radius");
+            r.inside = obstacle.boolean_or("inside", false);
+            break;
+        }
+        r.motion = obstacle.vector3_or("motion", Vector3::Zero(), dim);
+      } else {
+        pair.rigid = false;
+        pair.master = parse_region(master, pair.name + "_master", dim);
+      }
+      o.pairs.push_back(std::move(pair));
+    }
+    if (o.enabled) {
+      if (o.pairs.empty()) throw ConfigError("'contact' is enabled but lists no 'pairs'");
+      std::set<std::string> names;
+      for (const ContactPairSpec& pair : o.pairs) {
+        if (!names.insert(pair.name).second) {
+          throw ConfigError("contact pair name '" + pair.name + "' is used twice");
+        }
+        if (!(pair.friction >= 0.0)) {
+          throw ConfigError("contact pair '" + pair.name + "': friction must be >= 0");
+        }
+      }
+      if (!(o.complementarity > 0.0) || !(o.search_factor > 0.0)) {
+        throw ConfigError("'contact.complementarity' and 'contact.search_factor' must be "
+                          "positive");
+      }
+      if (!config.nonlinear.enabled) {
+        throw ConfigError("contact is solved by the non-linear static analysis: enable the "
+                          "'nonlinear' block, with \"kinematics\": \"small_strain\"");
+      }
+      if (config.nonlinear.options.kinematics != Kinematics::SmallStrain) {
+        throw ConfigError("contact is formulated for small displacements (the contact "
+                          "geometry of the reference configuration): set "
+                          "'nonlinear.kinematics' to \"small_strain\"");
+      }
+      if (config.nonlinear.options.method == NonlinearOptions::Method::ArcLength) {
+        throw ConfigError("contact is solved under load control; 'nonlinear.method' "
+                          "\"arc_length\" is not available with it");
+      }
     }
   }
 

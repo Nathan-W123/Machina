@@ -148,6 +148,11 @@ int main(int argc, char** argv) {
                   "and frequency-response analyses treat it as elastic");
       }
     }
+    if (config.nonlinear.options.contact.enabled) {
+      log::info("contact is modelled by the non-linear analysis only; the linear static, "
+                "modal and buckling results of this run are those of the model without "
+                "contact");
+    }
     if (config.nonlinear.enabled) {
       ScopedTimer t(timings, "nonlinear_analysis");
       NonlinearStaticAnalysis nl(model, assembler, config.nonlinear.options);
@@ -229,7 +234,11 @@ int main(int argc, char** argv) {
           for (const IsotropicMaterial& m : model.materials()) {
             kinematic = kinematic || m.plasticity().kinematic_hardening_modulus > 0.0;
           }
-          if (o.kinematics == Kinematics::Finite && o.law != HyperelasticModel::SaintVenantKirchhoff) {
+          if (o.contact.enabled) {
+            log::warn("the non-linear cases are not exported to CalculiX: the export does not "
+                      "write contact, and without it the deck would be a different problem");
+          } else if (o.kinematics == Kinematics::Finite &&
+                     o.law != HyperelasticModel::SaintVenantKirchhoff) {
             log::warn("the non-linear cases are not exported to CalculiX: its NEO HOOKE is a "
                       "different strain energy from SparLab's neo-Hookean law");
           } else if (kinematic) {

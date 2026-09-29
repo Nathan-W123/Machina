@@ -90,6 +90,7 @@
 
 #include "sparlab/core/Types.hpp"
 #include "sparlab/fem/Assembler.hpp"
+#include "sparlab/fem/Contact.hpp"
 #include "sparlab/fem/Elastoplastic.hpp"
 #include "sparlab/fem/FemModel.hpp"
 #include "sparlab/fem/StaticAnalysis.hpp"
@@ -166,6 +167,9 @@ struct NonlinearOptions {
   std::vector<Scalar> load_path;
   /// Quantities recorded at every converged step.
   std::vector<NonlinearMonitor> monitors;
+  /// Unilateral contact (Contact.hpp): with `small_strain` kinematics and
+  /// load control only.
+  ContactOptions contact;
 };
 
 std::string to_string(MeanDilatation mode);
@@ -193,6 +197,10 @@ struct NonlinearStep {
   /// and the largest accumulated plastic strain after it; -1 and 0 otherwise.
   int yielding_points = -1;
   Scalar max_plastic_strain = 0.0;
+  /// Contact: per pair, the slave nodes in contact and the resultant
+  /// contact force on the slave body [N]; empty without contact.
+  std::vector<int> contact_active;
+  std::vector<Vector3> contact_force;
 };
 
 struct NonlinearResult {
@@ -255,6 +263,11 @@ struct NonlinearResult {
   Matrix element_piola_kirchhoff;
   Vector element_von_mises;
   Vector element_cauchy_zz;
+  /// Contact at the final state: every slave node that takes part, and the
+  /// pair totals; empty without contact. The contact forces of rigid
+  /// obstacles count as reactions in `equilibrium`.
+  std::vector<ContactNodeResult> contact_nodes;
+  std::vector<ContactPairResult> contact_pairs;
 };
 
 /// The residual \f$R(u, \lambda)\f$, the load rate

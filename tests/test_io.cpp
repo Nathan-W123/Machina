@@ -1000,3 +1000,74 @@ TEST_CASE("path_join handles separators", "[io]") {
   REQUIRE(path_join("a/", "b") == "a/b");
   REQUIRE(path_join("", "b") == "b");
 }
+
+TEST_CASE("the contact block parses and validates", "[io][config][contact]") {
+  const auto deck = [](const std::string& blocks) {
+    return json::parse(dynamic_deck(blocks), "contact");
+  };
+  const std::string nonlinear =
+      R"("nonlinear": { "enabled": true, "kinematics": "small_strain" }, )";
+  const Configuration config = parse_configuration(
+      deck(nonlinear + R"(
+        "contact": {
+          "enabled": true, "complementarity": 2.0, "search_factor": 3.0,
+          "pairs": [
+            { "name": "floor", "slave": { "box": { "ymax": 0.0 } }, "friction": 0.2,
+              "obstacle": { "type": "plane", "point": [0, -1e-3], "normal": [0, 1],
+                            "motion": [0, 1e-4] } },
+            { "name": "pin", "slave": { "box": { "xmin": 0.9 } },
+              "obstacle": { "type": "cylinder", "point": [1.2, 0.05], "radius": 0.1,
+                            "inside": true } },
+            { "name": "interface", "slave": { "box": { "ymin": 0.1 } },
+              "master": { "box": { "xmax": 0.1 } } }
+          ]
+        })"),
+      "contact", /*strict=*/true);
+  const ContactOptions& c = config.nonlinear.options.contact;
+  REQUIRE(c.enabled);
+  REQUIRE(c.complementarity == 2.0);
+  REQUIRE(c.search_factor == 3.0);
+  REQUIRE(c.pairs.size() == 3);
+  REQUIRE(c.pairs[0].rigid);
+  REQUIRE(c.pairs[0].friction == 0.2);
+  REQUIRE(c.pairs[0].obstacle.kind == RigidObstacle::Kind::Plane);
+  REQUIRE(c.pairs[0].obstacle.point.y() == -1.0e-3);
+  REQUIRE(c.pairs[0].obstacle.motion.y() == 1.0e-4);
+  REQUIRE(c.pairs[1].obstacle.kind == RigidObstacle::Kind::Cylinder);
+  REQUIRE(c.pairs[1].obstacle.radius == 0.1);
+  REQUIRE(c.pairs[1].obstacle.inside);
+  REQUIRE_FALSE(c.pairs[2].rigid);
+  REQUIRE(c.pairs[2].friction == 0.0);
+
+  const std::string pair =
+      R"({ "name": "p", "slave": { "box": { "ymax": 0.0 } },
+           "obstacle": { "type": "plane", "normal": [0, 1] } })";
+  const auto refused = [&](const std::string& blocks) {
+    INFO(blocks);
+    REQUIRE_THROWS_AS(parse_configuration(deck(blocks), "contact", /*strict=*/true),
+                      ConfigError);
+  };
+  // Without the non-linear analysis, or with finite kinematics or arc length.
+  refused(R"("contact": { "enabled": true, "pairs": [)" + pair + "] }");
+  refused(R"("nonlinear": { "enabled": true }, "contact": { "enabled": true, "pairs": [)" +
+          pair + "] }");
+  refused(R"("nonlinear": { "enabled": true, "kinematics": "small_strain", "method": )"
+          R"("arc_length" }, "contact": { "enabled": true, "pairs": [)" + pair + "] }");
+  // No pair, two pairs of one name, a negative friction coefficient.
+  refused(nonlinear + R"("contact": { "enabled": true })");
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [)" + pair + ", " + pair + "] }");
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [
+      { "slave": { "box": { "ymax": 0.0 } }, "friction": -0.1,
+        "obstacle": { "type": "plane", "normal": [0, 1] } } ] })");
+  // An obstacle and a master surface, neither, an unknown obstacle.
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [
+      { "slave": { "box": { "ymax": 0.0 } }, "master": { "box": { "xmin": 0.5 } },
+        "obstacle": { "type": "plane", "normal": [0, 1] } } ] })");
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [
+      { "slave": { "box": { "ymax": 0.0 } } } ] })");
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [
+      { "slave": { "box": { "ymax": 0.0 } }, "obstacle": { "type": "cone" } } ] })");
+  refused(nonlinear + R"("contact": { "enabled": true, "pairs": [
+      { "slave": { "box": { "ymax": 0.0 } },
+        "obstacle": { "type": "sphere", "center": [0, 1], "radius": -1 } } ] })");
+}
