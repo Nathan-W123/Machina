@@ -43,6 +43,10 @@ struct Point {
   /// logarithmic + averaged: s = b-bar - b, the mean less the point's
   /// variation of ln J (so that b = P B_NL + m s^T / 3).
   Vector shift;
+  /// logarithmic, with the tangent: T and C_alg of the point's return,
+  /// kept for the tangent assembled after all of the element's returns.
+  Vector6 stress = Vector6::Zero();
+  Matrix6 tangent = Matrix6::Zero();
 };
 
 struct Kinematic {
@@ -245,7 +249,7 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
   if (model.dofs_per_node() != model.dim()) {
     throw ConfigError("the elastoplastic analysis is written for continuum elements");
   }
-  const Kinematic kin = kinematics_of(model, e, ue, kinematics, mean_dilatation, temperature);
+  Kinematic kin = kinematics_of(model, e, ue, kinematics, mean_dilatation, temperature);
   if (committed.size() != kin.points.size()) {
     throw SolverError("elastoplastic element: the stored internal variables do not match "
                       "the integration rule");
@@ -265,11 +269,8 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
   if (want_tangent) out.tangent = Matrix::Zero(nd, nd);
   if (thermal) out.thermal_force_rate = Vector::Zero(nd);
   out.states.reserve(kin.points.size());
-  // Logarithmic kinematics assembles its tangent after every return (below).
-  std::vector<PlasticResponse> responses;
-  if (logarithmic && want_tangent) responses.reserve(kin.points.size());
   for (std::size_t q = 0; q < kin.points.size(); ++q) {
-    const Point& p = kin.points[q];
+    Point& p = kin.points[q];
     Scalar change = 0.0;
     Scalar rate = 0.0;
     thermal_change(mat, kinematics, p.delta_t, temperature_scale, change, rate);
@@ -279,7 +280,12 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
     const Scalar w = p.weight;
     out.internal_force.noalias() += w * (p.b.transpose() * r.stress);
     out.energy += w * r.energy;
-    if (logarithmic && want_tangent) responses.push_back(r);
+    if (logarithmic && want_tangent) {
+      // Logarithmic kinematics assembles its tangent after every return
+      // (below).
+      p.stress = r.stress;
+      p.tangent = r.tangent;
+    }
     if (want_tangent && !logarithmic) {
       out.tangent.noalias() += w * (p.b.transpose() * r.tangent * p.b);
       if (finite) {
@@ -324,30 +330,28 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
     Scalar mean_pressure = 0.0;
     if (kin.averaged) {
       Scalar volume = 0.0;
-      for (std::size_t q = 0; q < kin.points.size(); ++q) {
-        const Vector6& t = responses[q].stress;
-        mean_pressure += kin.points[q].weight * (t(0) + t(1) + t(2)) / 3.0;
-        volume += kin.points[q].weight;
+      for (const Point& p : kin.points) {
+        const Vector6& t = p.stress;
+        mean_pressure += p.weight * (t(0) + t(1) + t(2)) / 3.0;
+        volume += p.weight;
       }
       mean_pressure /= volume;
     }
     Vector6 m = Vector6::Zero();
     m.head(3).setOnes();
-    for (std::size_t q = 0; q < kin.points.size(); ++q) {
-      const Point& p = kin.points[q];
-      const PlasticResponse& r = responses[q];
+    for (const Point& p : kin.points) {
       const Scalar w = p.weight;
       const Matrix6& projection = p.log.projection;
-      Vector6 t = r.stress;
+      Vector6 t = p.stress;
       if (kin.averaged) t.head(3).array() += mean_pressure - (t(0) + t(1) + t(2)) / 3.0;
       const Matrix6 inner =
-          projection.transpose() * r.tangent * projection + logarithmic_curvature(p.log, t);
+          projection.transpose() * p.tangent * projection + logarithmic_curvature(p.log, t);
       out.tangent.noalias() += w * (p.bnl.transpose() * (inner * p.bnl));
       if (kin.averaged) {
         // (A + m s^T/3)^T C (A + m s^T/3) - A^T C A with A = P B_NL (C need
         // not be symmetric).
-        const Vector6 cm = r.tangent * m;
-        const Vector6 mc = r.tangent.transpose() * m;
+        const Vector6 cm = p.tangent * m;
+        const Vector6 mc = p.tangent.transpose() * m;
         const Vector a_cm = p.bnl.transpose() * (projection.transpose() * cm);
         const Vector a_mc = p.bnl.transpose() * (projection.transpose() * mc);
         const Vector left = a_cm + (m.dot(cm) / 3.0) * p.shift;
