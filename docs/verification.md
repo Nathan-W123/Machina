@@ -57,8 +57,8 @@ All numbers in this document come from `results/verification/summary.json`,
 | Thick tube to plastic collapse vs the exact limit load (Q4, Hex8, Tet10; mean dilatation and locking) | verification | largest collapse-pressure error of the default elements, finest mesh (order `>= 1.8` and the fully plastic stress field also required) | `4.82e-04` | `1e-3` | PASS |
 | Pure bending: moment-curvature and residual stress vs exact (plane-stress Q4) | verification | largest moment error over `M_p` on the loading branch, finest mesh (order, residual moment and residual stress also required) | `6.17e-04` | `1e-3` | PASS |
 | Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
-| Uniaxial cycle with Chaboche backstresses vs exact (distorted Hex8, Q4) | verification | largest stress error over `sigma_y` along the cycle | `6.22e-14` | `1e-9` | PASS |
-| Hill48 directional yield stress and r-value vs exact (distorted Q4, Hex8) | verification | largest relative error of the stress, the r-value and the homogeneous field, 0 to 90 deg | `6.37e-15` | `1e-9` | PASS |
+| Uniaxial cycle with Chaboche backstresses vs exact (distorted Hex8, Q4) | verification | largest stress error over `sigma_y` along the cycle | `3.86e-15` | `1e-9` | PASS |
+| Hill48 directional yield stress and r-value vs exact (distorted Q4, Hex8) | verification | largest relative error of the stress, the r-value and the homogeneous field, 0 to 90 deg | `5.63e-15` | `1e-9` | PASS |
 | HHT-alpha transient vs the exact discrete modal solution (Q4, Hex8; consistent and lumped mass) | verification | largest relative displacement difference over the steps, models, masses and cases (trapezoidal energy balance `<= 1e-10` and positive numerical dissipation also required) | `3.28e-10` | `1e-9` | PASS |
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
@@ -1525,34 +1525,59 @@ cases; the measured worst case of each check in brackets):
   follows the recursion (`1.5e-15`), and a stabilised loop started at its
   tip peaks at `sigma_y + (C/gamma) tanh(gamma D / 2)` (`3.5e-15`);
 * *the consistent tangent* against central differences (`1.3e-10`,
-  tolerance `1e-6`) for Hill48 with Voce, Chaboche with Voce, Hill48 in a
-  tilted frame with recovering and linear backstresses, Prager's modulus
-  and Voce, exponential and backward Euler, and Hill48 with linear
-  backstresses - in 3-D, plane strain and plane stress, with a
+  tolerance `1e-8`) for Hill48 with Voce, Chaboche with Voce, Hill48 with
+  recovering and linear backstresses, Prager's modulus and Voce (in a
+  tilted frame and in the sheet plane), exponential and backward Euler, and
+  Hill48 with linear backstresses - in 3-D, plane strain and plane stress
+  (the tilted frame in 3-D only; the plane states refuse it), with a
   temperature: symmetric to round-off without recovery (`7.2e-16`),
   non-symmetric (above `1e-4`) with it; the converged point is on its
-  surface to `3.6e-15 sigma_y`, so the return from it at the same strain is
+  surface to `1e-13 sigma_y`, so the return from it at the same strain is
   elastic; plane stress returns the 3-D state at its `eps_33`; after a
   plastic step a zero increment gives the continuum tangent, which a
-  further increment of `1e-9` along the flow follows (`3.8e-6` of the
-  `1e-4` allowed);
+  further increment of `1e-9` along the flow follows (tolerance `1e-6`);
+* *the returned state on its surface*: 100 random Hill48 sheets with Voce, a
+  recovering and a linear backstress, each along six random increments of
+  up to `1e-3`, `1e-2` and `1e-1` per strain component, in 3-D and plane
+  stress (3,055 plastic returns): the yield function of the returned state
+  is at most `9.1e-15 sigma_y` up to `1e-2` (tolerance `1e-13`) and
+  `9.3e-14 sigma_y` at `1e-1`, where the trial stress is some hundred
+  `sigma_y` (tolerance `3e-13`); not one re-return from it is plastic, and
+  each reproduces the stress to `1e-12`;
+* *an independent reference on a non-proportional path*: Hill48 (r-values
+  1.9, 1.5, 2.3, L = 1.3, M = 1.7) in a frame tilted out of every
+  coordinate plane, Voce and linear hardening, two recovering backstresses,
+  a linear one and Prager's modulus, along three straight 3-D strain
+  segments with a reversal, against the rate equations integrated by the
+  classical Runge-Kutta method in 40,000 substeps a segment (its own Hill
+  matrix, polarised from the quadratic form in its own frame; it leaves the
+  surface by `2.2e-14 sigma_y`): the return converges at first order,
+  errors `1.27e-3, 6.32e-4, 3.16e-4, 1.58e-4` (exponential) and
+  `1.36e-3, 6.81e-4, 3.41e-4, 1.70e-4` (backward Euler) at 100 to 800 steps
+  a segment, ratios `2.000 +- 0.003` (tolerance `2 +- 0.05`);
+* *the plane models*: a Hill48 frame whose axes miss z is refused by the
+  plane-strain and plane-stress return (`ConfigError`) and by the
+  non-linear analysis before its first step, as by the deck;
 * *the element*: Hill48 with recovering backstresses on Q4 (plane strain,
   plane stress), Hex8 and Tet10, small strain and finite kinematics turned
   by 0.5 rad, with and without mean dilatation - the unsymmetrised tangent
   is the central difference of the internal force (`5.8e-10`, tolerance
-  `1e-6`) and is non-symmetric; without recovery it stays symmetric; a
+  `1e-8`) and is non-symmetric; without recovery it stays symmetric; a
   rigidly rotated finite state of a sheet in a tilted frame keeps its
   plastic state and energy and turns its forces;
 * *a homogeneous deformation* of Hill48 (a tilted frame in 3-D, a rolling
   angle of 35 deg in plane strain) with recovering backstresses and Voce,
   loaded and reversed past reverse yield on distorted Q4, Hex8 and Tet10
-  meshes with small strain and finite kinematics: every node to `1e-10`
-  (`9.5e-18` m) and every element's stress and plastic strain the point
-  history in the solver's steps (`1.8e-13`, tolerance `1e-8`);
+  meshes with small strain and finite kinematics: every node to `1e-12` m
+  (`9.5e-18` m) and every element's stress - every component, `sigma_33` of
+  plane strain too - and plastic strain the point history in the solver's
+  steps (`1.8e-13`, tolerance `1e-11`);
 * *the deck*: the Hill48, Chaboche and integration keys parse in their three
   calibrations and with a rolling angle, a Hill48-Chaboche strip is loaded
   and unloaded through the non-symmetric tangent (at most 5 Newton
-  iterations a step; 7 with the tangent symmetrised), `summary.json`
+  iterations a step; 7 with the tangent symmetrised), which its plastic
+  steps factorise by LU (no inertia reported) where the same strip without
+  recovery keeps LDL^T, `summary.json`
   reports the law, the CalculiX export refuses it with the reason, and
   twenty-three malformed blocks are refused.
 
@@ -1631,7 +1656,7 @@ rate 12 and three Armstrong-Frederick backstresses
 exponentially. The exact response solves, step by step, the branch solution
 `X_i = nu C_i/gamma_i + (X_i0 - nu C_i/gamma_i) exp(-gamma_i D)` with the
 consistency condition; the end force over the area matches it to
-`6.2e-14 sigma_y` (tolerance `1e-9`) over the 120 steps. The reverse yield
+`3.9e-15 sigma_y` (tolerance `1e-9`) over the 120 steps. The reverse yield
 stress at the first turn is `-18.6 MPa` against a forward flow stress of
 about 400 MPa - the Bauschinger effect of the saturating backstresses - and
 Newton needs at most 4 iterations a step on the non-symmetric tangent.
@@ -1645,9 +1670,9 @@ strain of 1 % in 10 steps, with supports that leave the lateral strains and
 the in-plane shear of off-axis flow free so that uniaxial stress is exact.
 The end force over the area matches the directional hardening curve
 `E (k sigma_y + k^2 H eps) / (E + k^2 H)`, `k = phi(theta)^(-1/2)`, to
-`7.6e-16`; the plastic width over thickness strain, from the corner
+`1.2e-15`; the plastic width over thickness strain, from the corner
 displacements (and incompressibility in plane stress), matches Hill's
-`r_theta` to `6.4e-15`; every node lies on the homogeneous field to
+`r_theta` to `5.6e-15`; every node lies on the homogeneous field to
 `1.0e-15` of the applied displacement (tolerance `1e-9` on all three).
 
 **Cross-validation** (`python/scripts/cross_validate.py`, the ten
@@ -1941,10 +1966,9 @@ Stated plainly, since the absence matters as much as the presence:
   CalculiX (its implementation does not reproduce Prager's rule), only
   against scikit-fem and the exact uniaxial solutions; Hill48 and the
   Chaboche backstresses are not cross-validated against another code at
-  all, and the only non-proportional checks of the general return are the
-  derivative, frame-indifference and von Mises-limit tests - its accuracy on
-  a non-proportional path (first order) is not measured against a reference
-  solution;
+  all; on a non-proportional path the general return is measured against
+  an independent Runge-Kutta integration of the rate equations (first
+  order), not against an exact solution;
 * the non-linear analysis is verified against exact solutions of a beam
   theory (the elastica, small strain), of plane-strain finite elasticity
   (the tube: inflation, spin, heating) and by the consistency of three

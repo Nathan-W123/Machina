@@ -377,8 +377,8 @@ PlasticResponse return_general_3d(const IsotropicMaterial& m, const Vector6& str
   gr.evaluate(xi, dl, e);  // f_trial > 0 and finite: xi_trial is finite and non-zero
   const Scalar scale =
       std::max({sy_n, s_trial.cwiseAbs().maxCoeff(), xi_trial.cwiseAbs().maxCoeff()});
-  const Scalar tol =
-      std::max(1.0e-13 * sy_n, 32.0 * std::numeric_limits<Scalar>::epsilon() * scale);
+  const Scalar eps_scale = std::numeric_limits<Scalar>::epsilon() * scale;
+  const Scalar tol = std::max(1.0e-13 * sy_n, 32.0 * eps_scale);
   bool converged = false;
   int it = 0;
   for (; it < 50; ++it) {
@@ -405,9 +405,9 @@ PlasticResponse return_general_3d(const IsotropicMaterial& m, const Vector6& str
       t *= 0.5;
     }
     if (!accepted) {
-      // No descent left: round-off stagnation just above the tolerance is
-      // convergence, anything else a failure.
-      converged = r_inf <= 1.0e3 * tol;
+      // No descent left: round-off stagnation at the tolerance's own scale
+      // is convergence, anything else a failure.
+      converged = r_inf <= 4.0 * tol;
       break;
     }
   }
@@ -418,6 +418,24 @@ PlasticResponse return_general_3d(const IsotropicMaterial& m, const Vector6& str
        << e.residual.cwiseAbs().maxCoeff() / sy_n << " of the yield stress after " << it
        << " iterations)";
     throw SolverError(os.str());
+  }
+  if (e.residual.cwiseAbs().maxCoeff() > 4.0 * eps_scale) {
+    // One more full Newton step: from within the tolerance, quadratic
+    // convergence takes the residual to round-off. The state below is
+    // rebuilt from (dl, m_t), and its yield function differs from R_2 by
+    // about m . R_1 - up to a few times the tolerance without this step,
+    // enough for the elastic re-check of stress recovery (1e-12 sigma_y) to
+    // take a spurious plastic step after a large increment.
+    const Vector7 step = gr.jacobian(e, dl).partialPivLu().solve(-e.residual);
+    const Vector6 xi_p = xi + step.head<6>();
+    const Scalar dl_p = std::max(dl + step(6), 0.0);
+    GeneralPoint polished;
+    if (gr.evaluate(xi_p, dl_p, polished) &&
+        polished.residual.cwiseAbs().maxCoeff() < e.residual.cwiseAbs().maxCoeff()) {
+      xi = xi_p;
+      dl = dl_p;
+      e = polished;
+    }
   }
 
   out.yielding = true;
@@ -443,14 +461,14 @@ PlasticResponse return_general_3d(const IsotropicMaterial& m, const Vector6& str
   return out;
 }
 
-/// Plane stress around a 3-D return: eps_33 such that sigma_33 = 0. The
-/// elastic predictor of eps_33 is exact for an elastic step (the elasticity
-/// is isotropic); a plastic one converges quadratically with the consistent
-/// C_33,33 > 0.
+/// Plane stress around a 3-D return: eps_33 such that sigma_33 = 0 to
+/// `tolerance` times the stress. The elastic predictor of eps_33 is exact
+/// for an elastic step (the elasticity is isotropic); a plastic one
+/// converges quadratically with the consistent C_33,33 > 0.
 template <class Return3d>
 PlasticResponse plane_stress(const IsotropicMaterial& material, const Return3d& return_3d_at,
                              const Vector6& strain, const PlasticState& committed,
-                             Scalar delta_t) {
+                             Scalar delta_t, Scalar tolerance) {
   const Scalar g = material.shear_modulus();
   const Scalar lambda = material.lame_lambda();
   const Scalar thermal = material.thermal_expansion() * delta_t;
@@ -462,8 +480,9 @@ PlasticResponse plane_stress(const IsotropicMaterial& material, const Return3d& 
   PlasticResponse out = return_3d_at(trial);
   const Scalar scale =
       std::max(out.stress.head(3).cwiseAbs().maxCoeff(), material.plasticity().yield_stress);
+  const Scalar limit = tolerance * std::max(scale, std::numeric_limits<Scalar>::min());
   int it = 0;
-  while (std::abs(out.stress(2)) > 1.0e-12 * std::max(scale, std::numeric_limits<Scalar>::min())) {
+  while (std::abs(out.stress(2)) > limit) {
     if (++it > 30) {
       std::ostringstream os;
       os << "the plane-stress return of material '" << material.name()
@@ -493,17 +512,27 @@ PlasticResponse plastic_return(const IsotropicMaterial& material, StressState st
     return plane_stress(
         material,
         [&](const Vector6& trial) { return return_3d(material, trial, committed, delta_t); },
-        strain, committed, delta_t);
+        strain, committed, delta_t, 1.0e-12);
+  }
+  if (state != StressState::ThreeDimensional && !material.plasticity().plane_compatible()) {
+    throw ConfigError("material '" + material.name() +
+                      "': a plane model needs the out-of-plane axis z along the rolling, "
+                      "transverse or normal direction of its Hill48 frame (it has no "
+                      "out-of-plane shear strain, which any other frame couples to the "
+                      "in-plane flow)");
   }
   if (state != StressState::PlaneStress) {
     return return_general_3d(material, strain, committed, delta_t, want_tangent);
   }
+  // sigma_33 to 1e-13 of the stress: a residual sigma_33 moves the yield
+  // function of the elastic re-check (whose predictor zeroes it) by about as
+  // much, and that must stay below the re-check's 1e-12 sigma_y.
   return plane_stress(
       material,
       [&](const Vector6& trial) {
         return return_general_3d(material, trial, committed, delta_t, true);
       },
-      strain, committed, delta_t);
+      strain, committed, delta_t, 1.0e-13);
 }
 
 Scalar equivalent_stress(const PlasticityParameters& parameters, const Vector6& stress) {

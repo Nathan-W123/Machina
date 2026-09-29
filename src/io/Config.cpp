@@ -322,18 +322,11 @@ IsotropicMaterial parse_material(const ConfigNode& mat, const std::string& defau
     } catch (const ConfigError& e) {
       throw ConfigError("'" + plastic.path() + "': " + e.what());
     }
-    if (dim == 2 && p.criterion == YieldCriterion::Hill48) {
+    if (dim == 2 && !material.plasticity().plane_compatible()) {
       // A plane model has no out-of-plane shear strain, which only a frame
       // with z along one of its axes leaves uncoupled from the in-plane flow.
-      const Matrix3& axes = material.plasticity().hill.axes;
-      bool aligned = false;
-      for (int r = 0; r < 3; ++r) {
-        aligned = aligned || std::abs(std::abs(axes(r, 2)) - 1.0) <= 1.0e-12;
-      }
-      if (!aligned) {
-        throw ConfigError("'" + anisotropy.path() + "': in a plane model the out-of-plane axis z "
-                          "must be the rolling, transverse or normal direction of the sheet");
-      }
+      throw ConfigError("'" + anisotropy.path() + "': in a plane model the out-of-plane axis z "
+                        "must be the rolling, transverse or normal direction of the sheet");
     }
   }
   return material;

@@ -181,6 +181,11 @@ class NonlinearSystem {
     virgin_.assign(static_cast<std::size_t>(points), PlasticState());
     for (Index e = 0; e < ne; ++e) {
       if (!model.material_of(e).plasticity().enabled()) continue;
+      if (model.dim() == 2 && !model.material_of(e).plasticity().plane_compatible()) {
+        throw ConfigError("material '" + model.material_of(e).name() +
+                          "': in a plane model the out-of-plane axis z must be the rolling, "
+                          "transverse or normal direction of its Hill48 frame");
+      }
       plastic_ = true;
       // Armstrong-Frederick recovery makes the consistent tangent
       // non-symmetric (factorised by LU, without the inertia test).

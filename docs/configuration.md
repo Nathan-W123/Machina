@@ -200,12 +200,16 @@ verified to round-off (`--study hill-directional`).
 to four Armstrong-Frederick terms,
 `d alpha_i = (2/3) C_i d eps_p - gamma_i alpha_i d alpha` (with Prager's
 `kinematic_hardening_modulus` as one more, without recovery - at most four in
-all), each saturating at `C_i / gamma_i` in uniaxial tension:
-`sigma = sigma_y(alpha) + sum_i (C_i / gamma_i)(1 - exp(-gamma_i alpha))` on a
-monotonic path. `modulus` is required and `> 0`, `recovery` defaults to `0`
-(Prager) and is `>= 0`. With any `recovery > 0` the consistent tangent is not
-symmetric: the non-linear analysis then factorises it by LU, and its
-stability test on the inertia of the tangent is off. `exponential`
+all), each saturating at `C_i / gamma_i` in uniaxial tension - for von
+Mises, `sigma = sigma_y(alpha) + sum_i (C_i / gamma_i)(1 - exp(-gamma_i alpha))`
+on a monotonic path (with Hill48 the backstress grows along the Hill flow
+direction, not along the stress, and a uniaxial path is not proportional).
+`modulus` is required and `> 0`, `recovery` defaults to `0` (Prager) and is
+`>= 0`. With any `recovery > 0` the consistent tangent is not symmetric: the
+iterations of the non-linear analysis then factorise it by LU, which reveals
+no inertia, so the test for a negative pivot within a step is off (the
+tangent at a converged state - the continuum one, symmetric - is still
+factorised by LDL^T, and its inertia reported). `exponential`
 integrates each backstress exactly for a flow direction fixed over the step
 (so a uniaxial path is exact at any step size); `backward_euler` is
 first-order accurate.

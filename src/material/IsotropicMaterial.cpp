@@ -212,6 +212,10 @@ void derive_hill(Hill48Parameters& h, Matrix6& yield_matrix, const std::string& 
   h.axes.row(0) = rd.transpose();
   h.axes.row(1) = td.transpose();
   h.axes.row(2) = nd.transpose();
+  h.z_on_axis = false;
+  for (int r = 0; r < 3; ++r) {
+    h.z_on_axis = h.z_on_axis || std::abs(std::abs(h.axes(r, 2)) - 1.0) <= 1.0e-12;
+  }
 
   Matrix6 pm = Matrix6::Zero();
   pm(0, 0) = h.G + h.H;

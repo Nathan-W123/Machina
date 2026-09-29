@@ -124,6 +124,10 @@ struct Hill48Parameters {
   Vector3 sheet_normal = Vector3::UnitZ();
   /// Found by set_plasticity: the orthonormal axes RD, TD, ND as rows.
   Matrix3 axes = Matrix3::Identity();
+  /// Found by set_plasticity: the global z is one of the axes, as a plane
+  /// model needs (it has no out-of-plane shear strain, which any other frame
+  /// couples to the in-plane flow).
+  bool z_on_axis = true;
 };
 
 /// The yield matrix of von Mises, \f$\bar\sigma^2 = \xi^T P\,\xi =
@@ -170,6 +174,11 @@ struct PlasticityParameters {
   /// The consistent tangent is symmetric: false as soon as a backstress
   /// has dynamic recovery.
   bool symmetric_tangent() const;
+  /// The law may be used by a plane model (plane strain, plane stress): not
+  /// Hill48 in a frame with z off its axes.
+  bool plane_compatible() const {
+    return criterion != YieldCriterion::Hill48 || hill.z_on_axis;
+  }
   /// The backstresses the general return integrates: the Chaboche ones,
   /// then Prager's \f$H_{kin}\f$ as one without recovery.
   int kinematic_terms() const {

@@ -107,9 +107,20 @@
 /// \f]
 /// a backtracking line search on \f$\|R\|\f$ and \f$\Delta\lambda \ge 0\f$,
 /// to \f$\|R\|_\infty \le 10^{-13}\sigma_y\f$ (or 32 round-offs of the trial
-/// stress, for a step so large that this is more): so tight that the
+/// stress, for a step so large that this is more), and then one more full
+/// Newton step, which takes the residual to round-off: the state is rebuilt
+/// from \f$(\Delta\lambda, m_t)\f$, and its yield function differs from
+/// \f$R_2\f$ by about \f$m\cdot R_1\f$. The yield function of the returned
+/// state is then round-off (at most \f$10^{-13}\sigma_y\f$, tested), so the
 /// elastic re-check of stress recovery, from the committed state at the
-/// converged strain, stays elastic.
+/// converged strain, stays elastic; in plane stress for the same reason the
+/// general return drives \f$\sigma_{33}\f$ to \f$10^{-13}\f$ of the stress
+/// (the radial return keeps its \f$10^{-12}\f$). A line search that stalls
+/// counts as converged only within four times the tolerance.
+/// A plane model (plane strain or plane stress) has no out-of-plane shear
+/// strain, so a Hill48 frame must have z along one of its axes
+/// (PlasticityParameters::plane_compatible()); any other frame couples that
+/// shear to the in-plane flow and is refused.
 ///
 /// *The consistent tangent.* The strain enters only through
 /// \f$s^{tr} = 2G\,\mathrm{dev}\,\varepsilon\f$, i.e.
@@ -203,7 +214,8 @@ struct PlasticResponse {
 /// return otherwise. Without `want_tangent` the general 3-D return skips the
 /// tangent (left elastic); plane stress always needs it.
 /// \throws SolverError when the plane-stress iteration or the return fails
-///         to converge.
+///         to converge; ConfigError for a plane state with a Hill48 frame
+///         whose axes miss z (PlasticityParameters::plane_compatible()).
 PlasticResponse plastic_return(const IsotropicMaterial& material, StressState state,
                                const Vector6& strain, const PlasticState& committed,
                                Scalar delta_t = 0.0, bool want_tangent = true);

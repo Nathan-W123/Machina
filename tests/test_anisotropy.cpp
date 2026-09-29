@@ -207,6 +207,15 @@ Scalar relative(const Matrix& a, const Matrix& b) {
   return (a - b).cwiseAbs().maxCoeff() / std::max(b.cwiseAbs().maxCoeff(), 1.0e-300);
 }
 
+/// |f| of a returned state, sigma_bar(dev sigma - sum alpha_i) - sigma_y
+/// (the deviator taken first, so that the pressure's round-off stays out).
+Scalar yield_function(const IsotropicMaterial& m, const PlasticResponse& r) {
+  Vector6 xi = r.stress - r.state.back_stress;
+  xi.head(3).array() -= (r.stress(0) + r.stress(1) + r.stress(2)) / 3.0;
+  return std::abs(equivalent_stress(m.plasticity(), xi) -
+                  m.plasticity().yield(r.state.equivalent_plastic_strain));
+}
+
 /// Tensor of tensorial (stress) and of engineering-shear (strain) Voigt
 /// components, and back.
 Matrix3 stress_tensor(const Vector6& v) {
@@ -705,7 +714,7 @@ TEST_CASE("Chaboche: a reversed uniaxial branch follows the Armstrong-Frederick 
   const PlasticResponse at = uniaxial(m, StressState::ThreeDimensional, e_reverse * (1.0 + 1e-9),
                                       loaded.state);
   REQUIRE_FALSE(at.yielding);
-  REQUIRE(at.stress(0) == Approx(reverse).epsilon(1e-6));
+  REQUIRE(at.stress(0) == Approx(reverse + e * e_reverse * 1e-9).epsilon(1e-9));
   REQUIRE(uniaxial(m, StressState::ThreeDimensional, e_reverse - 1.0e-6, loaded.state).yielding);
   // ... then on the reversed branch to -e1, in one step and in 20.
   const Scalar d2 = branch(top, -1.0, -e1);
@@ -806,6 +815,9 @@ TEST_CASE("the general consistent tangent is the derivative of the return, non-s
   both.nd = Vector3(-0.3, 0.1, 1.0);
   Law both_be = both;
   both_be.integration = KinematicIntegration::BackwardEuler;
+  Law both_plane = both;  // rolled in the x-y plane: the plane states too
+  both_plane.rd = in_plane(25.0);
+  both_plane.nd = Vector3::UnitZ();
   Law prager = hill;
   prager.back = {{6.0e9, 0.0}};
   prager.hk = 1.0e9;
@@ -813,6 +825,7 @@ TEST_CASE("the general consistent tangent is the derivative of the return, non-s
                                    {"Chaboche + Voce", chaboche, false},
                                    {"Hill48 + Chaboche + Prager + Voce", both, false},
                                    {"the same, backward Euler", both_be, false},
+                                   {"the same, exponential, in the sheet plane", both_plane, false},
                                    {"Hill48 + two linear backstresses", prager, true}};
   for (const Case& c : cases) {
     IsotropicMaterial m = make(c.law);
@@ -820,8 +833,13 @@ TEST_CASE("the general consistent tangent is the derivative of the return, non-s
     REQUIRE(m.plasticity().symmetric_tangent() == c.symmetric);
     for (const StressState state :
          {StressState::ThreeDimensional, StressState::PlaneStrain, StressState::PlaneStress}) {
-      // (A 2-D model needs z along a material axis: the tilted frame is 3-D only.)
-      if (state != StressState::ThreeDimensional && c.law.nd.z() != 1.0) continue;
+      // A 2-D model needs z along a material axis: the tilted frame is 3-D
+      // only, and refused by the plane states.
+      if (state != StressState::ThreeDimensional && !m.plasticity().plane_compatible()) {
+        REQUIRE_THROWS_AS(plastic_return(m, state, random_strain(4.0e-3, 3u), PlasticState()),
+                          ConfigError);
+        continue;
+      }
       Vector6 first = random_strain(4.0e-3, 3u);
       Vector6 second = first + random_strain(3.0e-3, 5u);
       if (state != StressState::ThreeDimensional) {
@@ -834,7 +852,7 @@ TEST_CASE("the general consistent tangent is the derivative of the return, non-s
       INFO(c.name << ", " << to_string(state));
       REQUIRE(r2.yielding);
       REQUIRE(r2.symmetric == c.symmetric);
-      REQUIRE(tangent_error(m, state, second, r1.state, 35.0) <= 1.0e-6);
+      REQUIRE(tangent_error(m, state, second, r1.state, 35.0) <= 1.0e-8);
       const Scalar asymmetry = relative(r2.tangent, r2.tangent.transpose());
       if (c.symmetric) {
         REQUIRE(asymmetry <= 1.0e-12);
@@ -844,17 +862,14 @@ TEST_CASE("the general consistent tangent is the derivative of the return, non-s
       // The elastic branch too: a small step back inside the surface.
       const Vector6 back = second - 0.1 * (second - first);
       REQUIRE_FALSE(plastic_return(m, state, back, r2.state).yielding);
-      REQUIRE(tangent_error(m, state, back, r2.state) <= 1.0e-6);
+      REQUIRE(tangent_error(m, state, back, r2.state) <= 1.0e-8);
       // The converged state is on its surface to 1e-13 sigma_y, so the
       // return from it at the same strain (stress recovery) is elastic and
       // reproduces it.
       const PlasticResponse again = plastic_return(m, state, second, r2.state, 35.0);
       REQUIRE_FALSE(again.yielding);
       REQUIRE(relative(again.stress, r2.stress) <= 1.0e-12);
-      Vector6 xi = r2.stress - r2.state.back_stress;
-      REQUIRE(std::abs(equivalent_stress(m.plasticity(), xi) -
-                       m.plasticity().yield(r2.state.equivalent_plastic_strain)) <=
-              1.0e-12 * m.plasticity().yield_stress);
+      REQUIRE(yield_function(m, r2) <= 1.0e-13 * m.plasticity().yield_stress);
       // Without the tangent, the same state.
       const PlasticResponse lean = plastic_return(m, state, second, r1.state, 35.0, false);
       REQUIRE(relative(lean.stress, r2.stress) == 0.0);
@@ -920,13 +935,345 @@ TEST_CASE("the general return's loading flag gives the continuum tangent at zero
       plastic_return(m, StressState::ThreeDimensional, strain + d, r1.state);
   REQUIRE(further.yielding);
   REQUIRE((further.stress - r1.stress - again.tangent * d).norm() <=
-          1.0e-4 * (again.tangent * d).norm());
+          1.0e-6 * (again.tangent * d).norm());
   REQUIRE(relative(again.tangent, m.three_dimensional_matrix()) > 0.01);
   // Unloading: the elastic tangent, and the flag cleared.
   const PlasticResponse unload =
       plastic_return(m, StressState::ThreeDimensional, 0.9 * strain, r1.state);
   REQUIRE_FALSE(unload.state.loading);
   REQUIRE(relative(unload.tangent, m.three_dimensional_matrix()) <= 1.0e-14);
+}
+
+TEST_CASE("the general return leaves its state on the yield surface to round-off, so the "
+          "re-return from it is elastic, however large the increment",
+          "[plasticity][anisotropy][material]") {
+  // Random Hill48 sheets with Voce, a recovering and a linear backstress,
+  // along random paths of six increments of up to `amplitude` per
+  // component. Stress recovery re-runs the return from the committed state
+  // at the converged strain and relies on it being an elastic re-check.
+  std::mt19937 gen(4u);
+  std::uniform_real_distribution<Scalar> dist(-1.0, 1.0);
+  Law base;
+  base.hill = true;
+  base.q = 80.0e6;
+  base.delta = 20.0;
+  base.back = {{40.0e9, 400.0}, {3.0e9, 0.0}};
+  for (const StressState state : {StressState::ThreeDimensional, StressState::PlaneStress}) {
+    for (const Scalar amplitude : {1.0e-3, 1.0e-2, 1.0e-1}) {
+      Scalar worst = 0.0;
+      int plastic = 0;
+      int again = 0;
+      Scalar drift = 0.0;
+      for (int trial = 0; trial < 100; ++trial) {
+        Law law = base;
+        law.rd = in_plane(90.0 * dist(gen));
+        law.r0 = 1.5 + dist(gen);
+        law.r45 = 1.5 + dist(gen);
+        law.r90 = 1.5 + dist(gen);
+        law.h = 0.5e9 * (1.0 + dist(gen));
+        const IsotropicMaterial m = make(law);
+        Vector6 strain = Vector6::Zero();
+        PlasticState point;
+        for (int k = 0; k < 6; ++k) {
+          for (int i = 0; i < 6; ++i) strain(i) += amplitude * dist(gen);
+          if (state == StressState::PlaneStress) strain(2) = strain(4) = strain(5) = 0.0;
+          const PlasticResponse r = plastic_return(m, state, strain, point);
+          if (r.yielding) {
+            ++plastic;
+            worst = std::max(worst, yield_function(m, r) / law.yield);
+            const PlasticResponse re = plastic_return(m, state, strain, r.state);
+            if (re.yielding) ++again;
+            drift = std::max(drift, relative(re.stress, r.stress));
+          }
+          point = r.state;
+        }
+      }
+      INFO(to_string(state) << ", increments up to " << amplitude << ": " << plastic
+                            << " plastic returns, |f| up to " << worst << " sigma_y");
+      REQUIRE(plastic > 100);
+      // Increments of 0.1 per component put the trial stress at some
+      // hundred sigma_y, whose own round-off (32 of it is the return's
+      // tolerance floor) is then 1e-13 sigma_y.
+      REQUIRE(worst <= (amplitude < 0.05 ? 1.0e-13 : 3.0e-13));
+      REQUIRE(again == 0);
+      REQUIRE(drift <= 1.0e-12);
+    }
+  }
+}
+
+TEST_CASE("a plane model refuses a Hill48 frame whose axes miss z, at the return and before "
+          "the solver's first step",
+          "[plasticity][anisotropy][material]") {
+  // A plane model has no out-of-plane shear strain; with z off the axes the
+  // return would couple it to the in-plane flow (sigma_23, gamma^p_23 != 0).
+  Law law = hill_law(0.0);
+  law.rd = Vector3(1.0, 0.0, 0.5);
+  law.nd = Vector3(0.0, 0.3, 1.0);
+  const IsotropicMaterial tilted = make(law);
+  REQUIRE_FALSE(tilted.plasticity().plane_compatible());
+  Vector6 strain = Vector6::Zero();
+  strain(0) = 6.0e-3;
+  strain(1) = -1.0e-3;
+  strain(3) = 2.0e-3;
+  REQUIRE_THROWS_AS(plastic_return(tilted, StressState::PlaneStress, strain, PlasticState()),
+                    ConfigError);
+  REQUIRE_THROWS_AS(plastic_return(tilted, StressState::PlaneStrain, strain, PlasticState()),
+                    ConfigError);
+  REQUIRE(plastic_return(tilted, StressState::ThreeDimensional, strain, PlasticState()).yielding);
+  // Any of RD, TD, ND along z will do: a section through the thickness.
+  Law section = hill_law(0.0);
+  section.rd = Vector3(0.0, 0.0, 1.0);
+  section.nd = Vector3(0.0, 1.0, 0.0);
+  const IsotropicMaterial aligned = make(section);
+  REQUIRE(aligned.plasticity().plane_compatible());
+  REQUIRE(plastic_return(aligned, StressState::PlaneStrain, strain, PlasticState()).yielding);
+  // The non-linear analysis of a plane model built with it (not through a
+  // deck, which refuses it already) stops before its first step.
+  StructuredMeshSpec spec;
+  spec.nx = spec.ny = 2;
+  FemModel model(make_perturbed_quad_mesh(spec, 0.1), tilted, 0.01, StressState::PlaneStress,
+                 IntegrationOptions());
+  DisplacementConstraint bc;
+  Selector s;
+  s.kind = SelectorKind::NodeIds;
+  s.ids.assign(1, 0);
+  bc.region.members.push_back(s);
+  bc.set(0, true, 1.0e-3);
+  bc.set(1, true, 0.0);
+  model.constraints().push_back(bc);
+  LoadCaseSpec lc;
+  lc.name = "pull";
+  lc.prescribed_displacement_only = true;
+  model.load_case_specs().push_back(lc);
+  model.finalize();
+  Assembler assembler(model);
+  REQUIRE_THROWS_AS(NonlinearStaticAnalysis(model, assembler, NonlinearOptions()).solve(0),
+                    ConfigError);
+}
+
+namespace {
+
+/// An independent reference for Hill48 with Chaboche, Prager and Voce
+/// hardening on any strain path: the continuum rate equations integrated by
+/// the classical fourth-order Runge-Kutta method in many substeps, the yield
+/// point within a substep found by bisection. It shares nothing with the
+/// return but the parameters: its own Hill matrix, polarised from Hill's
+/// quadratic form in its own frame, and its own elasticity.
+struct RateReference {
+  Matrix6 hill = Matrix6::Zero();  ///< tensorial Voigt, global axes
+  Matrix6 elastic = Matrix6::Zero();  ///< engineering strain -> tensorial stress
+  Scalar sy0 = 0.0, h = 0.0, q = 0.0, delta = 0.0;
+  std::vector<Backstress> terms;  ///< Prager's as one with no recovery
+
+  struct State {
+    Vector6 stress = Vector6::Zero();
+    std::vector<Vector6> back;
+    Scalar plastic = 0.0;
+  };
+
+  Scalar yield(Scalar a) const { return sy0 + h * a + q * (1.0 - std::exp(-delta * a)); }
+  Scalar slope(Scalar a) const { return h + q * delta * std::exp(-delta * a); }
+  Vector6 relative_stress(const State& s) const {
+    Vector6 xi = s.stress;
+    for (const Vector6& a : s.back) xi -= a;
+    return xi;
+  }
+  Scalar f(const State& s) const {
+    const Vector6 xi = relative_stress(s);
+    return std::sqrt(xi.dot(hill * xi)) - yield(s.plastic);
+  }
+  /// The rates on the plastic branch at the engineering strain rate `e`:
+  /// eps_p' = l m, alpha_i' = l ((2/3) C_i m_t - gamma_i alpha_i), p' = l,
+  /// with l from the consistency condition m . (sigma' - sum alpha_i')
+  /// = sigma_y' l.
+  State rate(const State& s, const Vector6& e) const {
+    const Vector6 xi = relative_stress(s);
+    const Vector6 m = hill * xi / std::sqrt(xi.dot(hill * xi));
+    Vector6 mt = m;
+    mt.tail(3) *= 0.5;
+    Scalar stiffness = m.dot(elastic * m) + slope(s.plastic);
+    for (std::size_t i = 0; i < terms.size(); ++i) {
+      stiffness += m.dot(2.0 / 3.0 * terms[i].modulus * mt - terms[i].recovery * s.back[i]);
+    }
+    const Scalar l = std::max(m.dot(elastic * e) / stiffness, 0.0);
+    State d;
+    d.stress = elastic * (e - l * m);
+    d.back.resize(terms.size());
+    for (std::size_t i = 0; i < terms.size(); ++i) {
+      d.back[i] = l * (2.0 / 3.0 * terms[i].modulus * mt - terms[i].recovery * s.back[i]);
+    }
+    d.plastic = l;
+    return d;
+  }
+  static State step(const State& s, Scalar dt, const State& d) {
+    State out = s;
+    out.stress += dt * d.stress;
+    for (std::size_t i = 0; i < s.back.size(); ++i) out.back[i] += dt * d.back[i];
+    out.plastic += dt * d.plastic;
+    return out;
+  }
+  void runge_kutta(State& s, const Vector6& e, Scalar dt) const {
+    const State k1 = rate(s, e);
+    const State k2 = rate(step(s, 0.5 * dt, k1), e);
+    const State k3 = rate(step(s, 0.5 * dt, k2), e);
+    const State k4 = rate(step(s, dt, k3), e);
+    s.stress += dt / 6.0 * (k1.stress + 2.0 * k2.stress + 2.0 * k3.stress + k4.stress);
+    for (std::size_t i = 0; i < s.back.size(); ++i) {
+      s.back[i] += dt / 6.0 * (k1.back[i] + 2.0 * k2.back[i] + 2.0 * k3.back[i] + k4.back[i]);
+    }
+    s.plastic += dt / 6.0 * (k1.plastic + 2.0 * k2.plastic + 2.0 * k3.plastic + k4.plastic);
+  }
+  /// A straight strain segment `de` in `n` substeps.
+  void segment(State& s, const Vector6& de, int n) const {
+    const Scalar dt = 1.0 / n;
+    for (int k = 0; k < n; ++k) {
+      const Vector6 xi = relative_stress(s);
+      if (f(s) > -1.0e-12 * sy0 && (hill * xi).dot(elastic * de) > 0.0) {
+        runge_kutta(s, de, dt);  // on the surface and loading
+        continue;
+      }
+      State trial = s;
+      trial.stress += dt * (elastic * de);
+      if (f(trial) <= 0.0) {
+        s = trial;
+        continue;
+      }
+      Scalar lo = 0.0;  // elastic up to the yield point, plastic after it
+      Scalar hi = 1.0;
+      for (int it = 0; it < 100; ++it) {
+        const Scalar mid = 0.5 * (lo + hi);
+        State at = s;
+        at.stress += mid * dt * (elastic * de);
+        (f(at) > 0.0 ? hi : lo) = mid;
+      }
+      s.stress += lo * dt * (elastic * de);
+      runge_kutta(s, de, (1.0 - lo) * dt);
+    }
+  }
+};
+
+}  // namespace
+
+TEST_CASE("Hill48 with recovering backstresses converges at first order to an independent "
+          "Runge-Kutta integration of the rate equations on a non-proportional path",
+          "[plasticity][anisotropy][material]") {
+  // No closed form exists for Hill48 with Armstrong-Frederick backstresses
+  // (the backstress rate is along P xi, not xi, so even uniaxial stress is
+  // not a proportional path). Along a non-proportional 3-D path with a
+  // reversal, in a frame tilted out of every coordinate plane, the return
+  // must converge to the continuum solution at first order in the step.
+  const Scalar r0 = 1.9, r45 = 1.5, r90 = 2.3, l = 1.3, mm = 1.7;
+  const Vector3 rd(1.0, 0.4, 0.3);
+  const Vector3 nd(-0.3, 0.1, 1.0);
+  RateReference ref;
+  ref.sy0 = 200.0e6;
+  ref.h = 0.6e9;
+  ref.q = 80.0e6;
+  ref.delta = 15.0;
+  for (const Backstress& b : {Backstress{40.0e9, 400.0}, Backstress{6.0e9, 40.0},
+                              Backstress{1.0e9, 0.0}, Backstress{0.5e9, 0.0}}) {
+    ref.terms.push_back(b);
+  }
+  {
+    const Vector3 n = nd.normalized();
+    const Vector3 r = (rd - rd.dot(n) * n).normalized();
+    Matrix3 q;
+    q.row(0) = r.transpose();
+    q.row(1) = n.cross(r).transpose();
+    q.row(2) = n.transpose();
+    const Scalar g = 1.0 / (1.0 + r0);
+    const Scalar hh = r0 / (1.0 + r0);
+    const Scalar f = hh / r90;
+    const Scalar nn = (f + g) * (1.0 + 2.0 * r45) / 2.0;
+    const auto form = [&](const Vector6& s) {
+      const Matrix3 t = q * stress_tensor(s) * q.transpose();
+      const Scalar a = t(1, 1) - t(2, 2);
+      const Scalar b = t(2, 2) - t(0, 0);
+      const Scalar c = t(0, 0) - t(1, 1);
+      return f * a * a + g * b * b + hh * c * c + 2.0 * l * t(1, 2) * t(1, 2) +
+             2.0 * mm * t(2, 0) * t(2, 0) + 2.0 * nn * t(0, 1) * t(0, 1);
+    };
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        const Vector6 ei = Vector6::Unit(i);
+        const Vector6 ej = Vector6::Unit(j);
+        ref.hill(i, j) = 0.5 * (form(ei + ej) - form(ei) - form(ej));
+      }
+    }
+    const Scalar e = 200.0e9;
+    const Scalar nu = 0.3;
+    const Scalar lambda = e * nu / ((1.0 + nu) * (1.0 - 2.0 * nu));
+    const Scalar mu = e / (2.0 * (1.0 + nu));
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) ref.elastic(i, j) = lambda;
+      ref.elastic(i, i) = lambda + 2.0 * mu;
+      ref.elastic(3 + i, 3 + i) = mu;
+    }
+  }
+  IsotropicMaterial m(200.0e9, 0.3, 7800.0, "sheet");
+  PlasticityParameters p;
+  p.yield_stress = ref.sy0;
+  p.hardening_modulus = ref.h;
+  p.saturation_stress = ref.q;
+  p.saturation_rate = ref.delta;
+  p.kinematic_hardening_modulus = 0.5e9;
+  p.criterion = YieldCriterion::Hill48;
+  p.hill.r0 = r0;
+  p.hill.r45 = r45;
+  p.hill.r90 = r90;
+  p.hill.shear_l = l;
+  p.hill.shear_m = mm;
+  p.hill.rolling_direction = rd;
+  p.hill.sheet_normal = nd;
+  p.num_backstresses = 3;
+  for (std::size_t i = 0; i < 3; ++i) p.backstresses[i] = ref.terms[i];
+
+  std::vector<Vector6> corners(4, Vector6::Zero());
+  corners[1] << 6.0e-3, -2.0e-3, -2.5e-3, 3.0e-3, 0.0, 1.0e-3;
+  corners[2] << 7.0e-3, 1.0e-3, -4.0e-3, -2.0e-3, 3.0e-3, 0.0;
+  corners[3] << -2.0e-3, -1.0e-3, 3.0e-3, 1.0e-3, 1.0e-3, -2.0e-3;
+  RateReference::State s;
+  s.back.assign(ref.terms.size(), Vector6::Zero());
+  std::vector<RateReference::State> exact;
+  for (std::size_t c = 1; c < corners.size(); ++c) {
+    ref.segment(s, corners[c] - corners[c - 1], 40000);
+    exact.push_back(s);
+  }
+  REQUIRE(std::abs(ref.f(s)) <= 1.0e-9 * ref.sy0);  // the reference stays on its surface
+  for (const KinematicIntegration integration :
+       {KinematicIntegration::Exponential, KinematicIntegration::BackwardEuler}) {
+    p.kinematic_integration = integration;
+    m.set_plasticity(p);
+    std::vector<Scalar> errors;
+    for (const int n : {100, 200, 400, 800}) {
+      PlasticState point;
+      Scalar worst = 0.0;
+      for (std::size_t c = 1; c < corners.size(); ++c) {
+        PlasticResponse r;
+        for (int k = 1; k <= n; ++k) {
+          const Vector6 strain =
+              corners[c - 1] + (corners[c] - corners[c - 1]) * (static_cast<Scalar>(k) / n);
+          r = plastic_return(m, StressState::ThreeDimensional, strain, point);
+          point = r.state;
+        }
+        const RateReference::State& x = exact[c - 1];
+        worst = std::max(worst, (r.stress - x.stress).cwiseAbs().maxCoeff() / ref.sy0);
+        for (std::size_t i = 0; i < ref.terms.size(); ++i) {
+          worst = std::max(worst,
+                           (point.back_stresses[i] - x.back[i]).cwiseAbs().maxCoeff() / ref.sy0);
+        }
+        worst = std::max(worst, std::abs(point.equivalent_plastic_strain - x.plastic) / x.plastic);
+      }
+      errors.push_back(worst);
+    }
+    INFO((integration == KinematicIntegration::Exponential ? "exponential" : "backward Euler")
+         << ": errors " << errors[0] << ", " << errors[1] << ", " << errors[2] << ", "
+         << errors[3]);
+    for (std::size_t i = 1; i < errors.size(); ++i) {
+      REQUIRE(errors[i - 1] / errors[i] == Approx(2.0).margin(0.05));
+    }
+    REQUIRE(errors[2] <= 1.0e-3);
+  }
 }
 
 namespace {
@@ -1030,7 +1377,7 @@ TEST_CASE("the element tangent of Hill48 with recovering backstresses is the non
                                << (bbar ? " mean dilatation" : ""));
         REQUIRE(base.yielding_points > 0);
         REQUIRE_FALSE(base.symmetric);
-        REQUIRE(worst <= 1.0e-6 * base.tangent.cwiseAbs().maxCoeff());
+        REQUIRE(worst <= 1.0e-8 * base.tangent.cwiseAbs().maxCoeff());
         REQUIRE(relative(base.tangent, base.tangent.transpose()) >= 1.0e-4);
       }
     }
@@ -1172,7 +1519,7 @@ TEST_CASE("a homogeneous deformation of Hill48 with Chaboche hardening is exact 
                              r.load_factor * (f - Matrix::Identity(dim, dim)) * x)
                                 .norm());
       }
-      REQUIRE(err <= 1.0e-10);
+      REQUIRE(err <= 1.0e-12);
       PlasticState point;
       PlasticResponse response;
       Matrix h;
@@ -1202,12 +1549,28 @@ TEST_CASE("a homogeneous deformation of Hill48 with Chaboche hardening is exact 
       const Matrix3 cauchy = kinematics == Kinematics::Finite
                                  ? Matrix3(f3 * s3 * f3.transpose() / f3.determinant())
                                  : s3;
-      for (Index el = 0; el < model.mesh().num_elements(); ++el) {
-        REQUIRE(r.element_cauchy(0, el) == Approx(cauchy(0, 0)).epsilon(1e-8));
-        REQUIRE(r.element_cauchy(1, el) == Approx(cauchy(1, 1)).epsilon(1e-8));
-        REQUIRE(r.element_plastic_strain(el) ==
-                Approx(point.equivalent_plastic_strain).epsilon(1e-8));
+      // Every stress component (sigma_33 of plane strain too) and the
+      // accumulated plastic strain of every element.
+      const Vector6 expected = stress_voigt(cauchy);
+      Vector own(dim == 3 ? 6 : 3);
+      if (dim == 3) {
+        own = expected;
+      } else {
+        own << expected(0), expected(1), expected(3);
       }
+      Scalar stress_error = 0.0;
+      Scalar plastic_error = 0.0;
+      for (Index el = 0; el < model.mesh().num_elements(); ++el) {
+        stress_error =
+            std::max(stress_error, (r.element_cauchy.col(el) - own).cwiseAbs().maxCoeff());
+        if (dim == 2) {
+          stress_error = std::max(stress_error, std::abs(r.element_cauchy_zz(el) - expected(2)));
+        }
+        plastic_error = std::max(plastic_error, std::abs(r.element_plastic_strain(el) -
+                                                         point.equivalent_plastic_strain));
+      }
+      REQUIRE(stress_error <= 1.0e-11 * expected.cwiseAbs().maxCoeff());
+      REQUIRE(plastic_error <= 1.0e-11 * point.equivalent_plastic_strain);
       REQUIRE(r.equilibrium.relative_force_error <= 1.0e-10);
     }
   }
@@ -1277,6 +1640,33 @@ TEST_CASE("the Hill48 and Chaboche keys of a deck parse, validate, run and are r
     int most = 0;
     for (const NonlinearStep& s : r.steps) most = std::max(most, s.iterations);
     REQUIRE(most <= 6);
+    // The system is declared non-symmetric: the iterations of a plastic step
+    // factorise the tangent by LU, which reports no inertia (-1). (The last
+    // step's count is the final factorisation's, of the tangent at the
+    // converged state: the continuum one, symmetric.)
+    int lu_steps = 0;
+    for (std::size_t i = 0; i + 1 < r.steps.size(); ++i) {
+      if (r.steps[i].yielding_points <= 0) continue;
+      REQUIRE(r.steps[i].negative_pivots == -1);
+      ++lu_steps;
+    }
+    REQUIRE(lu_steps > 0);
+    // Without recovery the same run keeps LDL^T and its inertia throughout.
+    {
+      Configuration symmetric = config;
+      PlasticityParameters linear = p;
+      for (Backstress& b : linear.backstresses) b.recovery = 0.0;
+      IsotropicMaterial mat = symmetric.material();
+      mat.set_plasticity(linear);
+      symmetric.set_material(mat);
+      FemModel sym_model = build_model(symmetric);
+      Assembler sym_assembler(sym_model);
+      const NonlinearResult rs =
+          NonlinearStaticAnalysis(sym_model, sym_assembler, config.nonlinear.options).solve(0);
+      REQUIRE(rs.completed);
+      REQUIRE(rs.plastic_points > 0);
+      for (const NonlinearStep& s : rs.steps) REQUIRE(s.negative_pivots >= 0);
+    }
     // The summary reports the law.
     TimingLedger timings;
     const json::Value summary =
