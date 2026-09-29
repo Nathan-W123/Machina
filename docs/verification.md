@@ -59,6 +59,8 @@ All numbers in this document come from `results/verification/summary.json`,
 | Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
 | Uniaxial cycle with Chaboche backstresses vs exact (distorted Hex8, Q4) | verification | largest stress error over `sigma_y` along the cycle | `3.86e-15` | `1e-9` | PASS |
 | Hill48 directional yield stress and r-value vs exact (distorted Q4, Hex8) | verification | largest relative error of the stress, the r-value and the homogeneous field, 0 to 90 deg | `5.63e-15` | `1e-9` | PASS |
+| Large-strain uniaxial tension and cycle in the logarithmic strain vs exact (distorted Hex8) | verification | largest Kirchhoff-stress error over `sigma_y` and relative r-value error, to a stretch of 2 | `1.15e-13` | `1e-9` | PASS |
+| Thick tube to collapse at finite strain, logarithmic strain (Q4, Hex8 with mean dilatation of `ln J`; Tet10) | verification | peak-pressure difference of the averaged Q4 and Hex8 on the finest mesh to the finest Tet10 (order `>= 1.8` also required) | `4.73e-04` | `1e-3` | PASS |
 | HHT-alpha transient vs the exact discrete modal solution (Q4, Hex8; consistent and lumped mass) | verification | largest relative displacement difference over the steps, models, masses and cases (trapezoidal energy balance `<= 1e-10` and positive numerical dissipation also required) | `3.28e-10` | `1e-9` | PASS |
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
@@ -1754,6 +1756,105 @@ were taken:
   floor SparLab's run sat on (`3.4e-11`, within its `1e-10`). It now accepts,
   as SparLab does, a residual at its round-off floor, once Newton has
   stopped reducing it.
+
+### Logarithmic-strain finite plasticity
+
+`kinematics: finite_logarithmic` (formulation, section 7d). **Unit tests**
+(`tests/test_logarithmic.cpp`, 12 cases):
+
+* *the strain and its derivatives* at C = Q diag(lambda) Q^T in a general
+  frame: distinct eigenvalues, two equal, `C = I`, `C = s^2 I`, two and three
+  eigenvalues within `1e-9`, `1e-7` and `1e-4`, three spread over `4e-3`
+  (the Taylor series) and `6e-3` (the difference quotient), and a stretch of
+  2 with two lateral eigenvalues `1e-8` apart. `E_log` matches an independent
+  matrix logarithm (Eigen's Schur-Pade) to `4.8e-15` (tolerance `1e-14`) and
+  `ln J` its trace; `P` and `T : L`, for a stress not coaxial with C, match
+  fourth-order central differences of `E_log(E)` and of `S(E) = P^T T` to
+  `4.1e-12` and `4.3e-12` (tolerances `1e-10`, `1e-9` - the differences' own
+  accuracy); `T : L` is symmetric and `S = P^T T` to `1e-15`; two eigenvalues
+  `1e-9` apart give the `P` and `T : L` of the equal pair to `2e-9`; `C = I`
+  gives `P = I`; at strains of `1e-6` the strain is `E - E^2 + (4/3) E^3` to
+  `1e-15` (the `log1p` of the eigenvalues of E); an inverted point throws
+  `SolverError`;
+* *the element tangent* of Hex8, Q4 in plane strain and in plane stress and
+  Tet10, with and without mean dilatation, elastic (Hencky), J2 with Voce,
+  linear and Prager hardening, Hill48 with Voce, and Chaboche (non-symmetric),
+  from a plastic state at a stretch of 1.35 with shear and a turn of 0.6 rad
+  to a second one: the central difference of the internal force to `1.1e-9`
+  (tolerance `1e-8`), symmetric exactly when the law is; the thermal load
+  rate the derivative of the force with respect to the temperature scale
+  (`2.1e-11` in 3-D, `9.3e-10` in plane stress; tolerance `1e-8`);
+* *objectivity*: Hill48 in a tilted frame with a recovering backstress, Hex8
+  and Tet10, with and without mean dilatation - a superposed rotation of
+  0.9 rad leaves the energy (`1e-12`), the plastic strain, back stress and
+  accumulated strain (`1e-11`), `S` and the log strain unchanged, and turns
+  the forces, the Kirchhoff and the Cauchy stress (`1e-11`);
+* *the small-strain limit*: at strains of `1e-6` the forces and tangents of
+  the logarithmic and the Green-Lagrange Hex8, Tet10 and Q4 differ by
+  `3.3` to `11.9` times the strain (tolerance 20 times), elastic or yielding,
+  and ten times less at `1e-7` (ratio `10.000`, within 5 %) - first order;
+* *uniaxial tension to a stretch of 2* (log strain 0.69) of one Hex8 and of
+  a distorted `2 x 2 x 2` patch on symmetry planes, J2 with linear and with
+  Voce hardening, 20 steps: the Kirchhoff stress (end force times stretch
+  over the reference area) against the 1-D law at `ln(l1)` at every step to
+  `5.0e-14` (tolerance `1e-9`), the two lateral log strains equal and adding
+  with the axial one to the elastic volume change `(1 - 2 nu) tau / E`
+  (`7.2e-16`), and every element's Kirchhoff stress, log strain and Cauchy
+  stress `tau / J` those of the exact state; no small-strain warning;
+* *a tension-compression cycle to `+-0.3` log strain* with Voce hardening
+  and two Armstrong-Frederick backstresses (exponential), through
+  `0 -> e^0.3 -> e^-0.3 -> e^0.3`: the Kirchhoff stress follows the exact
+  branch solutions to `5.5e-14 sigma_y`, with reverse yielding;
+* *Hill48 along RD and along TD* to a stretch of 1.6: the Kirchhoff stress
+  follows `E (k sigma_y + k^2 H eps) / (E + k^2 H)` to `1.9e-14` and the
+  plastic lateral log strains keep the ratio `r0 = 1.9` and `r90 = 2.3` to
+  `5.7e-15` (tolerance `1e-9`) at every plastic step;
+* *plane stress*: a distorted Q4 strip pulled to a stretch of 1.6 follows the
+  1-D law (`9.8e-15`, tolerance `1e-9`), and its thickness log strain, found
+  by the return, equals the in-plane lateral one (`1e-10`), with
+  `J = l1 l2 exp(E_log,33)`;
+* *free heating*: Q4 (plane stress), Hex8 and Tet10 blocks heated by 500 K on
+  determinate supports take `u = alpha dT x` (to `1e-13` m), stress-free
+  (`2.8e-6` Pa against `E alpha dT = 1.2 GPa`), with the log strain
+  `ln(1 + alpha dT)` in every direction, the thickness's included;
+* *the verification decks*: every deck of `configs/verification` with a
+  non-linear static or transient analysis, switched to
+  `finite_logarithmic` - small-strain decks included - completes (17 runs);
+  the neo-Hookean one is refused. The plastic clamped beam, driven 20 mm
+  down (strains to 2.1 %, 2 % plastic) and back, agrees with its
+  Green-Lagrange run to the order of that strain: mid-span force within
+  `1.42e-2` of its largest value, end tension within `1.57e-2 sigma_y A`,
+  accumulated plastic strain within `0.5 %`;
+* *the deck*: `"kinematics": "finite_logarithmic"` parses, the run reports
+  `hencky` and the largest log strain, the stress CSV and VTK carry the
+  Kirchhoff stress and the log strain, CalculiX export says why it cannot,
+  and `neo_hookean` with it is refused.
+
+**Studies.** *Large-strain uniaxial tension and cycle*
+(`--study logarithmic-uniaxial`): the tests' five uniaxial runs on the
+distorted `2 x 2 x 2` Hex8 patch (J2 linear and Voce to a stretch of 2,
+Chaboche to `+-0.3` log strain, Hill48 along RD and TD to 1.6; 122 steps,
+accumulated plastic strain up to 1.48): the Kirchhoff stress against the 1-D
+law in the log strain to `1.15e-13 sigma_y` and the r-values to `6.3e-15`
+(tolerance `1e-9`).
+
+*The thick tube at finite strain* (`--study logarithmic-tube`): the tube of
+`plastic-cylinder` with logarithmic kinematics and a follower bore pressure,
+along the arc-length path past its peak (strains to 4 - 5 %). At finite
+strain the peak falls below the small-strain limit as the wall thins:
+`0.99160 p_L` and `0.99156 p_L` for Tet10 with 4 and 8 cells through the
+wall, the reference. Q4 and Hex8 with the mean dilatation of `ln J` reach it
+at second order - `7.6e-3`, `1.9e-3`, `4.7e-4` above it on 4, 8, 16 cells
+(order `2.01`; tolerance `1e-3` on the finest) - while the fully integrated
+Q4 locks: `0.117`, `8.8e-3`, `1.9e-3` above it.
+
+What remains: no cross-validation of the logarithmic kinematics against
+another code (CalculiX's finite-strain plasticity is multiplicative, and its
+elasticity under `NLGEOM` Saint Venant-Kirchhoff), no exact solution with
+rotating principal axes at large strain, and the elastica deck, which
+completes, needs 74 steps instead of 10: the first Newton iterate from the
+linear predictor lands where the Hencky tangent has negative pivots, and
+load control halves the first step three times.
 
 ## 25. Dynamics
 

@@ -65,6 +65,12 @@ StudyOutcome study_chaboche_cycle(const std::string& out_dir, json::Value& summa
 StudyOutcome study_hill_directional(const std::string& out_dir, json::Value& summary);
 /// \}
 
+/// Studies of the logarithmic-strain finite plasticity (verify_logarithmic.cpp).
+/// \{
+StudyOutcome study_logarithmic_uniaxial(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_logarithmic_tube(const std::string& out_dir, json::Value& summary);
+/// \}
+
 /// Studies of the transient and harmonic analyses (verify_dynamics.cpp).
 /// \{
 StudyOutcome study_transient_modal(const std::string& out_dir, json::Value& summary);

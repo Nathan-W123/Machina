@@ -2550,7 +2550,7 @@ int main(int argc, char** argv) {
             "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
             "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
             "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle | "
-            "chaboche-cycle | hill-directional | "
+            "chaboche-cycle | hill-directional | logarithmic-uniaxial | logarithmic-tube | "
             "transient-modal | rod-harmonic | rod-transient | nonlinear-oscillator"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
@@ -2674,6 +2674,12 @@ int main(int argc, char** argv) {
     }
     if (all || study == "hill-directional") {
       outcomes.push_back(verify::study_hill_directional(out_dir, summary));
+    }
+    if (all || study == "logarithmic-uniaxial") {
+      outcomes.push_back(verify::study_logarithmic_uniaxial(out_dir, summary));
+    }
+    if (all || study == "logarithmic-tube") {
+      outcomes.push_back(verify::study_logarithmic_tube(out_dir, summary));
     }
     if (all || study == "transient-modal") {
       outcomes.push_back(verify::study_transient_modal(out_dir, summary));
