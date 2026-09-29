@@ -180,7 +180,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         model = _make_model(args.model, params, args)
         sur = train_surrogate(model, ds.samples(train_ids), calibration=ds.samples(cal_ids),
                               features=features, points_per_sample=args.points_per_sample,
-                              seed=args.seed, n_jobs=args.n_jobs)
+                              seed=args.seed, n_jobs=args.n_jobs, group_by=args.group_by)
     metrics: Dict[str, Any] = {}
     if test:
         rep = evaluate_surrogate(sur, ds.samples(test), tolerance=args.tolerance,
@@ -206,6 +206,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     from .dataset import Dataset
     from .evaluate import EvaluationReport, evaluate_surrogate
     from .registry import load_model
+    from .surrogate import seen_ids
 
     sur = load_model(args.model)
     ds = Dataset(args.data)
@@ -215,10 +216,11 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                if line.strip()]
     elif split_file.is_file():
         ids = list(read_json(split_file)["test"])
-    else:
-        seen = set(sur.training.get("sample_ids", [])) | set(
-            sur.training.get("calibration_sample_ids", []))
-        ids = [i for i in ds.ids() if i not in seen]
+    else:                                   # every sample of a part the model never saw
+        seen_s, seen_p = seen_ids(sur.training)
+        idx = ds.index()
+        ids = [i for i, pid in zip(idx["sample_id"], idx["part_id"])
+               if i not in seen_s and pid not in seen_p]
     reports = []
     if ids:
         reports.append(evaluate_surrogate(sur, ds.samples(ids), tolerance=args.tolerance,
@@ -244,22 +246,67 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 
 
 # -- active -------------------------------------------------------------------------
+def _process_ranges(items: Optional[Sequence[str]]) -> Dict[str, Any]:
+    out = {}
+    for item in items or []:
+        if "=" not in item or "," not in item:
+            raise ValueError(f"expected KEY=LO,HI, got {item!r}")
+        k, v = item.split("=", 1)
+        lo, hi = (float(x) for x in v.split(","))
+        out[k.strip()] = (lo, hi)
+    return out
+
+
+def _active_space(training: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
+    """DesignSpace arguments of `precomp active`: by default the setup the
+    model was trained on - its materials, the ranges of the process fields it
+    saw (a field that did not vary is fixed at its value), every other setup
+    field as in training (the smallest value of one that varied), its grid
+    spacing - so candidates differ in geometry, not in a process the model
+    never saw. --materials, --process, --setup and --grid-spacing override."""
+    env = training.get("setup") or {}
+    base: Dict[str, Any] = {}
+    for key, rule in (env.get("fields") or {}).items():
+        base[key] = rule["values"][0] if "values" in rule else rule["min"]
+    process: Dict[str, Any] = {}
+    for key, rule in (env.get("process") or {}).items():
+        if rule["max"] > rule["min"]:
+            process[key] = (rule["min"], rule["max"])
+        else:
+            base[key] = rule["min"]
+    if args.setup:
+        doc = read_json(args.setup)
+        doc.pop("material", None)
+        base.update(doc)
+        for key in doc:
+            process.pop(key, None)
+    if args.process is not None:            # given without values: fix the process
+        given = _process_ranges(args.process)
+        if not given:
+            for key, (lo, _) in process.items():
+                base.setdefault(key, lo)
+            process = {}
+        for key in given:
+            base.pop(key, None)
+        process.update(given)
+    kw: Dict[str, Any] = {"base_setup": base, "process": process}
+    materials = args.materials or env.get("materials")
+    if materials:
+        kw["materials"] = tuple(materials)
+    if args.families:
+        kw["families"] = tuple(args.families)
+    spacings = training.get("grid_spacings") or []
+    kw["grid_spacing"] = args.grid_spacing or (spacings[0] if spacings else 2e-3)
+    return kw
+
+
 def cmd_active(args: argparse.Namespace) -> int:
     from .active import Candidate, rank_candidates
     from .generate import DesignSpace, design_points
     from .registry import load_model
 
     sur = load_model(args.model)
-    kw: Dict[str, Any] = {"grid_spacing": args.grid_spacing}
-    if args.families:
-        kw["families"] = tuple(args.families)
-    if args.materials:
-        kw["materials"] = tuple(args.materials)
-    if args.setup:
-        base = read_json(args.setup)
-        base.pop("material", None)
-        kw["base_setup"] = base
-    space = DesignSpace(**kw)
+    space = DesignSpace(**_active_space(sur.training, args))
     n_fam = len(space.families)
     per = max(1, -(-args.n_candidates // n_fam))
     points = design_points(space, per, args.seed)[:max(args.n_candidates, 1)]
@@ -323,6 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--points-per-sample", type=int, default=2000)
     t.add_argument("--time-source", choices=["toolpath", "depth"], default="toolpath",
                    help="how the time_frac feature is computed")
+    t.add_argument("--group-by", choices=["sample", "part"], default="sample",
+                   help="groups of the GBM bootstrap / MLP early-stopping split")
     t.add_argument("--prior", choices=["proxy", "fea"], help="residual model: the prior")
     t.add_argument("--prior-work-dir", help="residual model with --prior fea: run cache")
     t.add_argument("--prior-set", nargs="*", metavar="KEY=VALUE",
@@ -351,10 +400,14 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--model", required=True)
     a.add_argument("--n-candidates", type=int, default=64)
     a.add_argument("--select", type=int, default=8)
-    a.add_argument("--families", nargs="*")
-    a.add_argument("--materials", nargs="*")
-    a.add_argument("--setup", help="FormingSetup JSON of the fields not varied")
-    a.add_argument("--grid-spacing", type=float, default=2e-3)
+    a.add_argument("--families", nargs="*", help="part families (default: all)")
+    a.add_argument("--materials", nargs="*", help="default: the model's training materials")
+    a.add_argument("--process", nargs="*", metavar="KEY=LO,HI",
+                   help="process ranges [SI] (default: the ranges the model was trained on)")
+    a.add_argument("--setup", help="FormingSetup JSON of the fields not varied (default: "
+                                   "the model's training setup)")
+    a.add_argument("--grid-spacing", type=float,
+                   help="[m] (default: the training grid spacing)")
     a.add_argument("--diversity", type=float, default=0.5)
     a.add_argument("--seed", type=int, default=1)
     a.add_argument("--out", required=True, help="ranking CSV")

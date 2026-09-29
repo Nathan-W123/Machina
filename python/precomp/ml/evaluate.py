@@ -35,7 +35,7 @@ from ..metrology import metrics
 from .dataset import (Sample, family_split, grouped_kfold, grouped_split, index_frame,
                       source_label)
 from .features import DEFAULT_CONFIG, REGION_NAMES, FeatureConfig
-from .surrogate import DeviationSurrogate, train_surrogate
+from .surrogate import DeviationSurrogate, seen_ids, train_surrogate
 from .uncertainty import REPORT_LEVELS
 
 #: Default tolerance [m] of the "share within tolerance" metric (0.2 mm).
@@ -55,18 +55,21 @@ class EvaluationReport:
 
     def summary(self) -> Dict[str, Any]:
         """Headline numbers per split: mean and median per-part rms error [m],
-        relative error, coverage at the report level, share flagged."""
+        relative error, coverage at the report level (None without
+        calibration, or when the calibration cannot support the level), share
+        flagged. JSON-ready: no NaN."""
         out: Dict[str, Any] = {"data_source": self.data_source}
         for split, g in self.per_part.groupby("split"):
             level = g["level"].iloc[0]
+            cov = g["coverage"].astype(float)
             out[split] = {"n_parts": int(g["part_id"].nunique()), "n_samples": int(len(g)),
                           "err_rms_mean_m": float(g["err_rms"].mean()),
                           "err_rms_median_m": float(g["err_rms"].median()),
                           "err_max_abs_mean_m": float(g["err_max_abs"].mean()),
-                          "rel_rms_mean": float(g["rel_rms"].mean()),
+                          "rel_rms_mean": _finite(g["rel_rms"].mean()),
                           "dz_rms_mean_m": float(g["dz_rms"].mean()),
                           "coverage_level": float(level),
-                          "coverage_mean": float(g["coverage"].mean()),
+                          "coverage_mean": _finite(cov.mean()) if cov.notna().all() else None,
                           "ood_flagged_share": float((~g["ood_in_envelope"].astype(bool)).mean())
                           if g["ood_in_envelope"].notna().all() else None}
         return out
@@ -99,19 +102,20 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
                        assess: bool = True, check_unseen: bool = True) -> EvaluationReport:
     """Score `surrogate` on `samples` (see the module docstring).
 
-    check_unseen : refuse samples whose part the surrogate was trained or
-        calibrated on (by sample id and part id recorded in its training).
+    check_unseen : refuse samples whose sample id or PART id the surrogate
+        was trained, corrected (transfer) or calibrated on, as recorded in its
+        training (`surrogate.seen_ids`).
     """
     samples = list(samples)
     if not samples:
         raise ValueError("no samples to evaluate")
     if check_unseen:
-        seen = set(surrogate.training.get("sample_ids", [])) | set(
-            surrogate.training.get("calibration_sample_ids", []))
-        leaked = sorted(s.sample_id for s in samples if s.sample_id in seen)
+        seen_s, seen_p = seen_ids(surrogate.training)
+        leaked = sorted(s.sample_id for s in samples
+                        if s.sample_id in seen_s or s.part_id in seen_p)
         if leaked:
-            raise PrecompError(f"{len(leaked)} evaluation sample(s) were used to train or "
-                               f"calibrate the model, e.g. {leaked[:3]}")
+            raise PrecompError(f"{len(leaked)} evaluation sample(s) belong to parts the model "
+                               f"was trained, corrected or calibrated on, e.g. {leaked[:3]}")
     label = source_label(s.source for s in samples)
     has_cal = surrogate.calibrator is not None and surrogate.calibrator.fitted
     rows, pooled = [], []
@@ -213,6 +217,11 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
     return EvaluationReport(per_part, per_region, calibration, ood, label, info)
 
 
+def _finite(v: Any) -> Optional[float]:
+    v = float(v)
+    return v if np.isfinite(v) else None
+
+
 ModelFactory = Callable[[], Any]
 
 
@@ -272,7 +281,8 @@ def family_holdout(samples: Sequence[Sample], family: str, make_model: ModelFact
     if model is None:
         train, cal = _cal_split([byid[i] for i in tr_ids], calibration_fraction, seed + 1)
         model = _fit(make_model, train, cal, features, points_per_sample, seed, n_jobs)
-    elif family in model.training.get("families", []):
+    elif family in model.training.get("families", []) or family in (
+            model.training.get("transfer") or {}).get("real_families", []):
         raise PrecompError(f"the model was trained on family {family!r}")
     a = evaluate_surrogate(model, [byid[i] for i in te_ids], tolerance=tolerance, level=level,
                            split="in_distribution")

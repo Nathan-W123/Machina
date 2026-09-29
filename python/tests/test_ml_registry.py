@@ -87,3 +87,77 @@ def test_torch_weights_are_stored_as_state_dict_files(tmp_path, proxy_split, ml_
     s = proxy_split["test"][0]
     assert np.array_equal(load_model(d).predict_deviation(s.commanded, s.setup)[0],
                           sur.predict_deviation(s.commanded, s.setup)[0])
+    # weights the manifest does not hash are refused
+    man = d / "manifest.json"
+    doc = json.loads(man.read_text())
+    doc["files"].pop("torch/model__member1.pt")
+    man.write_text(json.dumps(doc))
+    with pytest.raises(PrecompError, match="does not hash"):
+        load_model(d)
+
+
+def test_a_neural_bundle_without_torch_says_what_is_missing(tmp_path, proxy_split,
+                                                             ml_features, monkeypatch):
+    pytest.importorskip("torch")
+    import sys
+
+    from precomp.ml import MLPEnsemble, train_surrogate
+
+    sur = train_surrogate(MLPEnsemble(1, hidden=(8,), epochs=2), proxy_split["train"][:6],
+                          features=ml_features, points_per_sample=50, envelope=False)
+    d = save_model(sur, tmp_path / "mlp", {"created_at": ML_CREATED_AT})
+    monkeypatch.setitem(sys.modules, "torch", None)          # import torch -> ImportError
+    with pytest.raises(PrecompError, match=r"needs torch: pip install -e '\.\[torch\]'"):
+        load_model(d)
+
+
+def test_loading_refuses_unverifiable_or_relabelled_bundles(tmp_path, gbm_surrogate):
+    d = save_model(gbm_surrogate, tmp_path / "m", {"created_at": ML_CREATED_AT})
+    man = d / "manifest.json"
+    original = man.read_text()
+    doc = json.loads(original)
+    assert doc["target"] == "dz"
+    no_files = {k: v for k, v in doc.items() if k != "files"}
+    man.write_text(json.dumps(no_files))
+    with pytest.raises(PrecompError, match="SHA-256 of model.joblib"):
+        load_model(d)
+    for key, value in (("data_source", "SparLab simulation"), ("model_class", "MLPEnsemble"),
+                       ("domain", "all")):
+        man.write_text(original)
+        _tamper(man, **{key: value})
+        with pytest.raises(PrecompError, match=key):
+            load_model(d)
+    man.write_text(original)
+    assert load_model(d).data_source == "proxy - not physics"
+
+
+def test_saving_checks_everything_before_touching_a_file(tmp_path, gbm_surrogate):
+    d = save_model(gbm_surrogate, tmp_path / "m", {"created_at": ML_CREATED_AT})
+    before = {p.name: p.read_bytes() for p in d.iterdir()}
+    with pytest.raises(ValueError, match="data_source"):
+        save_model(gbm_surrogate, d, {"created_at": ML_CREATED_AT,
+                                      "metrics": {"x": {"rms": 1.0}}}, overwrite=True)
+    assert {p.name: p.read_bytes() for p in d.iterdir()} == before   # the old bundle stands
+    # a metric that could not be computed is written as null, not NaN
+    d2 = save_model(gbm_surrogate, tmp_path / "n", {"created_at": ML_CREATED_AT, "metrics": {
+        "held_out": {"coverage_mean": float("nan"), "data_source": "proxy - not physics"}}})
+    assert read_manifest(d2)["metrics"]["held_out"]["coverage_mean"] is None
+
+
+def test_a_residual_model_records_its_prior(tmp_path, proxy_split, ml_features):
+    """SparLab-labelled data with the proxy as prior: the manifest says both."""
+    from precomp.ml import GBMEnsemble, ProxySimulator, ResidualModel, Sample, train_surrogate
+
+    sim = [Sample(s.sample_id, s.commanded, s.formed, s.setup, "sim", "sparlab:test", s.kind,
+                  s.part, s.part_id, s.target, None,
+                  {"created_at": ML_CREATED_AT, "sparlab_version": "test", "deck_hash": "h"})
+           for s in proxy_split["train"][:6]]
+    sur = train_surrogate(ResidualModel(ProxySimulator(), GBMEnsemble(2, max_iter=20,
+                                                                      target_scale=None)),
+                          sim, features=ml_features, points_per_sample=100, envelope=False)
+    d = save_model(sur, tmp_path / "r", {"created_at": ML_CREATED_AT})
+    doc = read_manifest(d)
+    assert doc["data_source"] == "SparLab simulation" and doc["target"] == "dz"
+    prior = doc["training"]["prior"]
+    assert prior["name"] == "ProxySimulator" and prior["data_source"] == "proxy - not physics"
+    assert load_model(d).describe()["prior"]["data_source"] == "proxy - not physics"

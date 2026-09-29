@@ -831,6 +831,9 @@ class FEAPrior:
     overrides: Dict[str, Any] = field(default_factory=dict)
     step: Any = -1
 
+    #: what the prior's values are
+    data_source = "SparLab simulation"
+
     def prior_deviation(self, commanded: HeightMap, setup: Any) -> np.ndarray:
         from ..fea.runner import simulate
         s = as_setup(setup).replace(**self.overrides)
@@ -839,7 +842,8 @@ class FEAPrior:
         return formed.z - commanded.z
 
     def describe(self) -> Dict[str, Any]:
-        return {"name": "FEAPrior", "overrides": dict(self.overrides), "step": self.step}
+        return {"name": "FEAPrior", "overrides": dict(self.overrides), "step": self.step,
+                "data_source": self.data_source}
 
 
 class ResidualModel:

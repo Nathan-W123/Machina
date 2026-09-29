@@ -18,8 +18,12 @@ free notes, and the SHA-256 of every file.
 
 `load_model` refuses a bundle whose feature schema version, feature names
 or schema hash differ from what this code computes - a model must never be
-fed features it was not trained on - and a bundle whose files do not match
-their recorded hashes. model.joblib is a pickle: load bundles you trust only.
+fed features it was not trained on -, a manifest without the hashes of
+model.joblib and of every torch file the state refers to, a file that does
+not match its recorded hash, and a state whose model class, kind, domain or
+data source differ from the manifest's. The manifest is written last, after
+it has been checked to be valid JSON, so an interrupted save leaves no
+loadable bundle. model.joblib is a pickle: load bundles you trust only.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from typing import Any, Dict, Mapping, Optional
 import numpy as np
 
 from .. import __version__
-from .._util import PathLike, PrecompError, read_json, to_jsonable, write_json
+from .._util import PathLike, PrecompError, canonical_json, read_json
 from .features import FEATURE_SCHEMA_VERSION, FeatureConfig, names_hash
 from .surrogate import DeviationSurrogate
 
@@ -108,12 +112,27 @@ def _extract_torch(state: Any, prefix: str, files: Dict[str, Dict[str, np.ndarra
     return state
 
 
+def _torch_refs(state: Any) -> list:
+    """Every torch file a (loaded) state refers to."""
+    if isinstance(state, dict):
+        out = []
+        for k, v in state.items():
+            out += list(v.values()) if k == TORCH_FILES_KEY else _torch_refs(v)
+        return out
+    return []
+
+
 def _restore_torch(state: Any, directory: Path) -> Any:
     if isinstance(state, dict):
         out = {}
         for k, v in state.items():
             if k == TORCH_FILES_KEY:
-                import torch
+                try:
+                    import torch
+                except ImportError as exc:
+                    raise PrecompError(
+                        f"{directory} holds a neural model ({', '.join(sorted(v.values()))}); "
+                        "loading it needs torch: pip install -e '.[torch]'") from exc
                 out[TORCH_KEY] = {name: {key: t.detach().cpu().numpy() for key, t in
                                          torch.load(directory / rel, weights_only=True,
                                                     map_location="cpu").items()}
@@ -124,12 +143,25 @@ def _restore_torch(state: Any, directory: Path) -> Any:
     return state
 
 
+def _finite_or_none(value: Any) -> Any:
+    """Metrics with every non-finite number (a metric that could not be
+    computed, e.g. coverage without calibration) replaced by None: JSON has no
+    NaN."""
+    if isinstance(value, Mapping):
+        return {k: _finite_or_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite_or_none(v) for v in value]
+    if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+        return None
+    return value
+
+
 def build_manifest(model: DeviationSurrogate, manifest: Mapping[str, Any]) -> Dict[str, Any]:
     """The manifest document of `model` (without the file hashes)."""
     if not isinstance(manifest.get("created_at"), str) or not manifest["created_at"]:
         raise ValueError("manifest['created_at'] must be a non-empty string supplied by the "
                          "caller")
-    metrics = manifest.get("metrics") or {}
+    metrics = _finite_or_none(manifest.get("metrics") or {})
     for name, block in metrics.items():
         if isinstance(block, Mapping) and "data_source" not in block:
             raise ValueError(f"metrics block {name!r} does not state its data_source")
@@ -144,6 +176,7 @@ def build_manifest(model: DeviationSurrogate, manifest: Mapping[str, Any]) -> Di
     if len(cal_ids) <= MAX_LISTED_IDS:
         training["calibration_sample_ids"] = list(cal_ids)
     doc = {"format": MODEL_FORMAT, "model_class": model.model_class, "kind": model.kind,
+           "target": model.target,
            "feature_schema_version": FEATURE_SCHEMA_VERSION,
            "feature_schema_hash": cfg.schema_hash(), "feature_config": cfg.to_dict(),
            "feature_names": list(names), "feature_names_sha256": names_hash(names),
@@ -173,16 +206,18 @@ def save_model(model: DeviationSurrogate, directory: PathLike, manifest: Mapping
     if not isinstance(model, DeviationSurrogate):
         raise TypeError("save_model expects a DeviationSurrogate (see precomp.ml.surrogate)")
     d = Path(directory)
-    if d.exists() and any(d.iterdir()):
-        if not overwrite:
-            raise PrecompError(f"{d} is not empty; pass overwrite=True to replace the bundle")
-        for name in (MANIFEST_FILE, STATE_FILE):
-            (d / name).unlink(missing_ok=True)
-        shutil.rmtree(d / TORCH_DIR, ignore_errors=True)
-    d.mkdir(parents=True, exist_ok=True)
+    if d.exists() and any(d.iterdir()) and not overwrite:
+        raise PrecompError(f"{d} is not empty; pass overwrite=True to replace the bundle")
+    # everything that can fail on the content fails before a file is touched
     doc = build_manifest(model, manifest)
+    canonical_json(doc)                       # PrecompError on a non-finite number
     files: Dict[str, Dict[str, np.ndarray]] = {}
     state = _extract_torch(model.to_state(), "", files)
+    if d.exists():
+        (d / MANIFEST_FILE).unlink(missing_ok=True)     # the bundle is invalid from here
+        (d / STATE_FILE).unlink(missing_ok=True)
+        shutil.rmtree(d / TORCH_DIR, ignore_errors=True)
+    d.mkdir(parents=True, exist_ok=True)
     import joblib
     joblib.dump(state, d / STATE_FILE, compress=3)
     if files:
@@ -191,7 +226,10 @@ def save_model(model: DeviationSurrogate, directory: PathLike, manifest: Mapping
         for rel, sd in files.items():
             torch.save({k: torch.as_tensor(np.asarray(v)) for k, v in sd.items()}, d / rel)
     doc["files"] = {rel: _sha256_file(d / rel) for rel in [STATE_FILE] + sorted(files)}
-    write_json(d / MANIFEST_FILE, to_jsonable(doc))
+    text = canonical_json(doc)
+    tmp = d / f".{MANIFEST_FILE}.tmp"
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(d / MANIFEST_FILE)             # the manifest last: the bundle is complete
     return d
 
 
@@ -233,7 +271,11 @@ def load_model(directory: PathLike) -> DeviationSurrogate:
         raise PrecompError(f"{d} is not a model directory")
     doc = read_manifest(d)
     cfg = check_schema(doc, str(d))
-    for rel, digest in (doc.get("files") or {}).items():
+    files = doc.get("files")
+    if not isinstance(files, Mapping) or STATE_FILE not in files:
+        raise PrecompError(f"{d / MANIFEST_FILE} does not record the SHA-256 of {STATE_FILE}; "
+                           "the bundle cannot be verified, refusing to load it")
+    for rel, digest in files.items():
         path = d / rel
         if not path.is_file():
             raise PrecompError(f"{path} is missing from the bundle")
@@ -241,10 +283,19 @@ def load_model(directory: PathLike) -> DeviationSurrogate:
             raise PrecompError(f"{path} does not match its SHA-256 in the manifest; the bundle "
                                "was modified or is incomplete")
     import joblib
-    state = _restore_torch(joblib.load(d / STATE_FILE), d)
-    model = DeviationSurrogate.from_state(state)
+    raw = joblib.load(d / STATE_FILE)
+    unlisted = sorted(set(_torch_refs(raw)) - set(files))
+    if unlisted:
+        raise PrecompError(f"{d}: the state refers to {unlisted}, which the manifest does not "
+                           "hash; refusing to load unverified weights")
+    model = DeviationSurrogate.from_state(_restore_torch(raw, d))
     if model.features != cfg or model.feature_names != list(doc["feature_names"]):
         raise PrecompError(f"{d}: the state's features differ from the manifest's")
+    for key, value in (("model_class", model.model_class), ("kind", model.kind),
+                       ("domain", model.domain), ("data_source", model.data_source)):
+        if doc.get(key) != value:
+            raise PrecompError(f"{d}: the state's {key} {value!r} differs from the manifest's "
+                               f"{doc.get(key)!r}")
     model.manifest = doc  # type: ignore[attr-defined]
     return model
 

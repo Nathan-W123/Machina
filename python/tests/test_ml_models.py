@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from conftest import ML_CREATED_AT
+from precomp.materials import get_material
 from precomp.ml import (GBMEnsemble, ProxySimulator, ResidualModel, build_table,
                         evaluate_surrogate, simulate_samples, train_surrogate, transfer_surrogate)
 from precomp.ml.generate import DesignSpace, design_points
@@ -58,7 +59,13 @@ def test_conformal_coverage_is_nominal_on_held_out_parts(gbm_surrogate, proxy_sp
         cal.quantile(0.95)                                    # k = 10 > n = 9
 
 
-def test_the_envelope_flags_an_unseen_family_more_than_known_ones(gbm_surrogate, proxy_split):
+def test_the_envelope_flags_new_descriptors_and_setups(gbm_surrogate, proxy_split):
+    """The envelope flags parts whose DESCRIPTORS are new - here the held-out
+    freeform family, whose dents no other family has. A family that resembles
+    the others (dome, saddle, two_level) is not flagged: see the
+    leave-each-family-out table in benchmarks/ml_proxy. A setup field no
+    feature describes (release, tool path, mesh) is checked against the
+    training setups."""
     known = [gbm_surrogate.assess(s.commanded, s.setup) for s in proxy_split["test"]]
     unseen = [gbm_surrogate.assess(s.commanded, s.setup) for s in proxy_split["family"]]
     flag_known = np.mean([not a["in_envelope"] for a in known])
@@ -71,6 +78,18 @@ def test_the_envelope_flags_an_unseen_family_more_than_known_ones(gbm_surrogate,
     assert known[0]["model_data_source"] == "proxy - not physics"
     s = proxy_split["test"][0]
     assert gbm_surrogate.assess(s)["part_score"] == known[0]["part_score"]   # a Sample too
+    assert all(a["setup_mismatch"] == [] for a in known)
+    st = s.forming_setup()
+    for change, reason in ((dict(release="clamped_only"), "setup.release"),
+                           (dict(toolpath_style="spiral"), "setup.toolpath_style"),
+                           (dict(layers=1), "setup.layers"),
+                           (dict(material=get_material("DC04")), "youngs_modulus"),
+                           (dict(thickness=2.5e-3), "thickness")):
+        a = gbm_surrogate.assess(s.commanded, st.replace(**change))
+        assert not a["in_envelope"] and reason in a["reasons"], (change, a["reasons"])
+    rel = gbm_surrogate.assess(s.commanded, st.replace(release="clamped_only"))
+    assert rel["setup_mismatch"] == [{"field": "release", "value": "clamped_only",
+                                      "trained": ["321"]}]
 
 
 @pytest.fixture(scope="module")

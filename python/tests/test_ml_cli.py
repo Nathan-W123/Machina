@@ -39,6 +39,19 @@ def test_the_ml_commands_end_to_end(tmp_path, capsys, ml_threads, fake_solver, c
     assert man["created_at"] == ML_CREATED_AT and man["model_class"] == "GBMEnsemble"
     split = json.loads((d / "model" / "split.json").read_text())
     assert set(split["train"]).isdisjoint(split["test"])
+    # no calibration: coverage cannot be computed, and says so (null, not NaN)
+    assert main(["train", "--data", str(d / "data"), "--model", "gbm", "--out",
+                 str(d / "nocal"), "--param", "n_members=2", "max_iter=20",
+                 "--time-source", "depth", "--points-per-sample", "100",
+                 "--test-fraction", "0.3", "--calibration-fraction", "0",
+                 "--created-at", ML_CREATED_AT]) == 0
+    assert json.loads(capsys.readouterr().out)["metrics"]["held_out"]["coverage_mean"] is None
+    assert json.loads((d / "nocal" / "manifest.json").read_text())["conformal"] is None
+    assert main(["evaluate", "--model", str(d / "nocal"), "--data", str(d / "data"),
+                 "--out", str(d / "eval_nocal")]) == 0
+    capsys.readouterr()
+    assert json.loads((d / "eval_nocal" / "summary.json").read_text())["held_out"][
+        "coverage_mean"] is None
     assert main(["evaluate", "--model", str(d / "model"), "--data", str(d / "data"),
                  "--out", str(d / "eval")]) == 0
     capsys.readouterr()
@@ -46,13 +59,18 @@ def test_the_ml_commands_end_to_end(tmp_path, capsys, ml_threads, fake_solver, c
     assert len(pp) == 9 and set(pp["data_source"]) == {"proxy - not physics"}
     assert set(pp["sample_id"]) == set(split["test"])
     assert (d / "eval" / "calibration.csv").is_file()
+    # candidates in the training setup by default: contour paths, AA5754-O,
+    # the fixed process, the 4 mm grid - they differ in geometry only
     assert main(["active", "--model", str(d / "model"), "--n-candidates", "6", "--select", "3",
-                 "--families", "truncated_cone", "dome", "--materials", "AA5754-O",
-                 "--grid-spacing", "4e-3", "--out", str(d / "rank.csv")]) == 0
+                 "--families", "truncated_cone", "dome", "--out", str(d / "rank.csv")]) == 0
     capsys.readouterr()
     rank = pd.read_csv(d / "rank.csv")
     assert len(rank) == 6 and sorted(rank["rank"].dropna()) == [1, 2, 3]
     assert set(rank["model_data_source"]) == {"proxy - not physics"}
+    assert set(rank["material"]) == {"AA5754-O"}
+    reasons = ";".join(rank["ood_reasons"].fillna(""))
+    for key in ("setup.", "step_down", "tool_radius", "thickness", "friction"):
+        assert key not in reasons, reasons
     # compensation on the surrogate, verified by the (test-double) solver
     setup = FormingSetup(get_material("AA5754-O"), executable=str(fake_solver), layers=1,
                          element_size=4e-3, step_down=1.5e-3, toolpath_spacing=3e-3)

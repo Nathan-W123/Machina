@@ -9,7 +9,14 @@ envelope, and states the data source it learned from. It implements what
   node of the commanded grid (the `FieldModel` protocol);
 * ``predict_interval(commanded, setup, level) -> (lower, upper)`` - conformal
   bounds of dz [m];
-* ``assess(commanded, setup) -> dict`` - the envelope report.
+* ``assess(commanded, setup) -> dict`` - the envelope report, including the
+  setup fields no feature describes (release, tool path style, mesh, ...):
+  a query whose value was never seen in training is outside the envelope.
+
+What it predicts (`target`, "dz") is the TOTAL vertical deviation of the
+formed surface from the commanded one - also for a ResidualModel, whose
+prior is evaluated inside the model - never a residual over a simulation, so
+it must not be added to one (`precomp.api` refuses method "hybrid" with it).
 
 A point model is trained on the nodes of `domain` ("part" by default); it is
 evaluated at every node so the formed surface is defined everywhere, but only
@@ -39,6 +46,97 @@ from .ood import OODEnvelope
 from .uncertainty import ConformalCalibrator
 
 SURROGATE_FORMAT = "precomp.ml.DeviationSurrogate/1"
+
+#: FormingSetup fields the features describe (process and material features);
+#: the envelope's descriptors cover them.
+FEATURE_SETUP_FIELDS = ("material", "thickness", "tool_radius", "step_down", "friction")
+#: Fields that are labels, not physics.
+LABEL_SETUP_FIELDS = ("name",)
+#: Process fields whose training ranges `precomp active` draws candidates from.
+PROCESS_FIELDS = ("tool_radius", "step_down", "thickness", "friction")
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+
+
+def setup_envelope(setups: Sequence[Any]) -> Dict[str, Any]:
+    """What the training setups held: for every physics field of
+    `FormingSetup` that no feature describes (blank, clamp, mesh, element,
+    tool path style / spacing / direction, contact, increment, release,
+    kinematics, solver) its range (numbers) or its set of values; plus the
+    ranges of the process fields and the material names, for reference."""
+    docs = [as_setup(x).physics_dict() for x in setups]
+    if not docs:
+        raise ValueError("no setups")
+    fields: Dict[str, Any] = {}
+    for key in docs[0]:
+        if key in FEATURE_SETUP_FIELDS or key in LABEL_SETUP_FIELDS:
+            continue
+        vals = [d[key] for d in docs]
+        if all(_is_number(v) for v in vals):          # ints stay ints (layers)
+            fields[key] = {"min": min(vals), "max": max(vals)}
+        else:
+            uniq = {canonical_json(v): v for v in vals}
+            fields[key] = {"values": [uniq[k] for k in sorted(uniq)]}
+    process = {k: {"min": min(d[k] for d in docs), "max": max(d[k] for d in docs)}
+               for k in PROCESS_FIELDS}
+    materials = sorted({str(d["material"].get("name")) for d in docs})
+    return {"fields": fields, "process": process, "materials": materials}
+
+
+def setup_mismatch(envelope: Optional[Mapping[str, Any]], setup: Any) -> List[Dict[str, Any]]:
+    """The fields of `setup` outside `envelope` (see `setup_envelope`):
+    [{field, value, trained}], empty when every field was seen in training."""
+    if not envelope:
+        return []
+    doc = as_setup(setup).physics_dict()
+    out = []
+    for key, rule in envelope.get("fields", {}).items():
+        v = doc.get(key)
+        if "values" in rule:
+            if canonical_json(v) not in {canonical_json(x) for x in rule["values"]}:
+                out.append({"field": key, "value": v, "trained": rule["values"]})
+        else:
+            lo, hi = rule["min"], rule["max"]
+            tol = 1e-9 * max(abs(lo), abs(hi), 1e-300)
+            if not (_is_number(v) and lo - tol <= float(v) <= hi + tol):
+                out.append({"field": key, "value": v, "trained": [lo, hi]})
+    return out
+
+
+def seen_ids(training: Mapping[str, Any]) -> Tuple[set, set]:
+    """(sample ids, part ids) a surrogate was trained, corrected or
+    calibrated on, from its training record (a transfer surrogate's includes
+    its base's and its real data)."""
+    samples: set = set()
+    parts: set = set()
+    for key in ("sample_ids", "calibration_sample_ids"):
+        samples |= set(training.get(key) or [])
+    for key in ("part_ids", "calibration_part_ids"):
+        parts |= set(training.get(key) or [])
+    tr = training.get("transfer") or {}
+    for key in ("real_sample_ids", "calibration_sample_ids"):
+        samples |= set(tr.get(key) or [])
+    for key in ("real_part_ids", "calibration_part_ids"):
+        parts |= set(tr.get(key) or [])
+    if isinstance(training.get("base"), Mapping):
+        a, b = seen_ids(training["base"])
+        samples |= a
+        parts |= b
+    return samples, parts
+
+
+def describe_prior(prior: Any) -> Dict[str, Any]:
+    """What a ResidualModel's prior is, for the manifest: its own
+    `describe()` when it has one, with its data-source label."""
+    d = dict(prior.describe()) if hasattr(prior, "describe") else {}
+    d.setdefault("name", type(prior).__name__)
+    label = getattr(prior, "data_source", None) or getattr(prior, "label", None)
+    if label is None:
+        label = "SparLab simulation" if type(prior).__name__ == "FEAPrior" else "unknown"
+    d["data_source"] = label
+    return d
 
 
 def _key(commanded: HeightMap, setup: Any) -> str:
@@ -70,6 +168,10 @@ class DeviationSurrogate:
     calibrator, ood : optional fitted ConformalCalibrator / OODEnvelope.
     domain : the training mask ("part" or "all").
     """
+
+    #: What the model predicts: the total vertical deviation dz of the formed
+    #: surface from the commanded one (see the module docstring).
+    target = "dz"
 
     def __init__(self, model: Any, features: FeatureConfig = DEFAULT_CONFIG, *,
                  data_source: str, training: Optional[Dict[str, Any]] = None,
@@ -141,6 +243,11 @@ class DeviationSurrogate:
             del self._cache[k]
         return val
 
+    @property
+    def prior(self) -> Any:
+        """The physics prior evaluated inside the model (ResidualModel), or None."""
+        return model_prior(self.model)
+
     def feature_maps(self, commanded: HeightMap, setup: Any) -> FeatureMaps:
         return self._cached("maps:" + _key(commanded, setup),
                             lambda: feature_maps(commanded, setup, None, self.features))
@@ -186,7 +293,10 @@ class DeviationSurrogate:
         """The envelope report of a commanded part - a HeightMap with its
         setup, or a `Sample` - (see `ood.OODEnvelope`) on at most `max_points`
         part nodes (evenly spread), with the data source the model learned
-        from."""
+        from. A setup field that no feature describes and whose value the
+        training data never had (`setup_mismatch`, e.g. another release or
+        tool path style) puts the part outside the envelope too; the reasons
+        then name it first ("setup.<field>")."""
         if self.ood is None:
             raise PrecompError("this surrogate has no OOD envelope")
         if isinstance(commanded, Sample):
@@ -201,6 +311,11 @@ class DeviationSurrogate:
                 nodes = nodes[np.linspace(0, nodes.size - 1, max_points).round().astype(int)]
             d, _ = global_features(commanded, setup, self.features)
             rep = self.ood.assess_features(fm.gather(nodes), d)
+            mism = setup_mismatch(self.training.get("setup"), setup)
+            rep["setup_mismatch"] = mism
+            if mism:
+                rep["in_envelope"] = False
+                rep["reasons"] = [f"setup.{m['field']}" for m in mism] + rep["reasons"]
             rep["model_data_source"] = self.data_source
             if self.kind == "field" and hasattr(self.model, "fraction_outside_window"):
                 rep["fraction_outside_window"] = self.model.fraction_outside_window(
@@ -211,8 +326,9 @@ class DeviationSurrogate:
                                           make))
 
     def describe(self) -> Dict[str, Any]:
-        return {"model_class": self.model_class, "kind": self.kind,
+        return {"model_class": self.model_class, "kind": self.kind, "target": self.target,
                 "data_source": self.data_source, "domain": self.domain,
+                "prior": None if self.prior is None else describe_prior(self.prior),
                 "features": self.features.to_dict(), "training": self.training,
                 "calibration": None if self.calibrator is None else self.calibrator.summary(),
                 "ood": None if self.ood is None else self.ood.summary()}
@@ -277,21 +393,34 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
                     features: FeatureConfig = DEFAULT_CONFIG,
                     points_per_sample: Optional[int] = 2000, mask: str = "part",
                     seed: int = 0, envelope: bool = True, mondrian: bool = False,
-                    calibration_points: Optional[int] = None, n_jobs: int = 1
-                    ) -> DeviationSurrogate:
+                    calibration_points: Optional[int] = None, n_jobs: int = 1,
+                    group_by: str = "sample") -> DeviationSurrogate:
     """Fit `model` on `train`, then the envelope, then calibrate on `calibration`.
 
     Point models get a stratified table (`points_per_sample` per sample, the
     physics prior's column appended for residual models); field models are
     fitted on the whole samples. `calibration` must hold parts that are not
     in `train` (checked by part id); without it the surrogate has no
-    intervals. The training provenance - sample ids (and their hash), part
-    ids, families, sources, the data-source label, seed and sizes - is kept
-    in `surrogate.training`.
+    intervals. The training provenance - sample and part ids (and a hash),
+    families, sources, the data-source label, the setup fields seen
+    (`setup_envelope`), the prior of a residual model, seed and sizes - is
+    kept in `surrogate.training`.
+
+    group_by : the groups a point model's bootstrap (GBMEnsemble) or
+        early-stopping split (MLPEnsemble) draws: "sample" (default) or
+        "part". The variants of a part are near duplicates, so with "sample"
+        a bootstrap member sees about 95 % of the parts and the ensemble
+        spread is far smaller than the error on a new part - it is a relative
+        scale that conformal calibration turns into intervals, not an error
+        estimate. "part" gives a larger spread but, on proxy data, an 18 %
+        larger held-out error and 90 % intervals almost twice as wide after
+        calibration (docs/precomp_ml.md, "Models").
     """
     train = list(train)
     if not train:
         raise ValueError("no training samples")
+    if group_by not in ("sample", "part"):
+        raise ValueError("group_by must be 'sample' or 'part'")
     cal = list(calibration or [])
     overlap = {s.part_id for s in train} & {s.part_id for s in cal}
     if overlap:
@@ -302,6 +431,7 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
     info: Dict[str, Any] = {
         "sample_ids": sorted(s.sample_id for s in train),
         "sample_ids_sha256": _ids_hash([s.sample_id for s in train]),
+        "part_ids": sorted({s.part_id for s in train}),
         "n_samples": len(train), "n_parts": len({s.part_id for s in train}),
         "families": sorted({s.family for s in train}),
         "sources": sorted({s.source for s in train}),
@@ -309,14 +439,20 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
         "sparlab_versions": sorted({str(s.provenance["sparlab_version"]) for s in train
                                     if s.provenance.get("sparlab_version")}),
         "seed": int(seed), "mask": mask, "points_per_sample": points_per_sample,
-        "calibration_sample_ids": sorted(s.sample_id for s in cal)}
+        "group_by": group_by, "grid_spacings": sorted({float(s.grid.h) for s in train}),
+        "calibration_sample_ids": sorted(s.sample_id for s in cal),
+        "calibration_part_ids": sorted({s.part_id for s in cal}),
+        "setup": setup_envelope([s.setup for s in train])}
+    if model_prior(model) is not None:
+        info["prior"] = describe_prior(model_prior(model))
     table = None
     if getattr(model, "kind", None) == "field":
         model.fit_samples(train)
     else:
         table = build_table(train, features, points_per_sample=points_per_sample, mask=mask,
                             rng=seed, stratify=True, prior=model_prior(model), n_jobs=n_jobs)
-        model.fit(table.X, table.y, table.groups, feature_names=table.feature_names)
+        model.fit(table.X, table.y, table.groups if group_by == "sample" else table.part_id,
+                  feature_names=table.feature_names)
         info["n_rows"] = len(table)
     sur = DeviationSurrogate(model, features, data_source=label, training=info, domain=mask)
     if envelope:
@@ -377,4 +513,5 @@ def transfer_surrogate(base: DeviationSurrogate, real: Sequence[Sample], *,
 
 
 __all__ = ["DeviationSurrogate", "train_surrogate", "transfer_surrogate", "calibrate",
-           "fit_envelope", "model_prior", "SURROGATE_FORMAT"]
+           "fit_envelope", "model_prior", "setup_envelope", "setup_mismatch", "seen_ids",
+           "describe_prior", "SURROGATE_FORMAT"]
