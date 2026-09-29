@@ -19,6 +19,7 @@
 ///   "modal":    { "enabled": true, "num_modes":.. },
 ///   "buckling": { "enabled": true, "num_modes":.., "load_cases": [..] },
 ///   "nonlinear": { "enabled": true, "method": "arc_length", "steps":.. },
+///   "forming":  { "tools": [..], "steps": [..] },   // sparlab_form (docs/forming.md)
 ///   "topology": { "enabled": true, "volume_fraction":.., "filter": {..} },
 ///   "output":   { "vtk": true, "csv": true }
 /// }
@@ -44,6 +45,7 @@
 #include "sparlab/fem/Buckling.hpp"
 #include "sparlab/fem/Dynamics.hpp"
 #include "sparlab/fem/FemModel.hpp"
+#include "sparlab/fem/Forming.hpp"
 #include "sparlab/fem/LinearSolver.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
 #include "sparlab/fem/NonlinearStatic.hpp"
@@ -129,6 +131,22 @@ struct FrequencyResponseConfig {
   std::vector<std::string> load_cases;
 };
 
+/// The incremental-forming analysis of sparlab_form (Forming.hpp,
+/// docs/forming.md): its tools, steps and Newton settings, and what it
+/// writes.
+struct FormingConfig {
+  bool enabled = false;  ///< the deck has a `forming` block
+  FormingOptions options;
+  /// Per-step VTK files.
+  bool write_vtk = true;
+  /// Per-step node and element files ("steps", the default), none of them
+  /// ("none"), or those plus a snapshot every `snapshot_stride` increments
+  /// (an integer in the deck).
+  enum class Snapshots { Steps, None, Stride };
+  Snapshots snapshots = Snapshots::Steps;
+  int snapshot_stride = 0;
+};
+
 struct TopologyConfig {
   bool enabled = false;
   Scalar volume_fraction = 0.4;
@@ -205,6 +223,7 @@ class Configuration {
   NonlinearConfig nonlinear;
   TransientConfig transient;
   FrequencyResponseConfig frequency_response;
+  FormingConfig forming;
   TopologyConfig topology;
   OutputConfig output;
 

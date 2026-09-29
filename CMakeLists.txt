@@ -130,6 +130,7 @@ add_library(sparlab STATIC
   src/io/CalculixWriter.cpp
   src/io/MeshReader.cpp
   src/io/ResultWriter.cpp
+  src/io/FormingWriter.cpp
 )
 
 target_include_directories(sparlab PUBLIC
@@ -189,10 +190,21 @@ if(SPARLAB_BUILD_APPS)
   target_link_libraries(sparlab_app_support PUBLIC sparlab)
   target_include_directories(sparlab_app_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps)
 
-  foreach(app sparlab_solve sparlab_topopt sparlab_verify sparlab_bench)
+  foreach(app sparlab_solve sparlab_topopt sparlab_verify sparlab_bench sparlab_form)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE sparlab_app_support)
   endforeach()
+
+  # The git revision `sparlab_form --version` prints, regenerated at every
+  # build (a result cache keys on it), "-dirty" with uncommitted changes.
+  set(SPARLAB_GIT_SHA_HEADER ${CMAKE_BINARY_DIR}/generated/sparlab_git_sha.h)
+  add_custom_target(sparlab_git_sha
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT=${SPARLAB_GIT_SHA_HEADER} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitSha.cmake
+    BYPRODUCTS ${SPARLAB_GIT_SHA_HEADER}
+    COMMENT "SparLab: recording the git revision")
+  add_dependencies(sparlab_form sparlab_git_sha)
+  target_include_directories(sparlab_form PRIVATE ${CMAKE_BINARY_DIR}/generated)
   target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp
                                      apps/verify_plasticity.cpp apps/verify_dynamics.cpp)
 endif()

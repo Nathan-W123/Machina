@@ -13,7 +13,9 @@
 /// springback of an elastic-perfectly plastic beam bent past yield and
 /// released onto statically determinate supports, against the exact elastic
 /// unloading of its moment-curvature relation. A small single-point
-/// incremental forming case runs the whole sequence.
+/// incremental forming case runs the whole sequence. The `forming` block of
+/// a deck is read strictly and refused where wrong, and a run's result files
+/// follow the output contract of FormingWriter.hpp.
 #include "TestSupport.hpp"
 
 #include "sparlab/core/Exceptions.hpp"
@@ -21,6 +23,10 @@
 #include "sparlab/core/Timer.hpp"
 #include "sparlab/fem/Forming.hpp"
 #include "sparlab/fem/RigidTool.hpp"
+#include "sparlab/io/Config.hpp"
+#include "sparlab/io/FormingWriter.hpp"
+#include "sparlab/io/Json.hpp"
+#include "sparlab/io/ResultWriter.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -895,4 +901,229 @@ TEST_CASE("single-point incremental forming of a clamped blank completes and spr
     CHECK(inc.tools[0].force.z() > 0.0);
   }
   CHECK(in_contact > 50);
+}
+
+// ---------------------------------------------------------------------------
+// The `forming` block of a deck, and the result files
+// ---------------------------------------------------------------------------
+namespace {
+
+/// A 4 mm x 4 mm x 2 mm aluminium block pressed by a flat punch, then
+/// released onto 3-2-1 supports: the `forming` block with every key, and
+/// the rest of the deck without load cases (a forming deck needs none).
+std::string forming_deck(const std::string& forming) {
+  return R"({
+    "name": "tiny forming",
+    "mesh": {"type": "structured_hex", "nx": 2, "ny": 2, "nz": 2,
+             "lx": 0.004, "ly": 0.004, "lz": 0.002},
+    "material": {"youngs_modulus": 70e9, "poisson_ratio": 0.33, "density": 2700,
+                 "plasticity": {"yield_stress": 100e6, "hardening_modulus": 300e6}},
+    "boundary_conditions": [
+      {"name": "base", "fix": ["z"], "region": {"box": {"zmax": 0.0}}},
+      {"name": "corner", "fix": ["x", "y"], "region": {"nearest_node": [0, 0, 0]}},
+      {"name": "edge", "fix": ["y"], "region": {"nearest_node": [0.004, 0, 0]}}],
+    "forming": )" + forming + "}";
+}
+
+const char* kFullForming = R"({
+      "kinematics": "finite",
+      "mean_dilatation": "auto",
+      "friction_tangent": "exact",
+      "solver": "eigen",
+      "tools": [
+        {"name": "punch", "shape": "plane", "normal": [0, 0, -1],
+         "surface": {"box": {"zmin": 0.002}}, "friction": 0.1, "penalty": 20,
+         "tangential_penalty": 0.5,
+         "trajectory": {"times": [0, 1, 1.5], "points": [[0, 0, 0.002], [0, 0, 0.00196],
+                                                           [0, 0, 0.0021]]}},
+        {"name": "ball", "shape": "sphere", "radius": 0.003,
+         "surface": {"box": {"zmin": 0.002}},
+         "trajectory": {"times": [0, 1], "points": [[0, 0, 0.01], [0, 0, 0.01]]}}],
+      "steps": [
+        {"name": "press", "type": "form", "tools": ["punch"], "time": [0, 1],
+         "max_tool_travel": 1e-5, "increments": 2},
+        {"name": "lift", "type": "form", "tools": ["punch"], "time": [1, 1.5]},
+        {"name": "release", "type": "release", "increments": 4,
+         "boundary_conditions": [
+           {"name": "A", "fix": ["x", "y", "z"], "mode": "hold",
+            "region": {"nearest_node": [0, 0, 0]}},
+           {"name": "B", "fix": ["y", "z"], "region": {"nearest_node": [0.004, 0, 0]}},
+           {"name": "C", "fix": ["z"], "mode": "hold",
+            "region": {"nearest_node": [0, 0.004, 0]}}]}],
+      "newton": {"max_iterations": 20, "residual_tolerance": 1e-8,
+                 "displacement_tolerance": 1e-8, "line_search": true, "max_cuts": 6,
+                 "max_increments": 1000},
+      "output": {"vtk": true, "snapshots": 2}
+    })";
+
+Configuration parse_deck(const std::string& text, bool strict = true,
+                         const std::string& base = "") {
+  return parse_configuration(json::parse(text, "deck"), "deck", strict, base);
+}
+
+}  // namespace
+
+TEST_CASE("the forming block of a deck is read in full, strictly, and refused when wrong",
+          "[forming][io]") {
+  const Configuration c = parse_deck(forming_deck(kFullForming));
+  REQUIRE(c.forming.enabled);
+  const FormingOptions& o = c.forming.options;
+  CHECK(o.kinematics == Kinematics::Finite);
+  CHECK(o.friction_tangent == FrictionTangent::Exact);
+  CHECK_FALSE(o.suitesparse);
+  REQUIRE(o.tools.size() == 2);
+  CHECK(o.tools[0].shape == RigidTool::Shape::Plane);
+  CHECK(o.tools[0].friction == 0.1);
+  CHECK(o.tools[0].penalty == 20.0);
+  CHECK(o.tools[0].tangential_ratio == 0.5);
+  CHECK(o.tools[0].trajectory.times.size() == 3);
+  CHECK(o.tools[1].radius == 0.003);
+  REQUIRE(o.steps.size() == 3);
+  CHECK(o.steps[0].t_begin == 0.0);
+  CHECK(o.steps[0].t_end == 1.0);
+  CHECK(o.steps[0].max_tool_travel == 1e-5);
+  CHECK(o.steps[0].increments == 2);
+  CHECK(o.steps[2].type == FormingStep::Type::Release);
+  REQUIRE(o.steps[2].constraints.size() == 3);
+  CHECK(o.steps[2].constraints[1].mode == StepConstraint::Mode::Hold);  // the default
+  CHECK(o.max_iterations == 20);
+  CHECK(o.max_cuts == 6);
+  CHECK(o.snapshot_stride == 2);
+  CHECK(c.forming.snapshots == FormingConfig::Snapshots::Stride);
+  // No load case in the deck: one empty case is supplied.
+  REQUIRE(c.load_cases.size() == 1);
+  CHECK(c.load_cases[0].prescribed_displacement_only);
+
+  // A trajectory file resolves against the deck's directory.
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "sparlab_test_forming_deck";
+  std::filesystem::create_directories(dir);
+  std::ofstream((dir / "path.csv").string()) << "t,x,y,z\n0,0,0,0.01\n1,0,0,0.0049\n";
+  std::string with_file = kFullForming;
+  const std::string inline_path =
+      R"("trajectory": {"times": [0, 1], "points": [[0, 0, 0.01], [0, 0, 0.01]]})";
+  REQUIRE(with_file.find(inline_path) != std::string::npos);
+  with_file.replace(with_file.find(inline_path), inline_path.size(),
+                    R"("trajectory": {"file": "path.csv"})");
+  const Configuration f = parse_deck(forming_deck(with_file), true, dir.string());
+  CHECK(f.forming.options.tools[1].trajectory.points[1].z() == 0.0049);
+  std::filesystem::remove_all(dir);
+
+  // Refusals, each naming what is wrong.
+  const auto refuse = [&](const std::string& from, const std::string& to,
+                          const std::string& message) {
+    std::string text = kFullForming;
+    const std::size_t at = text.find(from);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, from.size(), to);
+    INFO(message);
+    CHECK_THROWS_WITH(parse_deck(forming_deck(text)), ContainsSubstring(message));
+  };
+  refuse(R"("tools": ["punch"], "time": [0, 1])", R"("tools": ["hammer"], "time": [0, 1])",
+         "'hammer', which 'forming.tools' does not define");
+  refuse(R"("type": "release", "increments": 4,)",
+         R"("type": "release", "increments": 4, "tools": ["ball"],)",
+         "a release that keeps tool 'ball'");
+  refuse(R"("radius": 0.003)", R"("radius": 0.0)", "'radius' must be positive");
+  refuse(R"("friction": 0.1)", R"("friction": -0.1)", "'friction' must be >= 0");
+  refuse(R"("time": [1, 1.5])", R"("time": [0.5, 1.5])", "cannot run backwards");
+  refuse(R"("penalty": 20,)", R"("penalty": 20, "penlaty": 3,)", "penlaty");  // strict
+  refuse(R"("trajectory": {"times": [0, 1, 1.5])",
+         R"("trajectory": {"file": "x.csv", "times": [0, 1, 1.5])", "not both");
+  refuse(R"("mode": "hold",
+            "region": {"nearest_node": [0, 0, 0]})", R"("mode": "clamp",
+            "region": {"nearest_node": [0, 0, 0]})", "expected \"hold\" or \"absolute\"");
+  refuse(R"("snapshots": 2)", R"("snapshots": "all")", "'forming.output.snapshots'");
+  refuse(R"("friction_tangent": "exact")", R"("friction_tangent": "approximate")",
+         "expected \"exact\" or \"symmetric\"");
+  {
+    std::string text = kFullForming;
+    text.replace(text.find(R"("exact")"), 7, R"("symmetric")");
+    CHECK(parse_deck(forming_deck(text)).forming.options.friction_tangent ==
+          FrictionTangent::Symmetric);
+  }
+
+  // A surface that selects no face is refused when the analysis is built.
+  std::string empty = kFullForming;
+  empty.replace(empty.find(R"("surface": {"box": {"zmin": 0.002}}, "friction")"),
+                std::string(R"("surface": {"box": {"zmin": 0.002}}, "friction")").size(),
+                R"("surface": {"box": {"zmin": 0.5}}, "friction")");
+  const Configuration e = parse_deck(forming_deck(empty));
+  FemModel model = build_model(e);
+  Assembler assembler(model);
+  CHECK_THROWS_WITH(FormingAnalysis(model, assembler, e.forming.options),
+                    ContainsSubstring("selects no boundary face"));
+  // So is a step whose constraints leave the body free to move.
+  std::string loose = kFullForming;
+  loose.replace(loose.find(R"({"name": "C", "fix": ["z"])"),
+                std::string(R"({"name": "C", "fix": ["z"])").size(),
+                R"({"name": "C", "fix": ["x"])");
+  const Configuration l = parse_deck(forming_deck(loose));
+  FemModel loose_model = build_model(l);
+  Assembler loose_assembler(loose_model);
+  CHECK_THROWS_WITH(FormingAnalysis(loose_model, loose_assembler, l.forming.options),
+                    ContainsSubstring("step 'release'") &&
+                        ContainsSubstring("rotation about x"));
+}
+
+TEST_CASE("a forming run writes the result files of its output contract", "[forming][io]") {
+  const Configuration c = parse_deck(forming_deck(kFullForming));
+  FemModel model = build_model(c);
+  Assembler assembler(model);
+  const FormingResult r = FormingAnalysis(model, assembler, c.forming.options).run();
+  REQUIRE(r.completed);
+  REQUIRE(r.steps.size() == 3);
+  CHECK(r.steps[2].reaction_norm < 1.0e-6 * r.steps[2].reference_force);
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "sparlab_test_forming_out";
+  std::filesystem::remove_all(dir);
+  ResultWriter writer(dir.string(), c);
+  const std::vector<std::string> files =
+      write_forming_results(writer, model, c.forming.options, r, true, true);
+  const auto first_line = [&](const std::string& name) {
+    std::ifstream in((dir / name).string());
+    std::string line;
+    std::getline(in, line);
+    return line;
+  };
+  const auto lines = [&](const std::string& name) {
+    std::ifstream in((dir / name).string());
+    std::string line;
+    int count = 0;
+    while (std::getline(in, line)) ++count;
+    return count;
+  };
+  for (const std::string stem : {"step_1_press", "step_2_lift", "step_3_release"}) {
+    INFO(stem);
+    CHECK(first_line(stem + "_nodes.csv") == "node,X,Y,Z,ux,uy,uz");
+    CHECK(lines(stem + "_nodes.csv") == 1 + model.mesh().num_nodes());
+    CHECK(first_line(stem + "_elements.csv") == "element,eq_plastic_strain,von_mises_Pa");
+    CHECK(lines(stem + "_elements.csv") == 1 + model.mesh().num_elements());
+    CHECK(std::filesystem::exists(dir / (stem + ".vtk")));
+  }
+  CHECK(first_line("tool_forces.csv") ==
+        "step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m");
+  int records = 0;
+  for (const FormingStepResult& s : r.steps) {
+    for (const FormingIncrement& inc : s.increments) records += static_cast<int>(inc.tools.size());
+  }
+  CHECK(lines("tool_forces.csv") == 1 + records);
+  // A snapshot every 2 increments (the stride), step ends excluded.
+  CHECK(std::filesystem::exists(dir / "step_3_release_inc_2_nodes.csv"));
+  CHECK(std::find(files.begin(), files.end(), "step_3_release_inc_2_nodes.csv") != files.end());
+
+  const json::Value summary =
+      forming_summary_json(c, model, c.forming.options, r, 1.5, "test", files);
+  for (const char* key : {"case", "sparlab_version", "completed", "termination", "runtime_s",
+                          "timing", "steps", "tools", "mesh"}) {
+    CHECK(summary.find(key) != nullptr);
+  }
+  const json::Value& steps = *summary.find("steps");
+  REQUIRE(steps.array_items().size() == 3);
+  for (const char* key : {"name", "type", "completed", "increments", "iterations", "cuts",
+                          "max_plastic_strain", "reaction_norm_N", "warnings"}) {
+    CHECK(steps.array_items()[0].find(key) != nullptr);
+  }
+  CHECK(steps.array_items()[2].find("type")->string_value() == "release");
+  std::filesystem::remove_all(dir);
 }

@@ -19,7 +19,8 @@ CommandLine::CommandLine(int argc, char** argv, const std::vector<std::string>& 
                                              "no-csv",       "no-stress",     "export-calculix",
                                              "list",         "no-objective",  "no-projection",
                                              "projection",   "robust",        "no-robust",
-                                             "no-buckling-constraint", "no-overhang-filter"};
+                                             "no-buckling-constraint", "no-overhang-filter",
+                                             "version"};
 
   for (int i = 1; i < argc; ++i) {
     std::string token = argv[i];
