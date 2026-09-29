@@ -97,7 +97,7 @@ nothing below `api` knows about machine learning.
 | Module | Contents |
 |--------|----------|
 | `precomp.geometry` | `Grid`, `HeightMap` (interpolation, gradients, normals, wall angle, curvature, smoothing, resampling, points, STL, `.npz`), `read_stl` / `write_stl` / `raycast_top`, the part families |
-| `precomp.materials` | `Material` (elasticity, linear + Voce isotropic and Prager kinematic hardening; optional Armstrong-Frederick and Hill48 data), Swift / Hollomon conversion, the nominal alloy library, `to_sparlab()` |
+| `precomp.materials` | `Material` (elasticity, linear + Voce isotropic and Prager kinematic hardening; optional Armstrong-Frederick backstress and Hill48 r-values), Swift / Hollomon conversion, the nominal alloy library, `to_sparlab()` |
 | `precomp.toolpath` | `tool_center_surface` (drop cutter), `contour_toolpath`, `spiral_toolpath`, `Toolpath` (trajectory and robot CSV, summary), `dsif_support_path` (experimental) |
 | `precomp.fea` | `FormingSetup`, `build_deck`, `deck_hash`, `run_deck`, `simulate` (content-addressed cache), `simulate_many` (process pool), `load_result` / `FormingResult` |
 | `precomp.metrology` | `read_point_cloud`, `align` (robust point-to-plane ICP), `signed_deviation`, `vertical_deviation`, `metrics`, region masks |
@@ -162,21 +162,27 @@ The flange stays at z = 0 everywhere outside `footprint_radius()`.
 ## Materials
 
 `Material.to_sparlab()` writes SparLab's `material` block
-(`docs/configuration.md`):
+(`docs/configuration.md`, `material.plasticity`):
 
 ```json
 {"name": "AA5754-O", "youngs_modulus": 7e10, "poisson_ratio": 0.33, "density": 2670,
  "plasticity": {"yield_stress": 1e8, "hardening_modulus": 2.38e8,
                 "saturation_stress": 1.24e8, "saturation_rate": 14.4,
                 "kinematic_hardening_modulus": 0,
-                "hill48": {"r0": 0.75, "r45": 0.7, "r90": 0.8}}}
+                "yield_criterion": "hill48",
+                "anisotropy": {"r0": 0.75, "r45": 0.7, "r90": 0.8,
+                               "rolling_direction": [1, 0, 0], "sheet_normal": [0, 0, 1]}}}
 ```
 
-`hill48` and `armstrong_frederick` (`{"C": [Pa], "gamma": [-]}`, a back
-stress with d beta = 2/3 C d eps_p - gamma beta d a, added to Prager's) are
-written only when the material sets them. They are this package's proposal
-for keys SparLab does not read yet: the current solver models isotropic J2
-only, reports unknown keys, and refuses them with `--strict-config`.
+A material with r-values (`r0`, `r45`, `r90`, all three) yields by Hill's
+1948 criterion calibrated by them, with the rolling direction along the
+deck's x axis and the sheet normal along z; `yield_stress` is then the
+uniaxial yield stress along the rolling direction. A material with an
+Armstrong-Frederick term (`af_C` > 0 [Pa], `af_gamma` >= 0 [-]: d beta =
+2/3 C d eps_p - gamma beta d a, added to Prager's) writes it as one Chaboche
+backstress, `"backstresses": [{"modulus": af_C, "recovery": af_gamma}]`.
+Without them the block is von Mises with Prager's rule only. These are the
+keys SparLab reads; every deck is run with `--strict-config`.
 
 Power laws are converted, never passed through: `from_swift(K, eps0, n)`
 keeps the initial yield stress K eps0^n exact and fits H, Q and delta to
