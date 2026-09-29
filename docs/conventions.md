@@ -25,7 +25,10 @@ extent comes out above 20 m or below 0.1 mm draws a warning naming that key.
 | Angular frequency `omega` | radian per second | `rad/s` |
 | Frequency `f` | hertz | `Hz` |
 | Stiffness entry | newton per metre | `N/m` |
-| Time | second | `s` |
+| Time, time step | second | `s` |
+| Velocity, acceleration | metre per second (squared) | `m/s`, `m/s^2` |
+| Rayleigh damping `a` (of `M`), `b` (of `K`) | 1 / second, second | `1/s`, `s` |
+| Phase of a harmonic amplitude | degree (radian in an amplitude's `phase`) | `deg` |
 
 The MBB benchmark deliberately uses `E = 1 Pa`, a 1 m cell and `F = 1 N` so that
 its compliance can be read against the dimensionless values usually quoted for
@@ -177,6 +180,18 @@ beam or shell elements.
   flagged `no_positive_load_factor`. Buckling modes are normalised to
   `phi^T K phi = 1` (and in the VTK files to a largest displacement of 1);
   their sign is arbitrary.
+* A transient's amplitude `A(t)` multiplies every load and prescribed
+  displacement of the case at time `t`; step 0 of its history is the
+  initial state. A reaction monitor sums `M a + C v + K u - A f` over the
+  prescribed DOFs of its nodes - the force the supports (or the shaking
+  device) apply - so the force needed to accelerate the structure shows in
+  it.
+* A harmonic response is `Re(U e^{i omega t})` under the load `f cos(omega t)`:
+  its phase `arg U` is measured against the load, `0` in phase and `180 deg`
+  in antiphase, so the displacement under a downward load starts at `180 deg`
+  at low frequency. A velocity amplitude is `i omega U`, an acceleration
+  `-omega^2 U`; "the largest displacement over a cycle" is the semi-major
+  axis of the ellipse a node traces.
 * A build direction `+y` means the part grows along `+y` from a plate at the
   low-`y` end of the domain; `-y` from a plate at the high end. Layer 0 is
   the layer on the plate.
@@ -208,6 +223,15 @@ For homogeneous Dirichlet data these satisfy `C = 2U` exactly, and every static
 result reports the ratio `C / 2U` so the identity can be checked. With a
 non-zero prescribed displacement the two differ: the patch test, for example,
 has `C = 0` and `U > 0`, because all the work is done by the supports.
+
+A transient reports the kinetic energy `T = 1/2 v^T M v`, the strain energy
+`U` above (with plasticity the stored energy, elastic plus hardening), the
+energy dissipated by damping `D = sum dt/4 (v_n + v_n+1)^T C (v_n + v_n+1)`
+and the work of the loads and reactions
+`W = sum 1/2 (u_n+1 - u_n)^T (F_n + F_n+1)`, and the balance
+`E_0 + W - T - U - D` - zero to round-off for the trapezoidal rule on a
+linear model, the numerical dissipation of HHT-alpha, and with plasticity
+the plastic dissipation.
 
 The topology objective is the weight-normalised sum of the per-case
 compliances,
@@ -276,6 +300,11 @@ Every tolerance is configurable and every run records the value it used in
 | elastic return at the yield surface | `1e-12` | a trial overshoot of the yield radius below this is elastic (round-off must not start plastic flow); a point that yielded in its last step and sits within `1e-10` of its surface keeps the continuum tangent |
 | `nonlinear.displacement_tolerance` | `1e-8` | last Newton correction over the displacement increment of the step, no finer than `64 eps \|\|u\|\|` |
 | `nonlinear.max_cuts` | `12` | successive halvings of a failing step, and of the steps closing in on a critical point, before the run stops |
+| `transient.residual_tolerance`, `transient.displacement_tolerance` | `1e-8` | non-linear transient: the HHT-alpha residual over the largest force involved (inertia, loads, damping, reactions), and the last Newton correction over the larger of the step's increment and the displacement, no finer than `64 eps \|\|u\|\|`; the residual's round-off floor is accepted as in the statics |
+| `transient.max_cuts` | `8` | successive halvings of a transient step whose Newton iteration fails |
+| harmonic solve backward error | `1e-10` | `\|\|A U - f\|\| / \|\| \|A\|\|U\| + \|f\| \|\|` of the complex solve at every frequency; above it the frequency is too close to an undamped natural frequency and the run stops |
+| harmonic amplification | `1e6` | a response this many times the static one is flagged as round-off near a natural frequency |
+| non-linear transient energy balance | `1e-2` | energy created (or, without plasticity, lost) beyond this share of the energies involved draws a warning (trapezoidal rule only) |
 
 The decks that use the multigrid solver (`bracket_3d_projected`,
 `bracket_3d_large`, `engine_mount_3d`) set `iterative_tolerance` to `1e-10`.

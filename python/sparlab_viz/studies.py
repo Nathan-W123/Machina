@@ -939,14 +939,35 @@ def plot_cross_validation(directory: str, path: str) -> str:
     # present, so scikit-fem keeps its colour on a runner without CalculiX -
     # and the marker the comparison: a circle for the linear solution, a
     # diamond, set just below, for the large-deflection state, a triangle,
-    # set just above, for the elastoplastic one.
+    # set just above, for the elastoplastic one; on a dynamic deck, which has
+    # neither, a downward triangle, set below, for the transient history and a
+    # pentagon for the harmonic response.
     code_names = ["scikit-fem", "calculix"]
     st.require_scatter_series(len(code_names), "codes")
-    nonlinear_of = {"scikit-fem": "scikit-fem non-linear", "calculix": "calculix NLGEOM"}
-    plastic_of = {"scikit-fem": "scikit-fem J2", "calculix": "calculix *PLASTIC"}
+    kinds_of = {
+        "scikit-fem": [
+            ("scikit-fem", "o", 0.0, "linear", None),
+            ("scikit-fem non-linear", "D", -0.22, "large deflection",
+             "scikit-fem, large deflection (its own total Lagrangian solver)"),
+            ("scikit-fem J2", "^", 0.22, "elastoplastic",
+             "scikit-fem, elastoplastic (its own J2 solver)"),
+            ("scikit-fem transient", "v", -0.22, "transient",
+             "scikit-fem, transient (its own HHT-alpha integration)"),
+            ("scikit-fem harmonic", "p", -0.22, "harmonic",
+             "scikit-fem, harmonic response (a direct complex solve)"),
+        ],
+        "calculix": [
+            ("calculix", "o", 0.0, "linear", None),
+            ("calculix NLGEOM", "D", -0.22, "large deflection",
+             "calculix, large deflection (*STEP, NLGEOM)"),
+            ("calculix *PLASTIC", "^", 0.22, "elastoplastic",
+             "calculix, elastoplastic (*PLASTIC)"),
+            ("calculix *DYNAMIC", "v", -0.22, "transient",
+             "calculix, transient (*DYNAMIC, DIRECT)"),
+        ],
+    }
     present = [code for code in code_names
-               if any(code in r[3] or nonlinear_of[code] in r[3] or plastic_of[code] in r[3]
-                      for r in rows)]
+               if any(key in r[3] for key, *_rest in kinds_of[code] for r in rows)]
     # The legend gets a row of its own beneath the panel: beside it, it took a
     # third of the width from a log axis spanning ten decades. The row has a
     # fixed height: a share of a panel this tall would leave it mostly empty.
@@ -976,9 +997,7 @@ def plot_cross_validation(directory: str, path: str) -> str:
             continue
         colour = st.series_color(slot)
         version = codes.get(code, {}).get("version", "")
-        for key, marker, offset, kind in ((code, "o", 0.0, "linear"),
-                                          (nonlinear_of[code], "D", -0.22, "large deflection"),
-                                          (plastic_of[code], "^", 0.22, "elastoplastic")):
+        for key, marker, offset, kind, name in kinds_of[code]:
             judged_x, judged_y, info_x, info_y, own_x, own_y = [], [], [], [], [], []
             for position, (_c, _e, _l, results) in zip(y, rows):
                 entry = results.get(key)
@@ -1005,16 +1024,8 @@ def plot_cross_validation(directory: str, path: str) -> str:
                     own_y.append(position + offset)
             if not (judged_x or info_x):
                 continue
-            label = f"{code} {version}".strip() + f", {kind}"
-            if key == "scikit-fem non-linear":
-                label = "scikit-fem, large deflection (its own total Lagrangian solver)"
-            elif key == "calculix NLGEOM":
-                label = "calculix, large deflection (*STEP, NLGEOM)"
-            elif key == "scikit-fem J2":
-                label = "scikit-fem, elastoplastic (its own J2 solver)"
-            elif key == "calculix *PLASTIC":
-                label = "calculix, elastoplastic (*PLASTIC)"
-            size = 7 if marker == "o" else 6
+            label = name or f"{code} {version}".strip() + f", {kind}"
+            size = 7 if marker in ("o", "p") else 6
             if judged_x:
                 ax.plot(judged_x, judged_y, marker, color=colour, markersize=size, label=label)
             if info_x:
@@ -1042,7 +1053,8 @@ def plot_cross_validation(directory: str, path: str) -> str:
     ax.set_xscale("log")
     ax.set_yticks(y)
     ax.set_yticklabels([f"{c} ({e}), '{l}'" for c, e, l, _r in rows], fontsize=8.0)
-    ax.set_xlabel("max |u_SparLab - u_reference| / max |u_reference| over all nodes [-]")
+    ax.set_xlabel("max |u_SparLab - u_reference| / max |u_reference| over all nodes "
+                  "(and all steps or frequencies) [-]")
     ax.set_ylim(-0.7, len(rows) - 0.3)
     judged = [entry["passed"] for *_r, results in rows for entry in results.values()
               if entry.get("passed") is not None]
@@ -1053,8 +1065,8 @@ def plot_cross_validation(directory: str, path: str) -> str:
     st.figure_title(
         fig, "Cross-validation: nodal displacements vs independent codes",
         f"{len(rows)} load cases, {len(present)} "
-        f"code{'s' if len(present) != 1 else ''}, linear, large-deflection and "
-        f"elastoplastic; {verdict}",
+        f"code{'s' if len(present) != 1 else ''}; linear, large-deflection, "
+        f"elastoplastic, transient and harmonic; {verdict}",
     )
     handles, labels = ax.get_legend_handles_labels()
     legend_ax.legend(handles, labels, loc="center", ncol=2, fontsize=7.4, frameon=False,
@@ -1079,7 +1091,12 @@ def plot_cross_validation(directory: str, path: str) -> str:
         "kinematics), CalculiX "
         "with *PLASTIC (isotropic hardening only - its kinematic hardening does not "
         "reproduce Prager's rule - and under NLGEOM a different finite-strain model, "
-        "hollow). CalculiX results are read from the .frd file, which carries six "
+        "hollow). The transients are compared at every step (the monitors, the snapshot "
+        "fields and the final displacement, velocity and acceleration) with scikit-fem "
+        "integrating HHT-alpha itself and, on the solid elements, CalculiX's *DYNAMIC; the "
+        "harmonic responses at every frequency with scikit-fem's direct complex solve. The "
+        "static cases of the two shaken-base decks are rigid translations, which both codes "
+        "reproduce to round-off. CalculiX results are read from the .frd file, which carries six "
         "significant digits, so differences below the dotted floor are its output "
         "rounding.",
     )
@@ -2368,8 +2385,10 @@ def plot_rod_dynamics(directory: str, path: str) -> str:
     ax.set_ylabel("|U(L) - U_exact(L)| / |U_exact(L)| [-]")
     worst = float(harmonic["discrete_difference[-]"].max())
     st.title(ax, "Convergence to the continuum",
-             f"Q4, consistent mass; against the exact discrete solution {worst:.1e}", wrap=48)
-    st.legend(ax, loc="lower left", fontsize=7.0)
+             f"Q4, consistent mass; every run equals the exact discrete solution to {worst:.1e}",
+             wrap=48)
+    # The upper right is empty: the curves fall from the upper left.
+    st.legend(ax, loc="upper right", fontsize=7.0)
 
     ax = axes[1, 0]
     t = history["t[s]"].to_numpy() * 1e3
@@ -2492,7 +2511,7 @@ def plot_nonlinear_oscillator(directory: str, path: str) -> str:
     exact = float(plastic["exact_dissipation[J]"].iloc[0]) if not plastic.empty else np.nan
     st.title(ax, "The energy balance holds the plastic dissipation",
              f"E_0 + W - T - U against D_p = sigma_y alpha_p V = {exact:.2f} J; the gap closes "
-             "irregularly as the yield point moves within a step", wrap=48)
+             "with the step, unevenly: the yield point moves within a step", wrap=48)
     st.legend(ax, loc="lower left", fontsize=7.5)
 
     st.annotate_note(

@@ -412,3 +412,38 @@ TEST_CASE("distributed tractions give a mesh-independent resultant",
     previous = sol.compliance;
   }
 }
+
+TEST_CASE("a prescribed rigid motion passes the equilibrium check", "[static][equilibrium]") {
+  // A free plate whose left edge is moved rigidly: nothing is strained, the
+  // reactions are round-off, and their balance is judged against the gross
+  // force they are formed from rather than against themselves.
+  StructuredMeshSpec spec;
+  spec.nx = 6;
+  spec.ny = 3;
+  spec.lx = 0.6;
+  spec.ly = 0.3;
+  FemModel model(make_structured_quad_mesh(spec), default_material(), 0.01,
+                 StressState::PlaneStrain, IntegrationOptions());
+  DisplacementConstraint shaken;
+  Selector left;
+  left.kind = SelectorKind::Box;
+  left.xmax = 0.0;
+  shaken.region.members.push_back(left);
+  shaken.set(0, true, 2.0e-4);
+  shaken.set(1, true, -1.0e-3);
+  model.constraints().push_back(shaken);
+  LoadCaseSpec lc;
+  lc.name = "translate";
+  lc.prescribed_displacement_only = true;
+  model.load_case_specs().push_back(lc);
+  model.finalize();
+  Assembler assembler(model);
+  StaticAnalysis analysis(model, assembler, StaticAnalysisOptions());
+  const StaticSolution s = analysis.solve_all().front();
+  REQUIRE(s.equilibrium.relative_force_error <= 1.0e-12);
+  // The body translates rigidly.
+  for (Index n = 0; n < model.mesh().num_nodes(); ++n) {
+    REQUIRE(s.displacement(2 * n) == Approx(2.0e-4).epsilon(1e-9));
+    REQUIRE(s.displacement(2 * n + 1) == Approx(-1.0e-3).epsilon(1e-9));
+  }
+}

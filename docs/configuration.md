@@ -24,6 +24,10 @@ reports its line and column.
 | `load_cases` | array | required, non-empty | loading |
 | `solver` | object | `{}` | linear solver and equilibrium tolerances |
 | `modal` | object | `{}` | free-vibration analysis |
+| `buckling` | object | `{}` | linear buckling check of the load cases |
+| `nonlinear` | object | `{}` | non-linear statics: large deflection, finite strain, plasticity |
+| `transient` | object | `{}` | transient dynamics (HHT-alpha), linear or non-linear |
+| `frequency_response` | object | `{}` | steady harmonic response |
 | `topology` | object | `{}` | topology optimisation |
 | `output` | object | `{}` | which artefacts to write |
 
@@ -621,6 +625,137 @@ yielded, the largest accumulated plastic strain, the elements that yielded,
 whether mean dilatation was applied, and the step in which a point first
 yielded; the warnings add strains beyond 0.05 (the elastoplastic law assumes
 small strains) and elements that lock under isochoric plastic flow.
+
+## `transient`
+
+```json
+"transient": {
+  "enabled": true,
+  "time_step": 1e-4,
+  "end_time": 3e-2,
+  "alpha": -0.05,
+  "mass": "consistent",
+  "damping": { "mass": 20.0, "stiffness": 1e-5 },
+  "amplitude": { "type": "table", "times": [0, 0.004], "values": [0, 1] },
+  "start": "rest",
+  "snapshot_every": 30,
+  "monitors": [
+    { "name": "tip_uy", "component": "y", "region": { "box": { "xmin": 1.0 } } },
+    { "name": "tip_vy", "component": "y", "quantity": "velocity",
+      "region": { "box": { "xmin": 1.0 } } },
+    { "name": "root_force", "component": "y", "quantity": "reaction",
+      "region": { "box": { "xmax": 0.0 } } }
+  ],
+  "load_cases": ["tip"]
+}
+```
+
+A transient analysis of each selected load case: the equations of motion
+`M a + C v + K u = A(t) f`, the case's prescribed displacements following
+`A(t) g`, integrated with a constant step by the HHT-alpha method
+(`docs/formulation.md`, section 7e). Every load of the case - forces,
+pressures, body forces, self-weight, the rotation's load, a temperature
+change - and every prescribed displacement is scaled by the one amplitude.
+`sparlab_solve` runs it after the static (and non-linear) analyses;
+`sparlab_topopt` refuses a deck with it enabled.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `enabled` | bool | `false` | run the transient analysis |
+| `time_step` | number | required | the constant step `dt` [s] |
+| `end_time` | number | required | the duration [s], a whole number of steps |
+| `alpha` | number | `0` | HHT-alpha in `[-1/3, 0]`: `0` is the trapezoidal rule (no numerical dissipation, exact energy balance for a linear model), `-0.05` to `-0.1` damps the modes the step does not resolve (CalculiX's default is `-0.05`) |
+| `mass` | string | `consistent` | `consistent` or `lumped` (row sums; HRZ diagonal scaling for the Tet10) |
+| `damping` | object | none | Rayleigh damping `C = mass M + stiffness K`: `mass` [1/s] and `stiffness` [s], both `>= 0`. The damping ratio of a mode is `mass / (2 omega) + stiffness omega / 2` |
+| `amplitude` | object | step of 1 | `type`: `step` (A = `scale` from `t = 0`), `table` (piecewise linear through `times` [s] and `values`, constant beyond the ends), or `harmonic` (`scale sin(2 pi frequency t + phase)`, `frequency` [Hz], `phase` [rad]); `scale` multiplies every kind |
+| `start` | string | `rest` | `rest`: `u = 0` and `v = 0` on the free DOFs. `static`: the static equilibrium under `A(0)`, at rest - a preloaded structure released (with a table that drops to zero). Linear transient only |
+| `snapshot_every` | integer | `0` | keep every n-th step's displacement and velocity (and the last) for the VTK series; `0` keeps the final state only |
+| `monitors` | array | none | quantities recorded at every step. Each has a `name`, a node `region`, a `component` (`x`, `y`, `z`) and a `quantity`: `displacement` (default), `velocity` or `acceleration` - the mean over the region's nodes [m, m/s, m/s^2] - or `reaction`, the sum of the support reactions over them [N] |
+| `nonlinear` | bool | `false` | the non-linear transient: the internal forces, loads and tangent of the non-linear system (finite kinematics, the elastic laws, J2 plasticity) in Newton's method at every step. It takes the keys below |
+| `kinematics`, `material_model`, `mean_dilatation`, `follower_pressure` | | as `nonlinear` | as in the `nonlinear` block; only with `nonlinear: true` |
+| `residual_tolerance`, `displacement_tolerance` | number | `1e-8` | Newton's tolerances: the residual over the largest force involved (inertia, loads, damping, reactions), the correction over the larger of the step's increment and the displacement |
+| `max_iterations` | integer | `25` | Newton iterations per step |
+| `max_cuts` | integer | `8` | successive halvings of a step whose Newton iteration fails, from the last converged state |
+| `load_cases` | array of strings | all | load cases to integrate, by name |
+
+A step load applied at `t = 0` accelerates the structure at once (the run
+starts in equilibrium, the initial acceleration solving `M a = A(0) f - K u`),
+which suits a linear model. A load applied suddenly at a node of a
+non-linear model can crush the element under it onto a spurious branch of the
+Saint Venant-Kirchhoff law; ramp it up with a `table`, and keep a harmonic
+load's period resolved by at least 20 steps (the trapezoidal rule lengthens a
+period by `(omega dt)^2 / 12` of itself; the run warns below 20). Damping
+acts through the linear elastic stiffness in a non-linear run. Refused with a
+message: an `end_time` that is not a whole number of steps, `alpha` outside
+`[-1/3, 0]`, negative damping, a non-linear key without `nonlinear: true`, and
+`start: static` with `nonlinear: true`.
+
+The results, per load case:
+
+| File | Content |
+|------|---------|
+| `transient_<lc>.csv` | one row per step (step 0 the initial state): time, the largest nodal displacement, the kinetic, strain (with plasticity: stored, elastic plus hardening) and damping energies, the external work, the energy balance `E_0 + W - T - U - D`, with a non-linear run the Newton iterations and halvings, with plasticity the points that yielded and the largest plastic strain, and the monitors |
+| `transient_state_<lc>.csv`, `transient_reactions_<lc>.csv` | the final displacement, velocity and acceleration per node, and the final support reactions (with `output.csv`) |
+| `transient_<lc>_<k>.vtk`, `transient_<lc>.vtk.series` | the snapshots (displacement and velocity with their magnitudes), numbered, and ParaView's file-series index of their times (with `output.vtk`) |
+
+The `transient` block of `summary.json` holds the method (with `beta`,
+`gamma`), the options, and per load case whether it completed, the steps,
+the model's mass, the largest displacement and when it occurred, the
+energies at the end, the largest relative energy balance over the path
+(round-off for the trapezoidal rule on a linear model; the numerical
+dissipation with `alpha < 0`), the final balance in joules (with plasticity
+the plastic dissipation), every monitor's maximum, minimum, their times, its
+final value and its nodes, with a non-linear run the Newton iterations and
+halvings and the plastic strain, and warnings.
+
+## `frequency_response`
+
+```json
+"frequency_response": {
+  "enabled": true,
+  "frequencies": { "start": 10.0, "end": 3000.0, "count": 120, "spacing": "log" },
+  "mass": "consistent",
+  "damping": { "structural": 0.02, "mass": 2.0, "stiffness": 1e-6 },
+  "snapshot_frequencies": [80.0, 500.0],
+  "monitors": [
+    { "name": "tip_uy", "component": "y", "region": { "box": { "xmin": 1.0 } } },
+    { "name": "tip_ay", "component": "y", "quantity": "acceleration",
+      "region": { "box": { "xmin": 1.0 } } }
+  ]
+}
+```
+
+The steady harmonic response of each selected load case: its loads as the
+amplitudes of `f cos(omega t)` and its prescribed displacements as those of
+`g cos(omega t)` (a shaken support), solved directly at every frequency,
+`[K (1 + i eta) - omega^2 M + i omega (a M + b K)] U = f` (section 7e).
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `enabled` | bool | `false` | run the harmonic response |
+| `frequencies` | array or object | required | the frequencies [Hz], `>= 0`: a list, or `{ "start", "end", "count", "spacing" }` with `spacing` `linear` (default) or `log` (then `start > 0`) |
+| `mass` | string | `consistent` | `consistent` or `lumped` |
+| `damping` | object | none | `structural`: the loss factor `eta` of `K (1 + i eta)`; `mass`, `stiffness`: Rayleigh's `a`, `b`. All `>= 0` |
+| `snapshot_frequencies` | array | none | frequencies [Hz] whose complex field is written (each the nearest solved one) |
+| `monitors` | array | none | as in `transient`; recorded as complex amplitudes: a velocity is `i omega U`, an acceleration `-omega^2 U` |
+| `load_cases` | array of strings | all | load cases to analyse, by name |
+
+Without damping the dynamic stiffness is singular at a natural frequency: a
+frequency where the LU fails, or whose solve has a backward error above
+1e-10, stops the run with a message; a response more than a million times
+the static one is flagged as round-off. Give the model damping, or move the
+frequency.
+
+| File | Content |
+|------|---------|
+| `frequency_response_<lc>.csv` | one row per frequency: the largest nodal displacement over a cycle and, per monitor, its real and imaginary parts, modulus and phase `arg U` in degrees (against the load: 0 in phase, 180 in antiphase) |
+| `frequency_response_field_<lc>_<k>.csv` | the complex nodal amplitudes at each snapshot frequency (in the first column's header) and each node's largest displacement over a cycle (with `output.csv`) |
+| `frequency_response_<lc>_<k>.vtk`, `frequency_response_<lc>.vtk.series` | the real and imaginary parts of the displacement and its peak over a cycle, with a file-series index whose "time" is the frequency (with `output.vtk`) |
+
+The `frequency_response` block of `summary.json` holds the method, the
+frequencies, the damping and per load case the largest displacement and its
+frequency, every monitor's peak amplitude, the frequency and phase there and
+its nodes, the snapshot frequencies and warnings.
 
 ## `topology`
 

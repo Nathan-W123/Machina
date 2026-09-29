@@ -21,7 +21,7 @@ import _bootstrap  # noqa: F401
 
 import pandas as pd
 
-from sparlab_viz.loaders import ResultError, load_json
+from sparlab_viz.loaders import ResultError, load_csv, load_json
 
 
 BENCHMARK_CASES = ["cantilever_beam", "mbb_beam", "mbb_beam_projected", "aerospace_bracket",
@@ -1167,6 +1167,174 @@ def plastic_decks_table(results_dir: str) -> Optional[str]:
                             "mean dilatation", "force balance"], rows)
 
 
+#: Rows of docs/results/dynamics.csv, collected by the dynamics tables.
+_DYNAMIC_FRAMES: List[Dict] = []
+
+DYNAMIC_CASES = ["transient_cantilever_hex", "transient_column_tet10", "transient_strip_q4_base",
+                 "frequency_response_plate_q4", "frequency_response_block_hex",
+                 "transient_plastic_beam_hex", "transient_beam_hex_nlgeom"]
+
+
+def _verification_csv(results_dir: str, name: str):
+    path = os.path.join(results_dir, "verification", name)
+    return load_csv(path) if os.path.isfile(path) else None
+
+
+def transient_modal_table(results_dir: str) -> Optional[str]:
+    """The HHT-alpha transient against the exact discrete modal solution."""
+    table = _verification_csv(results_dir, "transient_modal.csv")
+    if table is None:
+        return None
+    rows = []
+    for _, r in table.iterrows():
+        _DYNAMIC_FRAMES.append({"study": "transient-modal", "element": r["element"],
+                                "mass": r["mass"], "case": r["case"], "alpha": r["alpha"],
+                                "difference[-]": r["max_relative_difference[-]"],
+                                "energy_balance[-]": r["energy_balance[-]"]})
+        rows.append([r["element"], r["mass"], r["case"], _fmt(r["alpha"], 3),
+                     _fmt(r["difference_first_half[-]"], 2),
+                     _fmt(r["max_relative_difference[-]"], 2),
+                     _fmt(r["energy_balance[-]"], 2),
+                     _fmt(r["numerical_dissipation_over_work[-]"], 3),
+                     _fmt(r["kappa_eff_eps[-]"], 2)])
+    return _markdown_table(["element", "mass", "case", "alpha", "difference, first half",
+                            "difference", "energy balance", "dissipation / work",
+                            "kappa(K_eff) eps"], rows)
+
+
+def rod_table(results_dir: str) -> Optional[str]:
+    """The fixed-free rod: harmonic and transient response."""
+    harmonic = _verification_csv(results_dir, "rod_harmonic.csv")
+    transient = _verification_csv(results_dir, "rod_transient.csv")
+    if harmonic is None or transient is None:
+        return None
+    rows = []
+    finest = harmonic["n"].max()
+    for (element, mass, case, ratio), group in harmonic.groupby(
+            ["element", "mass", "case", "f_over_f1"], sort=False):
+        last = group[group["n"] == finest].iloc[0]
+        first = group[group["n"] == group["n"].min()].iloc[0]
+        worst = float(group["discrete_difference[-]"].max())
+        _DYNAMIC_FRAMES.append({"study": "rod-harmonic", "element": element, "mass": mass,
+                                "case": f"{case}, f = {ratio:g} f1",
+                                "error_finest[-]": last["continuum_error[-]"],
+                                "order[-]": last["order[-]"],
+                                "difference[-]": worst})
+        if element != "Q4":
+            continue  # Hex8 gives the same numbers (the model is one-dimensional)
+        rows.append(["harmonic", mass, f"{case}, f = {ratio:g} f1",
+                     _fmt(first["continuum_error[-]"], 3), _fmt(last["continuum_error[-]"], 3),
+                     _fmt(last["order[-]"], 4), _fmt(worst, 2)])
+    finest = transient["n"].max()
+    for (element, mass), group in transient.groupby(["element", "mass"], sort=False):
+        last = group[group["n"] == finest].iloc[0]
+        first = group[group["n"] == group["n"].min()].iloc[0]
+        _DYNAMIC_FRAMES.append({"study": "rod-transient", "element": element, "mass": mass,
+                                "case": "ramped end force",
+                                "error_finest[-]": last["max_error[-]"],
+                                "order[-]": last["order[-]"],
+                                "energy_balance[-]": float(group["energy_balance[-]"].max())})
+        if element != "Q4":
+            continue
+        rows.append(["transient", mass, "ramped end force, dt = h / c",
+                     _fmt(first["max_error[-]"], 3), _fmt(last["max_error[-]"], 3),
+                     _fmt(last["order[-]"], 4),
+                     "energy " + _fmt(float(group["energy_balance[-]"].max()), 2)])
+    return _markdown_table(["response", "mass", "case", "error, coarsest",
+                            "error, finest", "order", "vs exact discrete"], rows)
+
+
+def oscillator_table(results_dir: str) -> Optional[str]:
+    """The one-element non-linear oscillators."""
+    table = _verification_csv(results_dir, "nonlinear_oscillator.csv")
+    if table is None:
+        return None
+    rows = []
+    for (law, alpha), group in table.groupby(["law", "alpha"], sort=False):
+        q4 = group[(group["element"] == "Q4") & (group["mass"] == "lumped")]
+        first = q4[q4["steps_per_period"] == q4["steps_per_period"].min()].iloc[0]
+        last = q4[q4["steps_per_period"] == q4["steps_per_period"].max()].iloc[0]
+        worst = float(group["discrete_difference[-]"].max())
+        plastic = str(last["exact_dissipation[J]"]) not in ("", "nan") and \
+            float(last["exact_dissipation[J]"]) > 0.0
+        gap = (abs(float(last["final_balance[J]"]) - float(last["exact_dissipation[J]"]))
+               / float(last["exact_dissipation[J]"])) if plastic else float("nan")
+        _DYNAMIC_FRAMES.append({"study": "nonlinear-oscillator", "element": "Q4, Hex8",
+                                "case": f"{law}, alpha = {alpha:g}",
+                                "error_finest[-]": last["error[-]"], "order[-]": last["order[-]"],
+                                "difference[-]": worst,
+                                "dissipation_gap[-]": gap})
+        rows.append([law, _fmt(alpha, 3), _fmt(first["error[-]"], 3), _fmt(last["error[-]"], 3),
+                     _fmt(last["order[-]"], 4), _fmt(worst, 2),
+                     _fmt(gap, 2) if plastic else "-"])
+    return _markdown_table(["law", "alpha", "error, 20 steps / period",
+                            "error, 320 steps / period", "order", "vs scalar recursion",
+                            "energy balance vs D_p"], rows)
+
+
+def dynamic_decks_table(results_dir: str) -> Optional[str]:
+    """The transient and harmonic decks solved by sparlab_solve."""
+    rows = []
+    for case in DYNAMIC_CASES:
+        path = os.path.join(results_dir, case, "summary.json")
+        if not os.path.isfile(path):
+            continue
+        doc = load_json(path)
+        element = ELEMENT_LABELS.get(doc.get("mesh", {}).get("element_type", ""), "")
+        block = doc.get("transient")
+        if block:
+            damping = block.get("rayleigh_damping", {})
+            for lc in block.get("load_cases", []):
+                energy = lc.get("energy", {})
+                plastic = lc.get("plasticity", {})
+                record = {"study": "deck", "element": element, "case": f"{case}/{lc['load_case']}",
+                          "alpha": block["alpha"], "mass": block["mass"],
+                          "steps": lc["steps"], "max_displacement_m": lc["max_displacement_m"],
+                          "energy_balance[-]": energy.get("largest_relative_balance"),
+                          "final_balance_J": energy.get("final_balance_J"),
+                          "newton_iterations": lc.get("newton_iterations"),
+                          "max_plastic_strain": plastic.get("max_equivalent_plastic_strain")}
+                _DYNAMIC_FRAMES.append(record)
+                kind = "non-linear" if block.get("nonlinear") else "linear"
+                extra = (f"{lc.get('newton_iterations')} Newton iterations" if
+                         block.get("nonlinear") else "")
+                if plastic:
+                    strain = plastic.get("max_equivalent_plastic_strain")
+                    extra += f", plastic strain {_fmt(strain, 3)}"
+                rows.append([case, element, f"transient, {kind}",
+                             f"alpha {_fmt(block['alpha'], 3)}, {block['mass']} mass, "
+                             f"C = {_fmt(damping.get('mass_1_per_s'), 3)} M + "
+                             f"{_fmt(damping.get('stiffness_s'), 3)} K",
+                             f"{lc['steps']} steps of {_fmt(block['time_step_s'], 3)} s",
+                             f"{_fmt(lc['max_displacement_m'], 4)} m at "
+                             f"{_fmt(lc['max_displacement_time_s'], 4)} s",
+                             _fmt(energy.get("largest_relative_balance"), 2)
+                             + (f"; {extra}" if extra else "")])
+        block = doc.get("frequency_response")
+        if block:
+            damping = block.get("damping", {})
+            for lc in block.get("load_cases", []):
+                _DYNAMIC_FRAMES.append({"study": "deck", "element": element,
+                                        "case": f"{case}/{lc['load_case']}",
+                                        "frequencies": block["frequencies"],
+                                        "max_displacement_m": lc.get("max_displacement_m"),
+                                        "peak_frequency_Hz":
+                                            lc.get("max_displacement_frequency_Hz")})
+                rows.append([case, element, "harmonic",
+                             f"eta {_fmt(damping.get('structural_loss_factor'), 3)}, "
+                             f"C = {_fmt(damping.get('mass_1_per_s'), 3)} M + "
+                             f"{_fmt(damping.get('stiffness_s'), 3)} K, {block['mass']} mass",
+                             f"{int(block['frequencies'])} frequencies, "
+                             f"{_fmt(block.get('min_frequency_Hz'), 3)} to "
+                             f"{_fmt(block.get('max_frequency_Hz'), 4)} Hz",
+                             f"{_fmt(lc.get('max_displacement_m'), 4)} m at "
+                             f"{_fmt(lc.get('max_displacement_frequency_Hz'), 4)} Hz", "-"])
+    if not rows:
+        return None
+    return _markdown_table(["deck", "element", "analysis", "method", "run",
+                            "largest displacement", "energy balance"], rows)
+
+
 _OUTPUT = "docs/results"
 
 
@@ -1292,6 +1460,40 @@ def main(argv=None) -> int:
          "integration points with an accumulated plastic strain at the end of the load "
          "path, `first yielding step at lambda` the load factor that ended the step in which "
          "a point first yielded."),
+        ("Transient against the exact discrete modal solution",
+         transient_modal_table(args.results),
+         "From `results/verification/transient_modal.csv` (`sparlab_verify --study "
+         "transient-modal`): Q4 (20 x 4, plane stress) and Hex8 (10 x 2 x 2) steel "
+         "cantilevers, 120 steps of T1 / 40, against every mode of a dense generalised "
+         "eigensolve in 80-bit arithmetic, each advanced by the scalar HHT-alpha recursion. "
+         "The difference is the largest over the steps (and over the first half of them) "
+         "over the largest displacement; the energy balance the largest |E_0 + W - T - U - "
+         "D| over the energies (the numerical dissipation for alpha < 0); `dissipation / "
+         "work` the final balance over the external work."),
+        ("Rod: harmonic and transient response", rod_table(args.results),
+         "From `results/verification/rod_harmonic.csv` and `rod_transient.csv`: the "
+         "fixed-free steel rod (1 m, 0.05 m square, nu = 0, lateral displacements held; "
+         "Hex8 gives the same numbers). Harmonic: the end amplitude against the exact "
+         "damped continuum solution on 10 and 160 elements, the order between the two "
+         "finest meshes, and the largest difference of any node from the exact solution "
+         "of the discrete equations over the ladder. Transient: the largest end-"
+         "displacement error over the run against the continuum's modal series, h and "
+         "dt halved together (20 and 160 elements)."),
+        ("Non-linear oscillators", oscillator_table(args.results),
+         "From `results/verification/nonlinear_oscillator.csv`: one element in uniaxial "
+         "strain under a sudden load (Q4 and Hex8, lumped and consistent mass give the "
+         "same relative errors; the row shows Q4 lumped). Errors against the exact "
+         "motion over 1.5 periods; the order between 160 and 320 steps per period; the "
+         "difference to the scalar HHT-alpha recursion of the same equation (every "
+         "element, mass and step); for the plastic law the final energy balance against "
+         "the exact plastic dissipation sigma_y alpha_p V at 320 steps per period."),
+        ("Transient and harmonic decks", dynamic_decks_table(args.results),
+         "Each `configs/verification/transient_*.json` and `frequency_response_*.json` "
+         "deck solved by `sparlab_solve` (`results/<deck>/summary.json`, blocks "
+         "`transient` and `frequency_response`). The energy balance is the largest "
+         "relative |E_0 + W - T - U - D| over the run: round-off for the trapezoidal rule "
+         "on a linear model, the numerical dissipation of alpha < 0, and with plasticity "
+         "the plastic dissipation."),
         ("Cross-validation against independent codes", cross_validation_table(args.results),
          "Generated from `results/cross_validation/summary.json` by "
          "`python/scripts/cross_validate.py`: node-by-node comparison of the "
@@ -1422,6 +1624,9 @@ def main(argv=None) -> int:
                                                index=False)
     if _PLASTIC_FRAMES:
         pd.DataFrame(_PLASTIC_FRAMES).to_csv(os.path.join(args.output, "plasticity.csv"),
+                                             index=False)
+    if _DYNAMIC_FRAMES:
+        pd.DataFrame(_DYNAMIC_FRAMES).to_csv(os.path.join(args.output, "dynamics.csv"),
                                              index=False)
 
     lines = [

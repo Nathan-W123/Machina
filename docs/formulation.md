@@ -1078,6 +1078,150 @@ infinitesimal rotation and the largest component of the quadratic strain
 strain - where membrane action (a structure restrained against the motion a
 rotation causes) makes it matter.
 
+## 7e. Dynamics
+
+The `transient` block integrates a load case in time and the
+`frequency_response` block computes its steady harmonic response
+(`src/fem/Dynamics.cpp`).
+
+**Equations of motion.** On the free DOFs,
+
+```
+  M a + C v + K u = A(t) f ,     u_p = A(t) g ,
+```
+
+with the load vector `f` of the case (forces, pressures, body and thermal
+loads), its prescribed displacements `g` and one amplitude `A(t)` for both:
+a step, a piecewise-linear table (constant beyond its ends) or
+`scale sin(2 pi f t + phase)`. `M` is the consistent mass (each element's
+`int rho N^T N dV`, integrated exactly: 3 x 3 (x 3) Gauss points for Q4 and
+Hex8, a 64-point collapsed rule for the Tet10) or the lumped one - the row
+sums for the linear elements, the diagonal scaled to the element's mass for
+the Tet10, whose corner row sums are negative (Hinton, Rock and Zienkiewicz,
+1976). Damping is Rayleigh's, `C = a M + b K`, which leaves the modes
+uncoupled with the damping ratio `zeta_j = a / (2 omega_j) + b omega_j / 2`.
+
+**HHT-alpha.** The step `dt` is constant. Hilber, Hughes and Taylor (1977)
+keep the Newmark relations
+
+```
+  u1 = u0 + dt v0 + dt^2 [(1/2 - beta) a0 + beta a1] ,
+  v1 = v0 + dt [(1 - gamma) a0 + gamma a1]
+```
+
+and weight the equilibrium of the step's two ends,
+
+```
+  M a1 + (1 + alpha)(C v1 + K u1) - alpha (C v0 + K u0) = (1 + alpha) f1 - alpha f0 ,
+  beta = (1 - alpha)^2 / 4 ,   gamma = 1/2 - alpha ,   -1/3 <= alpha <= 0 .
+```
+
+The method is unconditionally stable and second-order accurate for every
+`alpha` in that range; its amplification of a mode whose period is short
+against the step tends to `(1 + alpha) / (1 - alpha)`, so `alpha < 0` damps
+the poorly resolved high frequencies while barely touching the resolved low
+ones. CalculiX's `*DYNAMIC` uses the same sign convention, and its default is
+`alpha = -0.05` (measured: a deck without `ALPHA` reproduces `ALPHA=-0.05`
+digit for digit and differs from `ALPHA=0` by 1e-4).
+`alpha = 0` is the trapezoidal rule (average acceleration): no numerical
+dissipation, and a period lengthened by `(omega dt)^2 / 12` of itself - the
+discrete solution of an undamped mode advances its phase by `theta` per step
+with `tan(theta / 2) = omega dt / 2`, which the unit tests confirm to
+round-off. A harmonic amplitude resolved by fewer than 20 steps per period
+draws a warning.
+
+**The displacement form.** SparLab solves for `u1`. With
+`c0 = 1 / (beta dt^2)`, `c1 = 1 / (beta dt)`, `c2 = 1 / (2 beta) - 1`,
+`c3 = gamma / (beta dt)`, `c4 = 1 - gamma / beta`,
+`c5 = dt (1 - gamma / (2 beta))`,
+
+```
+  a1 = c0 (u1 - u0) - c1 v0 - c2 a0 ,   v1 = c3 (u1 - u0) + c4 v0 + c5 a0 ,
+  [c0 M + (1 + alpha)(c3 C + K)] u1 = (1 + alpha) f1 - alpha f0
+      + M (c0 u0 + c1 v0 + c2 a0) + (1 + alpha) C (c3 u0 - c4 v0 - c5 a0)
+      + alpha (C v0 + K u0) ,
+```
+
+on the free DOFs, the prescribed ones moved to the right-hand side. The
+effective stiffness is factorised once for the whole run. A prescribed DOF
+follows the same kinematics: its displacement is `A(t_n) g` at every step,
+its velocity and acceleration come from the Newmark relations of that
+history (starting from `A'(0) g` and `A''(0) g`), so a shaken support moves
+exactly as the method moves every other DOF.
+
+**Initial state.** At rest (`u = 0`, `v = 0` on the free DOFs) or, with
+`start: static`, in the static equilibrium of `A(0) f` (a preloaded structure
+released); the initial acceleration solves
+`M_ff a0 = A(0) f_f - (M a_p + C v + K u)_f`, so the run starts in
+equilibrium - a load that acts at `t = 0` accelerates the structure at once.
+
+**Energy balance.** With the kinetic energy `T = v^T M v / 2`, the strain
+energy `U = u^T K u / 2`, the energy dissipated by damping
+`D = sum dt/4 (v_n + v_n+1)^T C (v_n + v_n+1)` and the work of the loads and
+of the reactions of the prescribed motion
+`W = sum (u_n+1 - u_n)^T (F_n + F_n+1) / 2`, the trapezoidal rule satisfies
+`E_0 + W - T - U - D = 0` at every step, exactly: `u1 - u0 = dt/2 (v0 + v1)`
+and `v1 - v0 = dt/2 (a0 + a1)` turn the change of `T + U` into the
+trapezoidal work less the damping term. The run reports the largest
+`|E_0 + W - T - U - D|` over the path, over the largest of the energies:
+round-off for `alpha = 0` on a linear model (below 1e-10 in every study; the
+same recursion in 80-bit arithmetic brings it down 1.7e3 times, as eps
+falls 2.0e3 times), and for `alpha < 0` the energy the method itself
+dissipates.
+
+**Non-linear transient.** With `nonlinear: true` the elastic forces become
+the internal forces of the load case's non-linear system (section 7c: finite
+kinematics with the Saint Venant-Kirchhoff or neo-Hookean law, or small
+strain; the J2 plasticity of section 7d with its mean dilatation; follower
+pressure), and every step solves the HHT-alpha residual
+
+```
+  R(u1) = M a1 + (1 + alpha)(C v1 + f_int(u1) - f_ext(t1)) - alpha (C v0 + f_int(u0) - f_ext(t0)) = 0
+```
+
+by Newton's method with the tangent `c0 M + (1 + alpha)(c3 C + K_T)`, from a
+constant-acceleration predictor. `C` takes the linear elastic stiffness of
+the undeformed model. A step converges when the residual is below the
+tolerance times the largest force involved (inertia, loads, damping,
+reactions) and the last correction below the tolerance times the larger of
+the step's increment and the displacement - an increment alone would ask for
+corrections below the rounding of `u` at a turning point of the motion - or
+when the residual sits at its round-off floor (section 7c). The plastic
+history is committed only on convergence, so a step whose Newton iteration
+fails is repeated in halves from the last converged state (at most
+`max_cuts` halvings deep), the halves growing back to `dt`. The trapezoidal
+rule does not conserve the energy of a non-linear system exactly; its error
+is `O(dt^2)`, and the balance also holds the plastic dissipation - the
+plastic work less the stored hardening energy - so the run warns only when
+energy is created (or, without plasticity, lost) beyond 1 % of the energies
+involved: the step is then too long, or a load applied suddenly at a node has
+crushed the element under it onto a spurious branch of the Saint
+Venant-Kirchhoff law (apply such a load with a table amplitude). The
+non-linear transient starts at rest; a preloaded start is a static analysis of
+its own.
+
+**Harmonic response.** For a load `f cos(omega t)` and a prescribed motion
+`g cos(omega t)`, the steady state is `Re(U e^{i omega t})` with
+
+```
+  [K (1 + i eta) - omega^2 M + i omega (a M + b K)] U = f   on the free DOFs, U_p = g ,
+```
+
+`eta` the structural (hysteretic) loss factor. Every frequency is a complex
+sparse LU (the sparsity pattern analysed once); its backward error
+`|| A U - f || / || |A| |U| + |f| ||` must stay below 1e-10, and a response
+more than a million times the static one is flagged - at an undamped natural
+frequency the dynamic stiffness is singular to working precision and the
+answer is round-off. A monitor records the complex amplitude of a
+displacement, of a velocity `i omega U` or an acceleration `-omega^2 U`, or of
+a reaction; its phase `arg U` is measured against the load (0 in phase,
+180 deg in antiphase), and a lightly damped mode turns it by -180 deg through
+its resonance, -90 deg of that at the peak. The
+largest displacement of a node over a cycle is the semi-major axis of the
+ellipse `a cos(omega t) - b sin(omega t)` it traces (`U = a + i b`):
+`sqrt((|a|^2 + |b|^2)/2 + sqrt(((|a|^2 - |b|^2)/2)^2 + (a . b)^2))`, the
+modulus `sqrt(|a|^2 + |b|^2)` only when its components move in phase.
+
 ## 8. Topology optimisation
 
 See `docs/topology_optimization.md` for the SIMP interpolation, the filters, the
@@ -1113,3 +1257,15 @@ hexahedron, and the four-point (body load) and three-point (face pressure)
 rules of the C3D10, which are not exact for a centrifugal load or for a
 pressure on a curved face. `docs/verification.md` has the measured differences
 and what they mean.
+
+A transient run is integrated again by scikit-fem - its own `K` and `M`, the
+same lumping, HHT-alpha in the acceleration (predictor-corrector) form rather
+than SparLab's displacement form, and for a non-linear run an independent
+J2 / Saint Venant-Kirchhoff system in Newton's method at every step - and,
+on solid elements, by CalculiX as a `*DYNAMIC, DIRECT, ALPHA` step with the
+amplitude tabulated at every step and Rayleigh `*DAMPING`; the monitors at
+every step, the snapshot fields and the final state are compared. CalculiX's
+expanded plane elements are not used in dynamics: their step response
+contradicts CalculiX's own `*FREQUENCY` result for the same mesh (measured).
+A harmonic response is compared with a direct complex solve in scikit-fem;
+CalculiX's `*STEADY STATE DYNAMICS` is a modal superposition.

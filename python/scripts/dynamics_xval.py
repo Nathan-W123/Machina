@@ -84,7 +84,8 @@ class Amplitude:
         if t < self.times[0] or t >= self.times[-1]:
             return 0.0
         i = int(np.searchsorted(self.times, t, side="right"))
-        return self.scale * (self.values[i] - self.values[i - 1]) / (self.times[i] - self.times[i - 1])
+        return (self.scale * (self.values[i] - self.values[i - 1])
+                / (self.times[i] - self.times[i - 1]))
 
     def second_rate(self, t: float) -> float:
         if self.kind != "harmonic":

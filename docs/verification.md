@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 255 cases, 17 971 assertions
+make test              # the Catch2 suite: 271 cases, 18 509 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -57,6 +57,10 @@ All numbers in this document come from `results/verification/summary.json`,
 | Thick tube to plastic collapse vs the exact limit load (Q4, Hex8, Tet10; mean dilatation and locking) | verification | largest collapse-pressure error of the default elements, finest mesh (order `>= 1.8` and the fully plastic stress field also required) | `4.82e-04` | `1e-3` | PASS |
 | Pure bending: moment-curvature and residual stress vs exact (plane-stress Q4) | verification | largest moment error over `M_p` on the loading branch, finest mesh (order, residual moment and residual stress also required) | `6.17e-04` | `1e-3` | PASS |
 | Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
+| HHT-alpha transient vs the exact discrete modal solution (Q4, Hex8; consistent and lumped mass) | verification | largest relative displacement difference over the steps, models, masses and cases (trapezoidal energy balance `<= 1e-10` and positive numerical dissipation also required) | `3.28e-10` | `1e-9` | PASS |
+| Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
+| Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
+| Non-linear oscillators, finite-strain elastic and elastoplastic, vs exact motion (Q4, Hex8) | verification | largest relative difference to the scalar HHT-alpha recursion (order `>= 1.8` to the exact motion also required) | `1.74e-11` | `1e-9` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -74,6 +78,9 @@ Supporting measurements from the same runs:
 | Arch: limit force, load-control bracket | `1588.2464 N`; load control stops at `1588.135 N` and rejects `1588.257 N` |
 | Plastic tube: collapse-pressure error, finest mesh (order) | Q4 mean dilatation `1.20e-04` (2.00), Hex8 `4.82e-04` (2.00), Tet10 `2.99e-06` (3.02); fully integrated Q4 `1.20e-02` with a rising plateau, Tet10 with mean dilatation `-7.12e-04` (2.05, from below) |
 | Plastic bending: moment error order, residual moment, residual stress | `1.94`; `1.63e-04 M_p`; `2.33e-03 sigma_y` (order `1.65`) |
+| Transient: trapezoidal energy balance; its fall from double to 80-bit arithmetic; numerical dissipation over the work | `<= 2.98e-11`; `1.71e3` times for `2.05e3` in eps; `0.36 %` to `0.40 %` (`alpha = -0.1`, harmonic load), `36 %` to `49 %` (`alpha = -0.3`, sudden load) |
+| Rod: continuum error on 160 elements; transient order and error on 160 elements | harmonic `<= 3.61e-03` (third resonance), order `2.00`; transient order `2.01` / `2.00`, error `2.59e-05` / `8.00e-05` (consistent / lumped) |
+| Oscillators: order to the exact motion; plastic dissipation at 320 steps a period | `1.98` to `2.00` (elastic), `1.94` to `2.04` (plastic); `174.794 J` against the exact `174.802 J` |
 
 And from the cross-validation against two independent codes (section 14):
 
@@ -111,6 +118,12 @@ And from the cross-validation against two independent codes (section 14):
 | Elastoplastic cycles: Hex8 with mean dilatation and combined hardening / plane-stress Q4 with kinematic and Voce hardening | scikit-fem, an independent J2 solve | `3.24e-14` / `6.45e-15` | `1e-7` | PASS |
 | Elastoplastic, finite kinematics: a 960-Tet10 cantilever deflected a tenth of its span / a beam clamped at both ends, driven into membrane action and back with combined hardening, 320 Hex8 with E-bar / 160 Q4 plane strain with E-bar / 160 Q4 plane stress | scikit-fem, an independent finite-kinematics J2 solve | `1.58e-14` / `3.42e-13` / `3.37e-13` / `2.28e-13` | `1e-7` | PASS |
 | Elastoplastic large deflection, 960 Tet10 | CalculiX `*PLASTIC` under `NLGEOM` (a different finite-strain model) | `1.81e-04` | - | INFO |
+| Transient: a Hex8 cantilever (HHT `alpha = -0.05`, Rayleigh damping) / a Tet10 cantilever driven harmonically (trapezoidal rule) / a plane-strain Q4 strip shaken at its root (lumped mass) | scikit-fem, an independent HHT-alpha integration | `3.27e-10` / `3.46e-09` / `1.50e-09` | `1e-7` | PASS |
+| The Hex8 and Tet10 transients | CalculiX `*DYNAMIC`, `C3D8` / `C3D10` | `1.64e-06` / `2.08e-06` | `1e-5` | PASS |
+| Non-linear transient: a Hex8 cantilever loaded past yield (small-strain J2) / a slender Hex8 strip swinging through large deflection (Saint Venant-Kirchhoff) | scikit-fem, an independent non-linear HHT-alpha integration | `2.17e-08` / `4.90e-10` | `1e-7` | PASS |
+| The same two | CalculiX `*DYNAMIC`, `C3D8`, with `*PLASTIC` / under `NLGEOM` | `6.21e-07` / `1.46e-06` | `1e-5` | PASS |
+| Harmonic response: a Q4 cantilever plate through four resonances / a Hex8 block on a shaken base (lumped mass) | scikit-fem, a direct complex solve | `1.02e-10` / `8.15e-13` | `1e-7` | PASS |
+| The Q4 plate's static solution (plane stress, `nu = 0.3`) | CalculiX, `CPS4` | `1.52e-03` | - | INFO |
 
 And the linear buckling load factors of the same three columns, four modes
 each (section 20):
@@ -591,7 +604,7 @@ node (`python/scripts/cross_validate.py`, `make cross-validation`):
   same integration order - the 4-point rule for the Tet10. It is the *same
   element formulation* in an independent implementation, so the only
   expected difference is linear-solver round-off - and that is what is
-  measured: from `2.4e-14` to `1.5e-10` relative on 53 of the 56 load
+  measured: from `2.4e-14` to `1.5e-10` relative on 60 of the 63 load
   cases, and `1.4e-9`, `8.0e-9` and `2.2e-8` on the three worst-conditioned
   systems, a plane-strain strip and the two slender Tet10 cantilevers
   (formulation, section 5). Each comparison records the round-off scale of
@@ -605,7 +618,8 @@ node (`python/scripts/cross_validate.py`, `make cross-validation`):
   before anything is solved;
 * **CalculiX 2.21** (`ccx`) runs the exported `.inp` decks. `C3D8`, `C3D4`
   and `C3D10` are the same trilinear hexahedron and linear and quadratic
-  tetrahedra as SparLab's; the differences, `6.4e-07` to `3.6e-06`, are
+  tetrahedra as SparLab's; the differences, `5.2e-07` to `3.6e-06` (round-off
+  where the static case is a rigid translation of a shaken base), are
   within the six-significant-digit rounding of its `.frd` result file (floor
   `5e-6`), i.e. as close as the file format allows one to see - including
   the 39 936-tetrahedron engine mount read from a Gmsh file, which SparLab
@@ -653,14 +667,20 @@ factors are compared as well:
 full load with scikit-fem's own total Lagrangian solver and CalculiX's
 `*STEP, NLGEOM` (section 23).
 
-Tolerances are `1e-7` for scikit-fem (displacements, load factors and
-non-linear states) and `1e-5` for CalculiX displacements, linear and
-non-linear, `1e-4` for its load factors, all recorded in the summary with
-the `.frd` floor. The comparison exits non-zero if any judged pair exceeds
-its tolerance, or if a non-linear run stopped short of its load. Of the 173
-comparisons on 31 decks and 56 load cases, 168 pass and 5 are
-informational. CI runs the scikit-fem half - displacements, load factors,
-the dead-load non-linear states and the elastoplastic states - on every
+**Transient and harmonic responses.** The seven dynamic decks are compared
+at every step or frequency with an HHT-alpha integration and a direct
+complex solve on scikit-fem's own matrices, and the solid-element transients
+with CalculiX's `*DYNAMIC` (section 25).
+
+Tolerances are `1e-7` for scikit-fem (displacements, load factors,
+non-linear states, transient and harmonic responses) and `1e-5` for CalculiX
+displacements, linear, non-linear and transient, `1e-4` for its load
+factors, all recorded in the summary with the `.frd` floor. The comparison
+exits non-zero if any judged pair exceeds its tolerance, or if a non-linear
+run stopped short of its load. Of the 198 comparisons on 38 decks and 63
+load cases, 192 pass and 6 are informational. CI runs the scikit-fem half -
+displacements, load factors, the dead-load non-linear states, the
+elastoplastic states and the transient and harmonic responses - on every
 push.
 
 ## 15. The linear simplices (Tri3, Tet4)
@@ -782,7 +802,7 @@ iteration; the growth limit is judged over the multi-level meshes only
 `docs/benchmarks.md`: for one solve at these sizes Jacobi CG is about as fast
 as multigrid, because its cheap iterations cost about what the multigrid
 setup does; the direct solver is about 40 times slower at 47 775 Hex8 DOFs
-(28.6 s against 0.69 s in the run behind `docs/results`; wall-clock times
+(31.4 s against 0.72 s in the run behind `docs/results`; wall-clock times
 vary from run to run on a shared machine, the iteration counts do not).
 
 ## 18. The Heaviside projection
@@ -1601,19 +1621,192 @@ were taken:
   as SparLab does, a residual at its round-off floor, once Newton has
   stopped reducing it.
 
+## 25. Dynamics
+
+**Unit tests against exact answers** (`tests/test_dynamics.cpp`, 12 cases;
+three more in `tests/test_io.cpp` for the deck blocks, the output files and
+the CalculiX `*DYNAMIC` decks):
+
+* *amplitudes*: the step, table and harmonic values and rates (the table's
+  slope to the right of a point), the HHT-alpha parameters and their range;
+* *the scalar trapezoidal recursion* - the reference of the next tests - has
+  the exact discrete period, a phase advance `tan(theta / 2) = omega dt / 2`
+  per step at constant amplitude, to `1e-12` over 200 steps;
+* *a transient run is the HHT-alpha recursion of every mode*: on a Q4 plate
+  and a Hex8 block, consistent and lumped mass, `alpha = 0` and `-0.1`,
+  Rayleigh damping, a harmonic load from rest and a preload released, the
+  global solution equals the sum of every mode integrated by the scalar
+  recursion in acceleration form (the solver uses the displacement form) to
+  `1e-10` of the largest displacement at every step;
+* *energy*: the trapezoidal rule balances `E_0 + W - T - U - D` to `1e-12`,
+  undamped and damped; HHT-alpha dissipates;
+* *prescribed motion*: a free plate shaken at one edge balances its energy to
+  `1e-12`, and the sum of its reactions equals the rate of change of its
+  momentum `sum (M a + C v)` to `1e-10`;
+* *the harmonic response is the sum over all modes*, with structural and
+  Rayleigh damping, at and between resonances, consistent and lumped, Q4 and
+  Hex8, to `1e-10`; velocity and acceleration monitors are `i omega U` and
+  `-omega^2 U` to `1e-14`; the largest displacement of a node over a cycle
+  is the semi-major axis of its orbit (in phase, circular and elliptical
+  orbits, and against a 3 600-point sampling of the cycle);
+* *the non-linear transient* of a linear model (small strain, elastic) is the
+  linear transient to `1e-10` in at most two Newton iterations a step; with
+  finite kinematics it converges at second order in the step (observed
+  orders above 1.8 for the motion and the energy balance); an elastoplastic
+  plate loaded slowly and damped comes to rest at the non-linear static
+  state, the gap closing as the ramp lengthens, with positive plastic
+  dissipation;
+* *an undamped response at a natural frequency* is flagged (or the LU fails
+  outright), and with damping it is finite and unflagged;
+* the input checks: a duration that is not a whole number of steps, `alpha`
+  outside `[-1/3, 0]`, negative damping, no frequencies, a massless model;
+* a prescribed rigid motion of a body passes the static equilibrium check
+  (`tests/test_static_verification.cpp`): its reactions are round-off, now
+  judged against the gross force `|K| |u|` they are formed from - a shaken
+  base, whose static analysis precedes its dynamic one, used to fail that
+  check with a relative error of 0.13 of round-off over round-off.
+
+**The transient against the exact discrete solution** (`transient-modal`).
+Q4 (20 x 4, plane stress) and Hex8 (10 x 2 x 2) steel cantilevers,
+consistent and lumped mass, five cases each - a sudden tip load with the
+trapezoidal rule and with `alpha = -0.3`, a harmonic load at `1.3 f1` with
+2 % Rayleigh damping at `alpha = 0` and `-0.1`, and a static preload released
+with `alpha = -0.05` - 120 steps of `T1 / 40`, against every mode of a dense
+generalised eigensolve, each integrated by the scalar recursion. The
+reference is computed in 80-bit extended precision: in double precision the
+modal sum is itself only good to about `omega_max^2 / omega_1^2 eps`, and the
+differences then measured (up to `7.9e-10`) were mostly the reference's. Against the
+extended-precision reference the largest difference over the 20 runs is
+`3.28e-10` of the largest displacement (`1.83e-10` over the first half of the
+runs: the solver's double-precision round-off accumulates step by step - run
+once with 60, 120 and 240 steps, the undamped Q4 case measured `6.5e-12`,
+`1.75e-11` and `3.4e-11`). The trapezoidal energy balance is at most
+`2.98e-11`; the same recursion carried out by the study in double and in
+80-bit arithmetic gives `1.08e-11` and `6.33e-15`, a ratio of `1.71e3` for a
+ratio of `2.05e3` in eps - round-off. `alpha < 0` dissipates, as it should:
+0.36 % to 0.40 % of the work of the harmonic load at `alpha = -0.1`, 36 % to 49 % of the
+sudden load's at `alpha = -0.3` - a sudden point load excites every mode, and
+the method damps those the step does not resolve.
+
+**A fixed-free rod** (`rod-harmonic`, `rod-transient`). A steel rod 1 m long,
+0.05 m square, `nu = 0`, its lateral displacements held, one element across
+- an exactly one-dimensional model on Q4 and on Hex8, which give the same
+numbers. Harmonic: driven by an end force or by its base, undamped between
+resonances, with structural damping `eta = 0.02` and with 1 % Rayleigh
+damping at the first and third resonances; on 10 to 160 elements with
+consistent and lumped mass. Every node equals the exact solution of the
+discrete equations - `u_j = g cos(j theta) + D sin(j theta)` from the
+dispersion relation of the stencil - to `2.94e-10`, and the reaction as
+well. The end amplitude converges to the exact damped continuum solution,
+`u = g cos(k (L - x)) / cos(kL) + F sin(kx) / (E* A k cos(kL))` with the
+complex modulus and density of the damping, at order `2.00` on the finest
+pair in every case; the largest error on 160 elements is `3.6e-3`, at the
+third resonance, where a frequency error of `O(h^2)` is amplified by the
+sharpness of the peak. Transient: an end force ramped as `sin^2` over
+`0.6 T1`, 2.5 periods, the trapezoidal rule at Courant number 1 (`dt = h /
+c`): the end displacement converges at order `2.01` (consistent mass) and
+`2.00` (lumped) to the continuum's modal series, whose static part is summed
+exactly and whose 4 000-mode truncation changes it by `6.4e-13` of `F L / (E
+A)`; on 160 elements the error is `2.6e-5` (consistent) and `8.0e-5`
+(lumped) of the largest displacement, and the energy balance at most
+`3.9e-12`. `docs/figures/verify_rod_dynamics.png` shows the harmonic sweep
+through three resonances against the exact response, both convergence
+studies and the end displacement against the series.
+
+**Non-linear oscillators** (`nonlinear-oscillator`). One element (Q4 in plane
+strain, Hex8) with its lateral displacements held: uniaxial strain, a single
+degree of freedom `m u'' + N(u) = F`, under a sudden load, 20 to 320 steps
+per elastic period, `alpha = 0` and `-0.1`, lumped and consistent mass. The
+Saint Venant-Kirchhoff law at finite strain (`N = A (lambda + 2 mu) F11
+(F11^2 - 1) / 2`, a peak strain of 9 %) and J2 small-strain plasticity with
+linear hardening (0.8 of the yield force, doubled by the sudden
+application: the element yields on its first swing and then oscillates
+elastically about its permanent set). Against the scalar HHT-alpha recursion
+of the same equation - Newton to machine precision, the plastic law's radial
+return in closed form - every run agrees to `1.74e-11`. Against the exact
+motion - classical Runge-Kutta at 1/64 of the finest step for the elastic
+law (the Runge-Kutta reference agrees with itself at half its step to
+`1.3e-14`), the piecewise closed form for the plastic one (harmonic with the
+elastic slope, then with `K + (4/3) mu H / (3 mu + H)`, then elastic again
+about the shifted equilibrium) - the error falls at second order: `1.98` to
+`2.00` for the elastic law, `1.94` to `2.04` for the plastic one, whose
+order wanders as the yield point falls at a different place within a step.
+The run's final energy balance - the energy not found as kinetic, stored or
+external work - holds the plastic dissipation: `174.794 J` at 320 steps per
+period against the exact `sigma_y alpha_p V = 174.802 J` (`4.5e-5` at
+`alpha = 0`, `4.6e-5` at `-0.1`). The gap shrinks with the step, but
+unevenly - the yield point moves within a step - and at `-0.1` the method's
+numerical dissipation enters the balance too (its coarsest run, 20 steps a
+period, overshoots to `174.91 J`).
+`docs/figures/verify_nonlinear_oscillator.png` shows both motions and the
+convergence.
+
+**Cross-validation** (section 14's two codes, seven decks, `configs/
+verification/transient_*.json` and `frequency_response_*.json`). scikit-fem
+integrates every transient again with its own `K` and `M` - consistent, or
+lumped as SparLab lumps (row sums; HRZ for the Tet10) - and HHT-alpha in the
+acceleration form, and solves every harmonic deck directly; CalculiX runs the
+exported `*DYNAMIC, DIRECT, ALPHA` decks of the solid-element transients:
+
+| Deck | Reference | Max relative difference | Tolerance |
+|------|-----------|------------------------:|----------:|
+| Hex8 cantilever, 3-D tip load ramped, HHT `alpha = -0.05`, Rayleigh damping, 300 steps | scikit-fem HHT-alpha / CalculiX `C3D8 *DYNAMIC` | `3.27e-10` / `1.64e-06` | `1e-7` / `1e-5` |
+| Tet10 cantilever driven harmonically from rest, trapezoidal rule, 400 steps | scikit-fem / CalculiX `C3D10 *DYNAMIC` | `3.46e-09` / `2.08e-06` | `1e-7` / `1e-5` |
+| Plane-strain Q4 strip shaken at its root, lumped mass, Rayleigh damping | scikit-fem | `1.50e-09` | `1e-7` |
+| Q4 cantilever plate, harmonic tip force through four resonances, structural and Rayleigh damping | scikit-fem direct complex solve | `1.02e-10` | `1e-7` |
+| Hex8 block on a shaken base, lumped mass, structural damping, 80 frequencies to 8 kHz | scikit-fem direct complex solve | `8.15e-13` | `1e-7` |
+| Hex8 cantilever loaded dynamically past yield, small-strain J2 (plastic strain `1.0e-3`) | scikit-fem's own J2 in Newton / CalculiX `C3D8 *DYNAMIC *PLASTIC` | `2.17e-08` / `6.21e-07` | `1e-7` / `1e-5` |
+| Slender Hex8 strip swinging through large deflection (tip down 0.36 L), Saint Venant-Kirchhoff | scikit-fem's own finite-kinematics system / CalculiX `C3D8 *DYNAMIC NLGEOM` | `4.90e-10` / `1.46e-06` | `1e-7` / `1e-5` |
+
+The scikit-fem comparisons are judged on the full-precision data - the
+monitors at every step (or frequency) and the final displacement, velocity
+and acceleration (the complex fields at the snapshot frequencies) - with the
+snapshot fields read from the VTK series (nine significant digits, agreeing
+to `5e-9` or better) checked beside them. The largest of them is the final
+acceleration of the non-linear runs: `a = (u1 - u~) / (beta dt^2)` magnifies
+the Newton-tolerance difference of `u` by about `1 / (beta (omega dt)^2)`,
+120 for the plastic cantilever, whose displacements agree to `1.2e-12`.
+The CalculiX comparisons are of the displacement fields at every snapshot,
+read from its `.frd` file (six significant digits, a rounding of `5e-6`).
+
+What the cross-validation found, and how it was resolved:
+
+* **CalculiX's expanded plane elements in `*DYNAMIC`.** A CPS4 cantilever
+  whose first period is 12.1 ms (CalculiX's own `*FREQUENCY` of the same
+  deck agrees with SparLab's 82.3 Hz to `8e-4`) peaks under a sudden tip
+  load after 4.1 ms rather than half a period; CPE4 alike, the two 86 % and
+  99 % from SparLab, while a cantilever of C3D8 elements agrees to the
+  output rounding.
+  CalculiX's dynamic plane elements are therefore not used; the plane decks
+  are compared with scikit-fem, the solid ones with both codes.
+* **A load acting at `t = 0`.** SparLab starts in equilibrium with it (the
+  initial acceleration `M^-1 A(0) f`); CalculiX does not (measured: 2.6 %
+  apart in the first step of a sudden load). The export refuses such a run,
+  with the reason, and the decks ramp their loads from zero.
+* **`ALPHA`.** CalculiX's HHT-alpha has SparLab's sign convention and Newmark
+  parameters: `alpha = 0` and `-0.1`, with and without Rayleigh `*DAMPING`,
+  agree to the `.dat` rounding (`1.6e-7`) while the two `alpha` differ by
+  `2.1e-4`; without `ALPHA` it takes `-0.05` (reproduced digit for digit).
+* **Mean dilatation.** CalculiX's C3D8 averages no dilatation, so the plastic
+  deck integrates in full, as CalculiX does, to be judged against it: the
+  fully integrated Hex8 is stiffer (the tip load had to rise from 13.5 kN to
+  20 kN to yield the root), which is the element, not the dynamics.
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
 
 * **no comparison against experiment**;
-* the cross-validation covers linear static displacements on thirty-one
+* the cross-validation covers linear static displacements on thirty-eight
   problems, five of them on the three meshes read from files - six of them
   under pressure, body and thermal loads, with conducted temperatures on four
   - linear buckling load factors on three, the final large-deflection
-  states of four, eight comparisons in all, and the final elastoplastic
-  states of ten, fifteen comparisons. Stresses, natural frequencies,
-  the non-linear load paths (only the final states are compared) and the
-  optimised designs are not compared with another code, and CalculiX's
+  states of four, eight comparisons in all, the final elastoplastic states
+  of ten, fifteen comparisons, the transient histories of five, nine
+  comparisons (two of the decks non-linear), and the harmonic responses of
+  two. Stresses, natural frequencies, the non-linear static load paths (only
+  the final states are compared) and the optimised designs are not compared
+  with another code, and CalculiX's
   `*BUCKLE` factors for
   `C3D8` and `C3D10` differ from SparLab's by up to `8.3e-5` for a reason
   not identified (section 14);
@@ -1651,6 +1844,19 @@ Stated plainly, since the absence matters as much as the presence:
   committed non-linear decks carries a temperature. The bracketing of a
   critical point is verified on
   one limit point (the arch) and one bifurcation (the cube);
+* dynamics is verified against the exact solution of the discrete equations
+  (modal superposition, the rod's dispersion relation, the scalar recursion
+  of a one-element oscillator), the rod's continuum solutions and the exact
+  motion of the one-element oscillators. A non-linear transient with many
+  degrees of freedom - large deflection, plasticity - is cross-validated
+  against scikit-fem and CalculiX, not verified against an exact answer, and
+  its accuracy in time is only as good as the step: the energy balance
+  bounds nothing about the error of the motion. The harmonic response is
+  cross-validated against scikit-fem only (CalculiX's steady-state dynamics
+  is modal); CalculiX's plane elements are not used in dynamics (their
+  `*DYNAMIC` response contradicts CalculiX's own `*FREQUENCY`); there is no
+  experiment, no damping identified from a test, and no validation of
+  Rayleigh or structural damping as a model of a real structure's damping;
 * the overhang filter and check are verified for the 3- and 5-element
   stencils of structured square and cubic grids; the robust formulation for
   uniform erosion and dilation only. Neither is a process simulation;

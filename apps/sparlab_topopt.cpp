@@ -295,6 +295,12 @@ int main(int argc, char** argv) {
           "the deck enables the non-linear analysis, but the optimiser designs for linear "
           "statics; run the non-linear analysis of a design with sparlab_solve");
     }
+    if (config.transient.enabled || config.frequency_response.enabled) {
+      throw ConfigError(
+          "the deck enables a transient or frequency-response analysis, but the optimiser "
+          "designs for linear statics (and modal frequencies); run the dynamic analysis of a "
+          "design with sparlab_solve");
+    }
     {
       bool plastic = config.material().plasticity().enabled();
       for (const MaterialRegion& r : config.material_regions) {

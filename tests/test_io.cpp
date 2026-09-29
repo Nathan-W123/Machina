@@ -933,6 +933,68 @@ TEST_CASE("transient and frequency-response results are written as CSV, VTK and 
           "tip_uy");
 }
 
+TEST_CASE("CalculiX transient decks carry *DYNAMIC, the amplitude and the damping",
+          "[io][writers][cross-validation][dynamics]") {
+  ensure_directory("results/_test_tmp");
+  SolidCantileverCase solid;
+  FemModel model = make_cantilever_3d(solid, 4, 1, 1);
+  TransientOptions options;
+  options.time_step = 1.0e-4;
+  options.end_time = 2.0e-3;
+  options.alpha = -0.05;
+  options.mass_damping = 20.0;
+  options.stiffness_damping = 1.0e-5;
+  options.snapshot_every = 5;
+  options.amplitude.kind = Amplitude::Kind::Table;
+  options.amplitude.times = {0.0, 1.0e-3};
+  options.amplitude.values = {0.0, 1.0};
+  REQUIRE(calculix_transient_obstacle(model, 0, options).empty());
+
+  CalculixTransientExport dynamic;
+  dynamic.load_cases = {0};
+  dynamic.options = options;
+  const std::vector<std::string> decks =
+      write_calculix_decks(model, "results/_test_tmp/dyn", "unit", nullptr, &dynamic);
+  REQUIRE(decks.size() == 2);
+  REQUIRE(decks[1].find("_dynamic.inp") != std::string::npos);
+  const std::string text = read_text(decks[1]);
+  REQUIRE(text.find("*DAMPING, ALPHA=20, BETA=1e-05\n") != std::string::npos);
+  REQUIRE(text.find("*DYNAMIC, DIRECT, ALPHA=-0.05\n") != std::string::npos);
+  REQUIRE(text.find("*NODE FILE, FREQUENCY=5\nU\n") != std::string::npos);
+  REQUIRE(text.find("*CLOAD, AMPLITUDE=A1\n") != std::string::npos);
+  // The amplitude at every step time, 0 to 20 steps.
+  const std::vector<std::string> table = card_lines(text, "*AMPLITUDE, NAME=A1");
+  REQUIRE(table.size() == 21);
+  for (std::size_t k = 0; k < table.size(); ++k) {
+    const std::size_t comma = table[k].find(',');
+    REQUIRE(comma != std::string::npos);
+    const double t = std::stod(table[k].substr(0, comma));
+    const double a = std::stod(table[k].substr(comma + 1));
+    REQUIRE(t == Approx(1.0e-4 * static_cast<double>(k)).margin(1e-18));
+    REQUIRE(a == Approx(options.amplitude.value(t)).margin(1e-15));
+  }
+  // Held DOFs on a plain *BOUNDARY card.
+  REQUIRE(card_lines(text, "*BOUNDARY").size() ==
+          static_cast<std::size_t>(model.dofs().num_constrained()));
+  for (const std::string& path : decks) std::remove(path.c_str());
+
+  // What CalculiX cannot integrate as the same problem is refused.
+  TransientOptions lumped = options;
+  lumped.mass_type = MassType::Lumped;
+  REQUIRE_FALSE(calculix_transient_obstacle(model, 0, lumped).empty());
+  TransientOptions preloaded = options;
+  preloaded.start = TransientOptions::Start::Static;
+  REQUIRE_FALSE(calculix_transient_obstacle(model, 0, preloaded).empty());
+  TransientOptions sudden = options;
+  sudden.amplitude = Amplitude();  // a step: the load acts at t = 0
+  REQUIRE_FALSE(calculix_transient_obstacle(model, 0, sudden).empty());
+  CalculixTransientExport refused = dynamic;
+  refused.options = sudden;
+  REQUIRE_THROWS_AS(write_calculix_decks(model, "results/_test_tmp/dyn2", "unit", nullptr,
+                                         &refused),
+                    IoError);
+}
+
 TEST_CASE("path_join handles separators", "[io]") {
   REQUIRE(path_join("a", "b") == "a/b");
   REQUIRE(path_join("a/", "b") == "a/b");

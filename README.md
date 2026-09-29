@@ -39,9 +39,10 @@ relative.
 | **Linear buckling** | `(K + lambda K_G) phi = 0` of each load case by subspace iteration, with the buckling spectral transformation and an inertia-placed shift when reversed-load modes crowd the spectrum; a check of the analysed model, the full design domain and the **exported part** |
 | **Large deflection** | **Geometrically non-linear statics** (total Lagrangian, consistent tangent) with the Saint Venant-Kirchhoff or a compressible **neo-Hookean** law, **follower pressures**, the centrifugal load at the deformed position (spin softening), the multiplicative finite-strain **thermal** split, prescribed displacements; Newton with an energy line search under load control - which **stops at a limit or bifurcation point** and brackets it, using the tangent's inertia - or **Crisfield's arc-length method** through snap-through; monitors, Cauchy and second Piola-Kirchhoff stresses, the deformed force balance, CalculiX `NLGEOM` export |
 | **Plasticity** | **J2 (von Mises) plasticity** with linear and **Voce** isotropic and **Prager kinematic** hardening, by the backward-Euler radial return with its consistent tangent, in 3-D, plane strain and **plane stress** (the thickness strain solved at every point), with thermal strain; **small-strain** kinematics or the return in the Green-Lagrange strain at **large rotation**; **mean dilatation** (B-bar, and its Green-strain form) against volumetric locking; point history committed only on convergence; **load paths that unload and reverse** (permanent set, residual stress, the Bauschinger effect); load control that stops at a **plastic collapse** with it bracketed; equivalent plastic strain fields, CalculiX `*PLASTIC` export |
+| **Dynamics** | **Transient response** by the **HHT-alpha** method (the trapezoidal rule at `alpha = 0`, numerical damping of unresolved modes below it) with consistent or lumped mass, **Rayleigh damping**, step, table and harmonic amplitudes on the loads and on **prescribed motion** (a shaken support), from rest or a released preload, the energy balance tracked every step; the **non-linear transient** (large deflection, J2 plasticity) by Newton's method at every step with the plastic history committed on convergence; the **steady harmonic response** by a direct complex solve per frequency with structural and Rayleigh damping, flagging an undamped resonance; monitors of displacement, velocity, acceleration and reaction, VTK snapshot series, CalculiX `*DYNAMIC` export |
 | **Topology optimisation** | SIMP with penalty continuation, density and sensitivity filters, a **Heaviside projection** with `beta` continuation, the **robust (eroded / blueprint / dilated) formulation** for a minimum length scale, an **additive-manufacturing overhang filter**, analytical sensitivities, optimality criteria *or* the method of moving asymptotes, aggregated **stress** and **buckling** constraints with adjoint sensitivities, passive solid/void regions, multi-load-case objective, length-scale, erosion and overhang checks of the result |
 | **Geometry** | The structure before and after optimisation as VTK and watertight binary STL, with closure, manifoldness and volume checks |
-| **Verification** | Patch tests on all five elements (the Tet10's quadratic one included), rigid-body modes, positive definiteness, reaction equilibrium, agreement of seven linear solvers, multigrid iteration counts under refinement, finite-difference gradient checks (compliance, stress, buckling and the overhang filter, 2-D and 3-D, through the projection), mass conservation, beam, rod and Euler-Engesser column theory, mesh convergence, **exact solutions of pressure, rotation, conduction and thermal stress** (Lame, rotating disk, heated cylinder, Timoshenko's bimetal, the hanging bar) at the element's convergence order, **Euler's elastica**, **exact finite-strain solutions** of an inflated, a spinning and a heated tube, a **snap-through** followed two ways with its stability checked, the **exact plastic collapse** of a thick tube and its fully plastic stress field, **elastoplastic bending** with unloading and residual stress, and a **uniaxial cycle** with combined hardening exact to round-off - and **cross-validation against CalculiX and scikit-fem**, node by node for displacements (with each code integrating the new loads itself), temperatures, **large-deflection states** (CalculiX `NLGEOM`, an independent total Lagrangian solver in scikit-fem) and **elastoplastic states** (CalculiX `*PLASTIC`, an independent J2 solver in scikit-fem), and mode by mode for buckling load factors, including the parts meshed in Gmsh |
+| **Verification** | Patch tests on all five elements (the Tet10's quadratic one included), rigid-body modes, positive definiteness, reaction equilibrium, agreement of seven linear solvers, multigrid iteration counts under refinement, finite-difference gradient checks (compliance, stress, buckling and the overhang filter, 2-D and 3-D, through the projection), mass conservation, beam, rod and Euler-Engesser column theory, mesh convergence, **exact solutions of pressure, rotation, conduction and thermal stress** (Lame, rotating disk, heated cylinder, Timoshenko's bimetal, the hanging bar) at the element's convergence order, **Euler's elastica**, **exact finite-strain solutions** of an inflated, a spinning and a heated tube, a **snap-through** followed two ways with its stability checked, the **exact plastic collapse** of a thick tube and its fully plastic stress field, **elastoplastic bending** with unloading and residual stress, a **uniaxial cycle** with combined hardening exact to round-off, the **transient** against the exact discrete modal solution (in extended precision), a **rod's harmonic and transient response** against the exact discrete and continuum solutions, and **finite-strain elastic and elastoplastic oscillators** against their exact motion - and **cross-validation against CalculiX and scikit-fem**, node by node for displacements (with each code integrating the new loads itself), temperatures, **large-deflection states** (CalculiX `NLGEOM`, an independent total Lagrangian solver in scikit-fem) and **elastoplastic states** (CalculiX `*PLASTIC`, an independent J2 solver in scikit-fem), **transient histories** (CalculiX `*DYNAMIC`, an independent HHT-alpha integration in scikit-fem, linear, elastoplastic and at large deflection) and **harmonic responses**, and mode by mode for buckling load factors, including the parts meshed in Gmsh |
 | **Diagnostics** | Pre-solve detection of rigid-body under-constraint and floating regions, singular-matrix reporting with the likely modelling cause, explicit non-convergence and infeasibility reporting |
 | **Output** | `summary.json`, CSV tables, legacy VTK for ParaView, CalculiX decks, STL, publication-quality figures and animations |
 
@@ -157,6 +158,13 @@ All numbers below are read from the `summary.json` of the run named beside them.
 | **Large-deflection cantilever vs Euler's elastica**, Tet10, up to `k = PL^2/EI = 10` (tip at `0.81 L`, turned `1.43 rad`) | verification + validation | tip error on the finest mesh, in `L`; Tet10 order `3.01` to `3.65` | `1.36e-04` | `1e-3` |
 | **Thick tube at finite strain vs exact**: neo-Hookean under a follower pressure (hoop stretch `1.48`) and spinning, SVK heated; Q4 / Tri3 / Hex8 / Tet10 | verification | RMS displacement order `2.00` (linear elements), `3.10` to `3.24` (Tet10) | shortfall `9.0e-04` | `0.3` |
 | **Snap-through of a shallow arch**: arc length vs displacement control | verification | force difference at equal deflection / limit force; inertia 18 of 18; load control stops and brackets the limit (`1588.2464 N`) | `2.82e-11` | `1e-6` |
+| **Thick tube to plastic collapse vs the exact limit load**, Q4 / Hex8 with mean dilatation, Tet10 | verification | collapse-pressure error, finest mesh (order `2.00` / `2.00` / `3.02`); the fully integrated Q4 errs by `1.2e-02` | `4.82e-04` | `1e-3` |
+| Pure bending past yield and back vs exact, plane-stress Q4 | verification | moment error over `M_p` on the loading branch, finest mesh (order `1.94`; residual stress `2.33e-03 sigma_y`) | `6.17e-04` | `1e-3` |
+| Uniaxial cycle with combined hardening, distorted Hex8 | verification | stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` |
+| **Transient (HHT-alpha) vs the exact discrete solution**, Q4 / Hex8, consistent and lumped mass, 20 runs | verification | displacement difference to every mode integrated exactly; trapezoidal energy balance `<= 2.98e-11` | `3.28e-10` | `1e-9` |
+| **Harmonic response of a rod** vs the exact discrete and continuum solutions, through three resonances | verification | difference to the discrete solution; continuum order `2.00` on the finest pair | `2.94e-10` | `1e-9` |
+| Transient of a rod under a ramped end force vs the exact continuum solution | verification | smallest observed order, `h` and `dt` halved together | `2.004` | `1.9` |
+| **Non-linear oscillators**, finite-strain elastic and elastoplastic, vs exact motion | verification | difference to the scalar HHT-alpha recursion; order to the exact motion `1.94` to `2.04` | `1.74e-11` | `1e-9` |
 
 `make verify` exits non-zero if any tolerance is missed, so it is a usable
 numerical regression gate. Full detail, including what is *not* covered, in
@@ -192,12 +200,15 @@ by node (`make cross-validation`):
 | **Elastoplastic**, small strain: Hex8 cantilever loaded past yield and unloaded, plane-strain Q4 strip, Tet10 punch, Tet10 plate heated past yield and cooled | scikit-fem's own J2 solver / CalculiX `*PLASTIC` | `<= 6.85e-12` / `<= 3.25e-06` | `1e-7` / `1e-5` |
 | **Elastoplastic cycles**, combined hardening: Hex8 with B-bar, plane-stress Q4 | scikit-fem's own J2 solver | `3.24e-14` / `6.45e-15` | `1e-7` |
 | **Elastoplastic, finite kinematics**: Tet10 cantilever deflected a tenth of its span; a beam clamped at both ends driven into membrane action and back, on Hex8 and plane-strain Q4 with E-bar and on plane-stress Q4 | scikit-fem's own finite-kinematics J2 solver | `1.58e-14`; `3.42e-13` / `3.37e-13` / `2.28e-13` | `1e-7` |
+| **Transient**: Hex8 cantilever (HHT `alpha = -0.05`, Rayleigh damping), Tet10 cantilever driven harmonically (trapezoidal rule), plane-strain Q4 strip shaken at its root (lumped mass); every step | scikit-fem, an independent HHT-alpha integration / CalculiX `*DYNAMIC` (the solid elements) | `<= 3.46e-09` / `<= 2.08e-06` | `1e-7` / `1e-5` |
+| **Non-linear transient**: Hex8 cantilever loaded past yield (J2), slender Hex8 strip swinging through large deflection | scikit-fem's own non-linear HHT-alpha integration / CalculiX `*DYNAMIC` with `*PLASTIC`, `NLGEOM` | `2.17e-08` / `4.90e-10`; `6.21e-07` / `1.46e-06` | `1e-7` / `1e-5` |
+| **Harmonic response**: Q4 cantilever plate through four resonances, Hex8 block on a shaken base; every frequency | scikit-fem, a direct complex solve | `1.02e-10` / `8.15e-13` | `1e-7` |
 
 scikit-fem implements the same element formulations independently, so its
 differences are linear-solver round-off: each lies below the round-off scale
 of its system, the condition number of the stiffness matrix times eps (up to
 `1.5e-6` for the slender Tet10 beams). CalculiX's `C3D8`, `C3D4` and
-`C3D10` are the same elements as the Hex8, Tet4 and Tet10, and the `1e-06` to
+`C3D10` are the same elements as the Hex8, Tet4 and Tet10, and the `5e-07` to
 `4e-06` displacement differences are within the six significant digits of
 its `.frd` result file - as close as that format lets one see. For buckling,
 scikit-fem assembles its own geometric stiffness and agrees to `1e-9`;
@@ -215,7 +226,14 @@ with an independent J2 solver written on scikit-fem - small strain and
 finite kinematics, E-bar included - to `7e-12` or better, and with
 CalculiX's `*PLASTIC` to `1.8e-06` to `3.3e-06`; CalculiX's finite-strain
 plasticity, a different model, differs by `1.8e-04` and is recorded as
-informational. Of the 173 comparisons, 168 are judged and pass, and 5 are
+informational. The transient histories - monitors at every step, snapshot
+fields, the final displacement, velocity and acceleration - agree with an
+independent HHT-alpha integration on scikit-fem's matrices to `2.2e-08` or
+better, elastoplastic and large-deflection runs included, and with
+CalculiX's `*DYNAMIC` to `6e-07` to `2.1e-06`; CalculiX's plane elements are
+left out of the dynamics, their `*DYNAMIC` response contradicting CalculiX's
+own `*FREQUENCY`. The harmonic responses agree with a direct complex solve
+to `1.0e-10`. Of the 198 comparisons, 192 are judged and pass, and 6 are
 informational.
 
 ### Benchmarks
@@ -525,7 +543,7 @@ aggregates and starts every solve from the previous design's answer
 | ![Stress-constrained vs unconstrained L-bracket](docs/figures/l_bracket_stress_stress_comparison.png) | ![Solid bracket stress on the surface](docs/figures/bracket_3d_stress_down_limit.png) |
 | The same L-bracket with and without the stress constraint, on one colour scale with the limit marked | Von Mises, principal and normal stress on the surface of the optimised solid bracket |
 | ![Cross-validation](docs/figures/cross_validation.png) | ![Solid bracket mode shapes](docs/figures/bracket_3d_modes_topology.png) |
-| Nodal displacements against CalculiX and scikit-fem on thirty-one problems - pressure, body and thermal loads, conducted temperatures, large-deflection and elastoplastic states included - with each tolerance and the `.frd` rounding floor | Mode shapes of the interpreted solid structure |
+| Nodal displacements against CalculiX and scikit-fem on thirty-eight problems - pressure, body and thermal loads, conducted temperatures, large-deflection and elastoplastic states, transient histories and harmonic responses included - with each tolerance and the `.frd` rounding floor | Mode shapes of the interpreted solid structure |
 | ![Gmsh lug bracket](docs/figures/lug_bracket_2d_topology.png) | ![Engine mount from an Abaqus file](docs/figures/engine_mount_3d_topology.png) |
 | A lug bracket meshed in Gmsh (20 336 triangles), optimised with the Heaviside projection | An engine mount read from an Abaqus / CalculiX file (39 936 tetrahedra), solved with multigrid CG |
 | ![Projection comparison](docs/figures/mbb_beam_projection.png) | ![Solver scaling](docs/figures/solver_scaling.png) |
@@ -540,6 +558,8 @@ aggregates and starts every solve from the previous design's answer
 | A shallow arch's snap-through: arc length and displacement control on one path, its unstable stretch, and where load control stops | A Tet10 cantilever at large rotation against Euler's elastica, and its error converging to the continuum-beam gap |
 | ![Plastic collapse of a thick tube](docs/figures/verify_plastic_cylinder.png) | ![Elastoplastic bending](docs/figures/verify_plastic_bending.png) |
 | A thick tube driven to plastic collapse: the plateau, the collapse pressure converging to the exact limit load with mean dilatation (and locking without it), and the fully plastic stress field | Pure bending past yield and back: the moment-curvature relation, its second-order convergence, and the residual stress after unloading |
+| ![Rod dynamics](docs/figures/verify_rod_dynamics.png) | ![Non-linear oscillators](docs/figures/verify_nonlinear_oscillator.png) |
+| A fixed-free rod: the damped harmonic response through three resonances against the exact continuum, and the harmonic and transient responses converging at second order | One element in uniaxial strain under a sudden load: finite-strain elastic and elastoplastic motion against the exact motion, second-order convergence, and the energy balance tending to the plastic dissipation |
 
 Further figures in [`docs/figures/`](docs/figures/): deformed shapes,
 displacement and stress fields, reaction and equilibrium checks, mode shapes,
@@ -804,8 +824,23 @@ variants, and the Gmsh lug bracket and engine mount),
 in linear and in curved quadratic tetrahedra, with how they were generated),
 [`configs/studies/`](configs/studies/) (the design-study baseline),
 [`configs/verification/`](configs/verification/) (the static, modal,
-buckling, load and large-deflection decks the cross-validation uses, on all
-five element types).
+buckling, load, large-deflection, elastoplastic, transient and
+frequency-response decks the cross-validation uses, on all five element
+types).
+
+A transient or harmonic analysis is one more block:
+
+```json
+"transient": { "enabled": true, "time_step": 1e-4, "end_time": 0.03, "alpha": -0.05,
+               "damping": { "mass": 20.0, "stiffness": 1e-5 },
+               "amplitude": { "type": "table", "times": [0, 0.004], "values": [0, 1] },
+               "snapshot_every": 30,
+               "monitors": [ { "name": "tip_uy", "component": "y",
+                               "region": { "box": { "xmin": 1.0 } } } ] },
+"frequency_response": { "enabled": true,
+               "frequencies": { "start": 10, "end": 3000, "count": 120, "spacing": "log" },
+               "damping": { "structural": 0.02 } }
+```
 
 ## Output
 
@@ -838,6 +873,16 @@ results/<case>/
   nonlinear_{displacement,reactions,stress}_<lc>.csv, nonlinear_<lc>.vtk
                             the final state: displacements, reactions, Cauchy and
                             second Piola-Kirchhoff stresses, equivalent plastic strain
+  transient_<lc>.csv        (transient runs) one row per step: time, energies and their
+                            balance, Newton iterations, plastic strain, monitors
+  transient_{state,reactions}_<lc>.csv, transient_<lc>_<k>.vtk, transient_<lc>.vtk.series
+                            the final displacement, velocity and acceleration, and the
+                            snapshot series with its ParaView file-series index of times
+  calculix_<lc>_dynamic.inp the transient as a CalculiX *DYNAMIC, DIRECT, ALPHA step
+  frequency_response_<lc>.csv, frequency_response_field_<lc>_<k>.csv,
+  frequency_response_<lc>_<k>.vtk, frequency_response_<lc>.vtk.series
+                            (harmonic runs) the complex monitors per frequency, and the
+                            complex fields at the snapshot frequencies
 ```
 
 `summary.json` is the single source of truth for every number quoted in the
@@ -899,12 +944,16 @@ Things this project deliberately does, because the opposite is easy and wrong:
 ## Assumptions and limitations
 
 The short version: plane or solid continuum only (no plates, shells or
-beams), no contact and no dynamics; static analysis linear, or non-linear in
+beams), no contact; static analysis linear, or non-linear in
 `sparlab_solve` - large deflection, and rate-independent J2 plasticity at
 small strain, with large rotation (no finite-strain plasticity, creep or
 damage) - with no branch switching at a bifurcation of a perfect structure
-and no sequences of different loads within a case, while modal, linear
-(bifurcation) buckling and the optimisation stay linear and elastic; linear
+and no sequences of different loads within a case; dynamics by implicit
+direct integration with a constant step and one amplitude per case (no
+explicit integration, modal superposition, response spectra or random
+vibration) and a linear harmonic response with Rayleigh and structural
+damping, while modal, linear (bifurcation) buckling and the optimisation stay
+linear and elastic; linear
 thermoelasticity with a given or steadily conducted temperature (the
 finite-strain split in the non-linear analysis), self-weight,
 body forces and steady rotation (not yet in the topology optimiser), linear
@@ -916,8 +965,9 @@ an aggregated relaxed stress and an aggregated SIMP buckling load (no
 frequency or displacement constraints), the robust formulation's length
 scale is measured rather than stated, the overhang rule needs a structured
 grid, one machine and no distributed memory, cross-validation of
-displacements on thirty-one problems, of buckling load factors on three,
-of large-deflection states on four and of elastoplastic states on ten, no
+displacements on thirty-eight problems, of buckling load factors on three,
+of large-deflection states on four, of elastoplastic states on ten, of
+transient histories on five and of harmonic responses on two, no
 comparison against experiment.
 
 The long version, with what it would take to lift each item, is in
@@ -951,13 +1001,16 @@ treating any number here as a design answer.
   if any documented tolerance is missed, uploading the summary either way;
 * **benchmark** runs the static, modal and buckling analyses on all five
   element types and both Gmsh parts, the decks of the pressure, volume and
-  thermal loads, the four large-deflection decks and the ten elastoplastic
-  decks, the scikit-fem half of the cross-validation on all thirty-one
-  problems - displacements with SparLab's loads and with the loads
-  integrated by scikit-fem, the buckling load factors of the three columns,
-  the final states of the dead-load large-deflection cases against
-  scikit-fem's own total Lagrangian solver, and the elastoplastic states,
-  small strain and finite, against its own J2 solver -
+  thermal loads, the four large-deflection decks, the ten elastoplastic
+  decks and the seven transient and frequency-response decks, the
+  scikit-fem half of the cross-validation on all thirty-eight problems -
+  displacements with SparLab's loads and with the loads integrated by
+  scikit-fem, the buckling load factors of the three columns, the final
+  states of the dead-load large-deflection cases against scikit-fem's own
+  total Lagrangian solver, the elastoplastic states, small strain and
+  finite, against its own J2 solver, and the transient histories and
+  harmonic responses against an HHT-alpha integration in the acceleration
+  form and a direct complex solve on scikit-fem's matrices -
   (which fails the build on a disagreement), reduced topology optimisations covering OC, MMA with the
   stress constraint, the Hex8 path, the projection with and without, the
   multigrid solver, the two parts read from mesh files, the buckling

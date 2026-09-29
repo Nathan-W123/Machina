@@ -46,9 +46,10 @@ method through limit points. What it does not do:
   pattern, and fully integrated Q4 and Hex8 lock without the mean
   dilatation that is their default - a locked collapse load comes out high,
   which is unconservative;
-* no contact, and no dynamics - the path is quasi-static, and a
-  snap-through that the arc-length method follows is a sequence of
-  equilibria, not the dynamic jump a real structure would make;
+* no contact; the static path is quasi-static, and a snap-through that the
+  arc-length method follows is a sequence of equilibria, not the dynamic jump
+  a real structure would make - the non-linear transient (below) integrates
+  that jump, with its own limits;
 * at a bifurcation of a perfect structure there is no branch switching: load
   control stops there, and the arc-length method stays on the fundamental
   path. A post-buckling analysis needs an imperfection built into the mesh
@@ -81,9 +82,40 @@ meshed - an imperfect mesh included - and brackets the first loss of
 stability under load control, but not a post-buckling branch that starts at
 a bifurcation of the perfect geometry.
 
-**Static and undamped free vibration only.** No transient response, no damping,
-no forced response, no fatigue. A natural frequency here is the undamped
-eigenvalue of the constrained model.
+**Dynamics: direct integration with a constant step, and the direct harmonic
+response.** The transient analysis integrates `M a + C v + K u = A(t) f` (or
+its non-linear counterpart) by HHT-alpha with a constant step, and the
+harmonic response solves the complex dynamic stiffness at every frequency.
+What they do not do:
+
+* one amplitude scales every load and prescribed displacement of a case: no
+  loads that follow different time histories within a case, no initial
+  velocity field, and no load applied at a moving position;
+* the step is constant and chosen by the user: no automatic step control by
+  an error estimate (a failing Newton step is halved, and the halves grow
+  back), and no explicit (central-difference) integration for short
+  impact-like events, which the implicit method can only follow with a small
+  step at a high cost per step;
+* damping is Rayleigh's (and, for the harmonic response, a structural loss
+  factor): no modal damping ratios, no discrete dampers, no frequency-dependent
+  or viscoelastic material, and in a non-linear run the Rayleigh stiffness
+  term uses the linear elastic stiffness, not the tangent;
+* the non-linear transient starts at rest (a preloaded start is a static
+  analysis of its own) and has the non-linear statics' limits (section
+  above); the trapezoidal rule conserves the energy of a non-linear system
+  only to `O(dt^2)`, and the run warns when the balance shows energy created
+  beyond 1 % - it does not bound the error of the motion itself;
+* no modal superposition (neither for the transient nor for the harmonic
+  response), no response spectrum, random vibration or power spectral
+  densities, no rotor dynamics (Coriolis and gyroscopic terms), no
+  fluid-structure coupling, no wave-absorbing boundaries, and no fatigue;
+* the harmonic response is linear: the load case's linear stiffness, no
+  prestress from a static preload (the geometric stiffness of a preloaded
+  structure is not added), and no harmonic balance for a non-linear
+  structure;
+* a natural frequency of the modal analysis is the undamped eigenvalue of the
+  constrained model; the dynamic analyses are not coupled to the topology
+  optimisation (`sparlab_topopt` refuses their blocks).
 
 **Body loads: self-weight, force densities and steady rotation.** Gravity,
 uniform body force densities on element regions and the centrifugal load of a
@@ -434,31 +466,43 @@ and Hex8, and to 1e-7 through the Heaviside projection on Q4 and Tet4; the
 buckling constraint's gradient to 1.7e-6 and the overhang filter's to
 2.8e-6. Mass is conserved to 5e-14. A homogeneous large deformation on
 distorted meshes is reproduced to 1e-9 m, and the tube at finite strain
-converges at every element's order to its exact solution. Linear static
-displacements are cross-validated node by node against two independent
-codes on thirty-one problems with fifty-six load cases, covering all five
-element types and both mesh-file formats; so are buckling load factors on
-three columns, large-deflection states on four decks and elastoplastic
-states on ten. scikit-fem agrees to solver round-off, displacements and
+converges at every element's order to its exact solution. A transient run
+equals the exact solution of its discrete equations (every mode integrated
+exactly, in extended precision) to 3.3e-10, a rod's harmonic response its
+exact discrete solution to 2.9e-10, and the rod's harmonic and transient
+responses and a one-element oscillator's finite-strain elastic and
+elastoplastic motion converge at second order to their exact solutions.
+Linear static displacements are cross-validated node by node against two
+independent codes on thirty-eight problems with sixty-three load cases,
+covering all five element types and both mesh-file formats; so are buckling
+load factors on three columns, large-deflection states on four decks,
+elastoplastic states on ten, transient histories on five and harmonic
+responses on two. scikit-fem agrees to solver round-off, displacements and
 load factors alike: every linear difference lies below the round-off scale
 of its system (its condition number times eps), 1.5e-10 or better except on
 the three worst-conditioned systems - a plane-strain strip and two slender
 Tet10 cantilevers, 1.4e-9 to 2.2e-8; scikit-fem's own total Lagrangian
 solver agrees with SparLab's non-linear states to 1e-14, and its own J2
 solver with the elastoplastic states, small strain and finite, E-bar
-included, to 7e-12. CalculiX's displacements agree to the rounding of its
-own result file, 4.3e-6 or better, linear, `NLGEOM` and `*PLASTIC` alike,
-wherever the two codes solve the same discrete problem; its plane-stress
+included, to 7e-12; an HHT-alpha integration and a direct complex solve on
+its matrices agree with the transient histories to 2.2e-8 (the final
+acceleration of an elastoplastic run; its displacements to 1.2e-12) and
+with the harmonic responses to 1.0e-10. CalculiX's displacements agree to
+the rounding of its own result file, 4.3e-6 or better, linear, `NLGEOM`,
+`*PLASTIC` and `*DYNAMIC` alike, wherever the two codes solve the same
+discrete problem; its plane-stress
 comparisons at `nu != 0` and its finite-strain plasticity are recorded but
-not judged, and its kinematic hardening is not compared (it does not
-reproduce Prager's rule); its buckling factors differ by up to 8.3e-5 for a
-reason not identified.
+not judged, its kinematic hardening is not compared (it does not
+reproduce Prager's rule), and neither are its plane elements in dynamics
+(their `*DYNAMIC` response contradicts CalculiX's own `*FREQUENCY`); its
+buckling factors differ by up to 8.3e-5 for a reason not identified.
 Validation against independent theory covers exactly five references:
 Euler-Bernoulli and Timoshenko cantilever deflection, Euler-Bernoulli
 bending frequencies, fixed-free rod axial frequencies, the Euler-Engesser
 buckling load of a clamped column, and Euler's elastica. Stresses,
-frequencies, non-linear load paths and optimised designs are not compared
-with another code, and there is **no comparison against experiment**.
+frequencies, non-linear static load paths and optimised designs are not
+compared with another code, and there is **no comparison against
+experiment**.
 
 **The MBB compliance is not compared to a published number.** SparLab reports
 what it computes (218.8 J with the density filter, 203.2 J with the sensitivity
