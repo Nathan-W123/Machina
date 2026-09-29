@@ -19,7 +19,12 @@ raised again without re-running unless `retry_failed` is set, so a
 deterministic failure costs its runtime once.
 
 Each run is a subprocess with OMP_NUM_THREADS set to the setup's `threads`
-(1 by default, so a pool of N workers uses N cores).
+(1 by default, so a pool of N workers uses N cores), and with
+`--strict-config`: a deck key sparlab_form does not read is an error (exit
+2), never a default taken silently. sparlab_form exits with 0 when every step
+completed, 3 when one stopped (`summary.json` says why), 2 for a
+configuration error and 4 for an I/O error (docs/forming.md, section 3);
+anything but 0 is a FormingError.
 """
 
 from __future__ import annotations
@@ -42,6 +47,9 @@ from .results import FormingResult, load_result
 from .setup import FormingSetup
 
 OUTPUT_DIR = "output"
+#: sparlab_form's exit statuses (docs/forming.md, section 3).
+EXIT_CODES = {0: "completed", 2: "configuration error", 3: "a step stopped",
+              4: "I/O error"}
 LOG_FILE = "sparlab_form.log"
 _VERSION_CACHE: Dict[Tuple[str, float], str] = {}
 
@@ -93,12 +101,13 @@ def run_deck(deck_dir: PathLike, output_dir: Optional[PathLike] = None, *,
              provenance: Optional[Dict[str, Any]] = None) -> FormingResult:
     """Run sparlab_form on `deck_dir/deck.json` and load the result.
 
-    The command is ``<executable> --config deck.json --output <output_dir>``
-    (default `deck_dir/output`), run in `deck_dir` with OMP_NUM_THREADS =
-    `threads`; stdout and stderr go to `deck_dir/sparlab_form.log`. A non-zero
-    exit, a timeout [s] or an unreadable result raises FormingError with the
-    tail of the log. `run.json` in `deck_dir` records the command, exit code
-    and runtime.
+    The command is ``<executable> --config deck.json --output <output_dir>
+    --strict-config`` (default `deck_dir/output`), run in `deck_dir` with
+    OMP_NUM_THREADS = `threads`; stdout and stderr go to
+    `deck_dir/sparlab_form.log`. A non-zero exit, a timeout [s] or an
+    unreadable result raises FormingError with the tail of the log (and, for
+    a run that stopped, the reason from summary.json). `run.json` in
+    `deck_dir` records the command, exit code and runtime.
     """
     d = Path(deck_dir).resolve()
     if not (d / DECK_FILE).is_file():
@@ -106,7 +115,7 @@ def run_deck(deck_dir: PathLike, output_dir: Optional[PathLike] = None, *,
     out = Path(output_dir).resolve() if output_dir is not None else d / OUTPUT_DIR
     out.mkdir(parents=True, exist_ok=True)
     exe = str(Path(executable).resolve())
-    cmd = [exe, "--config", str(d / DECK_FILE), "--output", str(out)]
+    cmd = [exe, "--config", str(d / DECK_FILE), "--output", str(out), "--strict-config"]
     env = dict(os.environ)
     env["OMP_NUM_THREADS"] = str(int(threads))
     log = d / LOG_FILE
@@ -128,9 +137,18 @@ def run_deck(deck_dir: PathLike, output_dir: Optional[PathLike] = None, *,
         raise FormingError(f"sparlab_form could not be started: {exc}", record) from exc
     record["runtime_s"] = time.perf_counter() - start
     if proc.returncode != 0:
-        record.update(reason=f"exit code {proc.returncode}", log_tail=_tail(log))
+        meaning = EXIT_CODES.get(proc.returncode, "failed")
+        record.update(reason=f"exit code {proc.returncode} ({meaning})", log_tail=_tail(log))
+        if (out / "summary.json").is_file():
+            try:
+                termination = read_json(out / "summary.json").get("termination")
+            except PrecompError:
+                termination = None
+            if termination:
+                record["termination"] = str(termination)
+                record["reason"] += f": {termination}"
         write_json(d / "run.json", record)
-        raise FormingError(f"sparlab_form exited with {proc.returncode} on {d}:\n"
+        raise FormingError(f"sparlab_form exited with {proc.returncode} ({meaning}) on {d}:\n"
                            f"{record['log_tail']}", record)
     write_json(d / "run.json", record)
     try:

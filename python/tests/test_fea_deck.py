@@ -15,24 +15,57 @@ from precomp.materials import get_material
 
 
 def test_deck_document_matches_the_contract(small_setup):
+    """The keys of docs/forming.md, section 2 (the real executable checks them
+    with --strict-config in test_integration_sparlab.py)."""
     doc = deck_document(small_setup)
+    assert set(doc) == {"name", "description", "units", "mesh", "material", "model", "forming"}
     m = doc["mesh"]
     assert m["type"] == "structured_hex"
     assert (m["nx"], m["ny"], m["nz"]) == (48, 48, 1)
     assert m["lx"] == pytest.approx(0.12) and m["x0"] == pytest.approx(-0.06)
     assert m["z0"] == -small_setup.thickness and m["lz"] == small_setup.thickness
     assert doc["material"] == small_setup.material.to_sparlab()
-    assert doc["nonlinear"]["enabled"] is True
-    tool = doc["forming"]["tools"][0]
+    fm = doc["forming"]
+    assert fm["kinematics"] == "finite_logarithmic"            # the large-strain default
+    assert set(fm) == {"kinematics", "tools", "steps", "output"}
+    tool = fm["tools"][0]
+    assert set(tool) == {"name", "shape", "radius", "surface", "friction", "trajectory"}
     assert tool["shape"] == "sphere" and tool["radius"] == small_setup.tool_radius
     assert tool["trajectory"] == {"file": "toolpath.csv"}
     assert tool["surface"]["box"]["zmin"] == 0.0
-    steps = doc["forming"]["steps"]
+    steps = fm["steps"]
     assert [s["name"] for s in steps] == ["form", "unload", "release"]
     assert [s["type"] for s in steps] == ["form", "release", "release"]
     assert steps[0]["tools"] == ["tool"] and steps[1]["tools"] == []
+    assert steps[0]["time"] == [0.0, 1.0]
+    assert steps[0]["max_tool_travel"] == small_setup.max_tool_travel
+    for s in steps:
+        assert "increments" not in s
+        for bc in s["boundary_conditions"]:
+            assert bc["mode"] == "hold" and "value" not in bc
     assert steps[0]["boundary_conditions"][0]["fix"] == ["x", "y", "z"]
     json.dumps(doc, allow_nan=False)
+
+
+def test_contact_and_solver_settings_go_where_sparlab_form_reads_them(small_setup):
+    s = small_setup.replace(contact={"penalty": 20.0, "tangential_penalty": 0.5},
+                            solver={"max_iterations": 40, "residual_tolerance": 1e-7,
+                                    "friction_tangent": "symmetric", "solver": "eigen"},
+                            kinematics="finite")
+    fm = deck_document(s)["forming"]
+    tool = fm["tools"][0]
+    assert tool["penalty"] == 20.0 and tool["tangential_penalty"] == 0.5
+    assert fm["newton"] == {"max_iterations": 40, "residual_tolerance": 1e-7}
+    assert fm["friction_tangent"] == "symmetric" and fm["solver"] == "eigen"
+    assert fm["kinematics"] == "finite"
+    with pytest.raises(ValueError, match="contact: unknown keys"):
+        small_setup.replace(contact={"stiffness": 1e12})
+    with pytest.raises(ValueError, match="solver: unknown keys"):
+        small_setup.replace(solver={"steps": 10})
+    with pytest.raises(ValueError, match="penalty"):
+        small_setup.replace(contact={"penalty": 0.0})
+    with pytest.raises(ValueError, match="kinematics"):
+        small_setup.replace(kinematics="neo_hookean")
 
 
 def test_321_support_removes_exactly_the_six_rigid_modes(small_setup):
@@ -78,7 +111,7 @@ def test_a_path_reaching_the_clamp_is_refused(small_setup):
 
 
 def test_setup_round_trip_validation_and_executable_resolution(tmp_path, monkeypatch):
-    s = FormingSetup("DC04", thickness=0.8e-3, contact={"penalty": 1e12})
+    s = FormingSetup("DC04", thickness=0.8e-3, contact={"penalty": 20.0})
     back = FormingSetup.from_dict(json.loads(json.dumps(s.to_dict())))
     assert back == s and back.material == get_material("DC04")
     assert "executable" not in s.physics_dict()

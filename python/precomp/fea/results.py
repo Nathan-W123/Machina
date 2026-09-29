@@ -1,28 +1,33 @@
 """Reader for the result directory of a sparlab_form run.
 
-The contract (design, "C++ contract"; `docs/precomp.md`, "Result files"):
+The contract is `docs/forming.md`, section 3 ("Output contract"):
 
-* `summary.json` - steps, completion, iterations, runtime, warnings;
-* `mesh.json` - optional here (the node tables carry the reference
-  coordinates);
-* per step k with name N: `step_<k>_<N>_nodes.csv` with the columns
-  `node,X,Y,Z,ux,uy,uz` (reference coordinates and displacement, m) and,
-  optionally, `step_<k>_<N>_elements.csv` with `element,eq_plastic_strain,
-  von_mises` ([-], Pa);
-* `tool_forces.csv` - `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes`
-  (tool centre [m], force [N], nodes in contact).
+* `summary.json` - `completed`, `termination`, `runtime_s`, `timing`,
+  `analysis`, `steps` (per step: `name`, `type`, `completed`,
+  `files_stem`, ...), `tools`, `mesh`, `warnings`, `files`, `provenance`;
+* `config.json` (the deck) and `mesh.json`;
+* per completed step: `<files_stem>_nodes.csv` with the columns
+  `node,X,Y,Z,ux,uy,uz` (reference coordinates and displacement [m]) and
+  `<files_stem>_elements.csv` with `element,eq_plastic_strain,von_mises_Pa`
+  ([-], Pa). `files_stem` is `step_<k>_<s>`, k counting the steps from 1 and
+  s the step name with every character other than letters, digits, `-` and
+  `_` replaced by `_`; the loader takes it from the summary, so snapshot
+  files (`<files_stem>_inc_<i>_nodes.csv`) are never mistaken for steps;
+* `tool_forces.csv` - `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,
+  max_penetration_m`: per converged increment and active tool, the step
+  number (from 1), the pseudo-time, the tool's reference point [m], the
+  force [N], the nodes in contact and the largest penetration [m].
 
-The step files are discovered by name and ordered by k, so the loader does not
-depend on whether k counts from 0 or 1; N is the step name sanitised as the
-C++ ResultWriter does. Every table is validated (columns present, no missing
-values, unique node ids, the same nodes and reference coordinates in every
-step), and a violation raises PrecompError naming the file. Nothing is
-recomputed from physics: the formed surface is the deformed top surface of
-the mesh, interpolated linearly on its own triangulation.
+**Force sign.** `fx, fy, fz` are the force the sheet exerts ON THE TOOL:
+fz > 0 while the tool pushes down into the sheet. That is the load the
+robot carries (`precomp.robot.forces_on_path` takes it as it is).
 
-The sign of the forces (`fx, fy, fz`) is whatever sparlab_form writes; this
-package takes it to be the force the tool exerts on the sheet (fz < 0 while
-pushing down). `precomp.robot` depends on that and says so.
+Every table is validated (columns present, no missing values, unique node
+ids, the same nodes and reference coordinates in every step, a node table
+for every completed step of the summary), and a violation raises
+PrecompError naming the file. Nothing is recomputed from physics: the
+formed surface is the deformed top surface of the mesh, interpolated
+linearly on its own triangulation.
 """
 
 from __future__ import annotations
@@ -40,13 +45,13 @@ from ..geometry.heightmap import Grid, HeightMap, _fill_nearest
 from ..geometry.stl import raycast_top
 
 NODE_COLUMNS = ["node", "X", "Y", "Z", "ux", "uy", "uz"]
-ELEMENT_COLUMNS = ["element", "eq_plastic_strain", "von_mises"]
+ELEMENT_COLUMNS = ["element", "eq_plastic_strain", "von_mises_Pa"]
 FORCE_COLUMNS = ["step", "increment", "t", "tool", "cx", "cy", "cz", "fx", "fy", "fz",
-                 "active_nodes"]
-_STEP_RE = re.compile(r"^step_(\d+)_(.+)_nodes\.csv$")
+                 "active_nodes", "max_penetration_m"]
+_STEM_RE = re.compile(r"^step_(\d+)_[A-Za-z0-9_-]+$")
 
 
-def _read_table(path: Path, columns: List[str]) -> pd.DataFrame:
+def _read_table(path: Path, columns: List[str], allow_empty: bool = False) -> pd.DataFrame:
     try:
         frame = pd.read_csv(path)
     except Exception as exc:  # pandas raises several types for malformed files
@@ -54,7 +59,7 @@ def _read_table(path: Path, columns: List[str]) -> pd.DataFrame:
     missing = [c for c in columns if c not in frame.columns]
     if missing:
         raise PrecompError(f"{path}: missing columns {missing} (found {list(frame.columns)})")
-    if frame.empty:
+    if frame.empty and not allow_empty:
         raise PrecompError(f"{path} contains no rows")
     numeric = [c for c in columns if c != "tool"]
     if frame[numeric].isna().any().any():
@@ -65,12 +70,17 @@ def _read_table(path: Path, columns: List[str]) -> pd.DataFrame:
 
 @dataclass
 class StepResult:
-    """Nodal (and optionally element) results at the end of one step."""
+    """Nodal (and optionally element) results at the end of one step.
+
+    index : the step's number k in the file names (from 1); name : its name;
+    info : its entry in summary.json's `steps`.
+    """
 
     index: int
     name: str
     nodes: pd.DataFrame
     elements: Optional[pd.DataFrame] = None
+    info: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def reference(self) -> np.ndarray:
@@ -118,6 +128,11 @@ class FormingResult:
     def completed(self) -> bool:
         """The summary's completion flag (False when it is absent)."""
         return bool(self.summary.get("completed", False))
+
+    @property
+    def termination(self) -> str:
+        """Why the run ended (summary.json's `termination`)."""
+        return str(self.summary.get("termination", ""))
 
     def step(self, which: Union[int, str] = -1) -> StepResult:
         """A step by position in `steps` (negative counts from the end) or by name."""
@@ -225,12 +240,13 @@ class FormingResult:
                                                "step": s.name})
 
     def plastic_strain(self, step: Union[int, str] = -1) -> Optional[pd.DataFrame]:
-        """The element table of `step` (eq_plastic_strain [-], von_mises [Pa]) or None."""
+        """The element table of `step` (eq_plastic_strain [-], von_mises_Pa [Pa]) or None."""
         return self.step(step).elements
 
     def forming_forces(self, tool: Optional[str] = None) -> pd.DataFrame:
         """The tool force history (tool_forces.csv), optionally for one tool,
-        with an added column `f` = |(fx, fy, fz)| [N]."""
+        with an added column `f` = |(fx, fy, fz)| [N]. The forces are those
+        the sheet exerts on the tool (fz > 0 while pushing down)."""
         if self.tool_forces is None:
             raise PrecompError(f"{self.directory}: tool_forces.csv is absent")
         frame = self.tool_forces
@@ -267,32 +283,47 @@ def _interpolate_structured(xy: np.ndarray, values: np.ndarray, grid: Grid,
     return z, hit
 
 
+def _step_entries(d: Path, summary: Dict[str, Any]) -> List[Tuple[int, str, str, Dict]]:
+    """(k, name, files_stem, entry) of every completed step of the summary."""
+    steps = summary.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise PrecompError(f"{d / 'summary.json'}: no 'steps' list")
+    out = []
+    for i, entry in enumerate(steps):
+        if not isinstance(entry, dict) or "name" not in entry or "files_stem" not in entry:
+            raise PrecompError(f"{d / 'summary.json'}: steps[{i}] lacks 'name' or "
+                               "'files_stem'")
+        if not entry.get("completed", False):
+            continue                      # a stopped step has no files
+        stem = str(entry["files_stem"])
+        m = _STEM_RE.match(stem)
+        if not m or stem != f"step_{i + 1}_{safe_name(str(entry['name']))}":
+            raise PrecompError(f"{d / 'summary.json'}: steps[{i}] has files_stem {stem!r}, "
+                               f"not step_{i + 1}_<name>")
+        out.append((int(m.group(1)), str(entry["name"]), stem, entry))
+    return out
+
+
 def load_result(directory: PathLike, provenance: Optional[Dict[str, Any]] = None
                 ) -> FormingResult:
-    """Load and validate a sparlab_form result directory (see the module docstring)."""
+    """Load and validate a sparlab_form result directory (see the module docstring).
+
+    The steps are the completed steps of summary.json, in order; each must
+    have its node table. Raises PrecompError when none is completed.
+    """
     d = Path(directory)
     if not d.is_dir():
         raise PrecompError(f"{d} is not a directory")
     summary = read_json(d / "summary.json")
-    found = []
-    for p in d.iterdir():
-        m = _STEP_RE.match(p.name)
-        if m:
-            found.append((int(m.group(1)), m.group(2), p))
-    if not found:
-        raise PrecompError(f"{d}: no step_<k>_<name>_nodes.csv files")
-    found.sort()
-    ks = [k for k, _, _ in found]
-    if len(set(ks)) != len(ks):
-        raise PrecompError(f"{d}: two node tables share a step number")
-    declared = [safe_name(str(s.get("name", ""))) for s in summary.get("steps", [])
-                if isinstance(s, dict)]
+    entries = _step_entries(d, summary)
+    if not entries:
+        raise PrecompError(f"{d}: no step completed ({summary.get('termination', '')})")
     steps = []
     ref0 = None
-    for k, name, path in found:
-        if declared and name not in declared:
-            raise PrecompError(f"{path}: step {name!r} is not listed in summary.json "
-                               f"(steps {declared})")
+    for k, name, stem, entry in entries:
+        path = d / f"{stem}_nodes.csv"
+        if not path.is_file():
+            raise PrecompError(f"{path}: the node table of completed step {name!r} is missing")
         nodes = _read_table(path, NODE_COLUMNS)[NODE_COLUMNS]
         nodes = nodes.sort_values("node").reset_index(drop=True)
         if nodes["node"].duplicated().any():
@@ -307,12 +338,12 @@ def load_result(directory: PathLike, provenance: Optional[Dict[str, Any]] = None
             if np.abs(ref - ref0[1]).max() > 1e-9 * scale:
                 raise PrecompError(f"{path}: the reference coordinates differ from the "
                                    "first step's")
-        epath = path.with_name(f"step_{path.name[5:-len('_nodes.csv')]}_elements.csv")
+        epath = d / f"{stem}_elements.csv"
         elements = _read_table(epath, ELEMENT_COLUMNS) if epath.is_file() else None
-        steps.append(StepResult(k, name, nodes, elements))
+        steps.append(StepResult(k, name, nodes, elements, dict(entry)))
     forces = None
     fpath = d / "tool_forces.csv"
     if fpath.is_file():
-        forces = _read_table(fpath, FORCE_COLUMNS)
+        forces = _read_table(fpath, FORCE_COLUMNS, allow_empty=True)
     mesh = read_json(d / "mesh.json") if (d / "mesh.json").is_file() else None
     return FormingResult(d, summary, steps, forces, mesh, dict(provenance or {}))

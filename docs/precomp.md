@@ -250,40 +250,61 @@ lengths, levels, height range and the time at that feed.
 
 | File | Content | In the hash |
 |------|---------|:-----------:|
-| `deck.json` | the SparLab deck: `mesh`, `material`, `model`, `boundary_conditions`, `nonlinear`, `forming`, `output` | yes |
-| `toolpath.csv` | tool-centre trajectory `t,x,y,z`, t in [0, 1] | yes |
+| `deck.json` | the SparLab deck: `mesh`, `material`, `model`, `forming` | yes |
+| `toolpath.csv` | tool-centre trajectory `t,x,y,z`, t from 0 to 1 | yes |
 | `commanded.npz` | the commanded surface (provenance) | no |
 | `precomp_deck.json` | the setup, grid, tool-path summary, package version (provenance) | no |
 
 The mesh is `structured_hex` (or `structured_tet`) of the blank
 [-L/2, L/2]^2 x [-t, 0], `round(blank_size / element_size)` elements per side
 (L is `blank_size` rounded to whole elements) and `layers` through the
-thickness. The clamp fixes x, y, z of every node within `clamp_margin` of the
-blank edges. The `forming` object follows the contract of the C++ side
-(`docs/forming.md` once written):
+thickness. The `forming` block follows `docs/forming.md` (section 2), and the
+deck has nothing else: no top-level `boundary_conditions` (every step lists
+its own), no `load_cases` (the analysis applies none) and no `nonlinear`
+block (sparlab_form does not read one - kinematics and Newton settings live
+in `forming`):
 
 ```json
 "forming": {
+  "kinematics": "finite_logarithmic",
   "tools": [{"name": "tool", "shape": "sphere", "radius": 0.005,
              "surface": {"name": "tool_side", "box": {"zmin": 0.0, "xmin": -0.08, "xmax": 0.08,
                                                      "ymin": -0.08, "ymax": 0.08}},
-             "friction": 0.1, "contact": {}, "trajectory": {"file": "toolpath.csv"}}],
+             "friction": 0.1, "trajectory": {"file": "toolpath.csv"}}],
   "steps": [
-    {"name": "form",    "type": "form",    "tools": ["tool"], "boundary_conditions": [<clamp>],
-     "increments": {"max_tool_travel": 0.001}},
+    {"name": "form",    "type": "form",    "tools": ["tool"], "time": [0.0, 0.998],
+     "max_tool_travel": 0.001,             "boundary_conditions": [<clamp>]},
     {"name": "unload",  "type": "release", "tools": [],       "boundary_conditions": [<clamp>]},
     {"name": "release", "type": "release", "tools": [],       "boundary_conditions": [<3-2-1>]}
-  ]
+  ],
+  "output": {"vtk": true, "snapshots": "steps"}
 }
 ```
 
-With `release: "321"` the last step replaces the clamp by a statically
-determinate support on three top nodes of the former clamp - x, y, z at
-(-a, -a), y, z at (a, -a), z at (-a, a) - six constraints that remove the
-rigid-body modes and restrain no springback. With `"clamped_only"` there is
-no third step. `contact` and `solver` pass through to the tool's `contact`
-object and the `nonlinear` block. `build_deck` refuses a tool path whose tool
-would reach the clamped frame.
+The clamp holds x, y, z of every node within `clamp_margin` of the blank
+edges. "form" runs the trajectory from t = 0 to its last point in contact
+with the part (the final retract is not simulated); "unload" removes the
+tool and ramps its force out with the clamp still on - the springback in the
+fixture (sparlab_form warns that the clamp holds reactions: it is not
+statically determinate, which is the point); with `release: "321"`,
+"release" replaces the clamp by a statically determinate support on three
+top nodes of the former clamp - x, y, z at (-a, -a), y, z at (a, -a), z at
+(-a, a) - six constraints that remove the rigid-body modes and restrain no
+springback. With `"clamped_only"` there is no third step. Every step
+constraint is `"mode": "hold"`: it keeps its DOFs where the step finds them,
+so the support nodes stay where the clamp held them and the released part
+keeps its place on the fixture.
+
+`kinematics` is `"finite_logarithmic"` by default - the large-strain
+formulation, whose plastic return works in the logarithmic strain, since
+SPIF reaches plastic strains of order one - or `"finite"` / `"small_strain"`.
+`contact` sets the tool's `penalty` (the scale s of kappa = s E / h, default
+10) and `tangential_penalty` (default 1); `solver` sets the keys of
+`forming.newton` (`max_iterations`, `residual_tolerance`,
+`displacement_tolerance`, `line_search`, `max_cuts`, `max_increments`) and
+`friction_tangent`, `solver`, `mean_dilatation` of `forming`. Any other key
+is refused when the setup is made. `build_deck` refuses a tool path whose
+tool would reach the clamped frame.
 
 ### Runs and the cache
 
@@ -307,8 +328,12 @@ run executes in staging and is published by one atomic rename, so a reader
 never sees a half-written entry and two processes racing on one deck cannot
 corrupt it. A failure is recorded in `FAILED` (reason, exit code, log tail)
 and raised as `FormingError`; later calls raise the recorded failure again
-without running unless `retry_failed=True`. Each run is a subprocess with
-`OMP_NUM_THREADS = setup.threads` (1 by default).
+without running unless `retry_failed=True`. Each run is a subprocess
+`sparlab_form --config deck.json --output output --strict-config` with
+`OMP_NUM_THREADS = setup.threads` (1 by default): a deck key the solver does
+not read fails the run (exit 2) rather than taking a default silently. Any
+exit status but 0 is a `FormingError` whose record names it (2 configuration
+error, 3 a step stopped - with the reason from `summary.json` - and 4 I/O).
 
 `simulate_many(jobs, work_dir, max_workers, executor="process")` runs
 (setup, commanded) pairs on a process pool (deck building and tool paths run
@@ -317,26 +342,32 @@ failed job carries its reason and is never dropped.
 
 ### Result files
 
-The loader reads the result directory as the C++ contract defines it:
+The loader reads the result directory as `docs/forming.md` (section 3)
+defines it:
 
 | File | Columns / content | Required |
 |------|-------------------|:--------:|
-| `summary.json` | steps, completion, iterations, runtime, warnings | yes |
-| `step_<k>_<name>_nodes.csv` | `node,X,Y,Z,ux,uy,uz` - reference coordinates and displacement [m] | yes, per step |
-| `step_<k>_<name>_elements.csv` | `element,eq_plastic_strain,von_mises` | no |
-| `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes` | no (needed for forces) |
-| `mesh.json` | the mesh | no |
+| `summary.json` | `completed`, `termination`, `steps` (per step `name`, `type`, `completed`, `files_stem`, ...), `tools`, `timing`, `warnings`, ... | yes |
+| `<files_stem>_nodes.csv` | `node,X,Y,Z,ux,uy,uz` - reference coordinates and displacement [m] | yes, per completed step |
+| `<files_stem>_elements.csv` | `element,eq_plastic_strain,von_mises_Pa` | no |
+| `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m` | no (needed for forces) |
+| `mesh.json`, `config.json`, `<files_stem>.vtk` | the mesh, the deck, the fields for ParaView | no |
 
-Step files are found by name and ordered by k, whether k counts from 0 or 1.
-Every table is validated - columns present, no missing values, unique node
-ids, a step named in the summary, the same nodes and reference coordinates in
-every step - and a violation is an error naming the file.
-`FormingResult.formed_surface(step, grid)` takes the nodes with reference
-Z = 0 (the tool side), moves them to their deformed positions, triangulates
-them as the reference grid and interpolates linearly at the grid nodes; a
-deformed surface that folds over in plan is refused. `thickness_map` is the
-distance between the deformed top and bottom node of each through-thickness
-column. `forming_forces()` is the force table with |f| added.
+`files_stem` is `step_<k>_<name>`, k counting from 1; the loader takes it
+from the summary, so snapshot files are never mistaken for steps, and the
+steps it loads are the completed ones. Every table is validated - columns
+present, no missing values, unique node ids, the same nodes and reference
+coordinates in every step, a node table for every completed step - and a
+violation is an error naming the file. `FormingResult.formed_surface(step,
+grid)` takes the nodes with reference Z = 0 (the tool side), moves them to
+their deformed positions, triangulates them as the reference grid and
+interpolates linearly at the grid nodes; a deformed surface that folds over
+in plan is refused. `thickness_map` is the distance between the deformed top
+and bottom node of each through-thickness column. `forming_forces()` is the
+force table with |f| added: the force the sheet exerts **on the tool**
+(fz > 0 while it pushes down), one row per converged increment of a step
+the tool is active in (`step` from 1, `active_nodes` 0 where it is in the
+air).
 
 ## Metrology
 

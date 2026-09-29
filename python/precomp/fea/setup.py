@@ -13,7 +13,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from .._util import PrecompError, require_nonnegative, require_positive
 from ..materials import Material, get_material
@@ -27,6 +27,24 @@ DEFAULT_EXECUTABLE = "build/bin/sparlab_form"
 #: Fields that only affect how a run is executed, not its result.
 EXECUTION_FIELDS = ("executable", "timeout", "threads")
 
+#: The kinematics of the deck's `forming` block (docs/forming.md, section 2):
+#: "finite_logarithmic" is the large-strain formulation (the plastic return in
+#: the logarithmic strain) and the default, since incremental forming reaches
+#: plastic strains of order one; "finite" (Green-Lagrange strain) and
+#: "small_strain" are the small-strain laws.
+KINEMATICS = ("finite_logarithmic", "finite", "small_strain")
+
+#: `contact` keys: the tool's penalty settings in the deck (docs/forming.md):
+#: `penalty` the scale s of kappa = s E / h (default 10), `tangential_penalty`
+#: kappa_T / kappa (default 1).
+CONTACT_KEYS = ("penalty", "tangential_penalty")
+
+#: `solver` keys that go into the `forming.newton` block ...
+NEWTON_KEYS = ("max_iterations", "residual_tolerance", "displacement_tolerance",
+               "line_search", "max_cuts", "max_increments")
+#: ... and those that go into the `forming` block itself.
+FORMING_SOLVER_KEYS = ("friction_tangent", "solver", "mean_dilatation")
+
 
 def repository_root() -> Optional[Path]:
     """The SparLab checkout this package lives in (an editable install), or None."""
@@ -35,6 +53,15 @@ def repository_root() -> Optional[Path]:
         if (parent / "CMakeLists.txt").is_file() and (parent / "python" / "precomp").is_dir():
             return parent
     return None
+
+
+def _check_keys(name: str, doc: Any, allowed: Tuple[str, ...]) -> None:
+    if not isinstance(doc, dict):
+        raise ValueError(f"{name} must be a dict")
+    unknown = sorted(set(doc) - set(allowed))
+    if unknown:
+        raise ValueError(f"{name}: unknown keys {unknown}; sparlab_form reads "
+                         f"{', '.join(allowed)}")
 
 
 @dataclass
@@ -57,17 +84,23 @@ class FormingSetup:
       tool_radius [m], friction (Coulomb coefficient) [-], step_down [m],
       toolpath_style ("spiral" | "contour"), toolpath_spacing [m],
       toolpath_direction ("ccw" | "cw").
-      contact : parameters passed verbatim into each tool's `contact` object
-          (penalty / complementarity settings of the C++ contact; SI).
+      contact : the tool's penalty contact settings, written into the tool
+          object: `penalty` (the scale s of the contact stiffness
+          kappa = s E / h, default 10) and `tangential_penalty` (the friction
+          stiffness over kappa, default 1); no other keys.
     Steps
       max_tool_travel : increment control, the largest tool-centre travel per
-          increment [m].
+          increment of the "form" step [m].
       release : "321" - after the tool is withdrawn (step "unload", still
           clamped) the clamp is replaced by a statically determinate 3-2-1
           support (step "release"), so the part springs back freely;
           "clamped_only" - springback within the fixture only.
-      kinematics : "finite" or "small_strain", the deck's nonlinear kinematics.
-      solver : extra keys for the deck's `nonlinear` block (tolerances, ...).
+      kinematics : the `forming` block's kinematics, "finite_logarithmic"
+          (large strain, the default), "finite" or "small_strain".
+      solver : Newton and linear-solver settings: the keys of the deck's
+          `forming.newton` block (max_iterations, residual_tolerance,
+          displacement_tolerance, line_search, max_cuts, max_increments) and
+          friction_tangent, solver, mean_dilatation of the `forming` block.
     Execution (not part of the physics hash)
       executable : path of sparlab_form; None means $PRECOMP_SPARLAB_FORM,
           else build/bin/sparlab_form relative to the working directory or
@@ -91,7 +124,7 @@ class FormingSetup:
     contact: Dict[str, Any] = field(default_factory=dict)
     max_tool_travel: float = 1.0e-3
     release: str = "321"
-    kinematics: str = "finite"
+    kinematics: str = "finite_logarithmic"
     solver: Dict[str, Any] = field(default_factory=dict)
     name: str = "spif"
     executable: Optional[str] = None
@@ -122,8 +155,14 @@ class FormingSetup:
             raise ValueError("toolpath_direction must be 'ccw' or 'cw'")
         if self.release not in ("321", "clamped_only"):
             raise ValueError("release must be '321' or 'clamped_only'")
-        if self.kinematics not in ("finite", "small_strain"):
-            raise ValueError("kinematics must be 'finite' or 'small_strain'")
+        if self.kinematics not in KINEMATICS:
+            raise ValueError(f"kinematics must be one of {', '.join(KINEMATICS)}; got "
+                             f"{self.kinematics!r}")
+        _check_keys("contact", self.contact, CONTACT_KEYS)
+        _check_keys("solver", self.solver, NEWTON_KEYS + FORMING_SOLVER_KEYS)
+        for key in CONTACT_KEYS:
+            if key in self.contact:
+                require_positive(f"contact[{key!r}]", self.contact[key])
         if self.clamp_margin < self.element_size * (1 - 1e-9):
             raise ValueError("clamp_margin must be at least one element_size")
         if 2 * self.clamp_margin >= self.blank_size:

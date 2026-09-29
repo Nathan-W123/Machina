@@ -1,5 +1,7 @@
 """Running decks through the content-addressed cache, with the test-double solver."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -34,9 +36,10 @@ def test_a_failure_is_recorded_and_not_rerun_unless_asked(tmp_path, small_setup,
                                                           node_grid, counter, monkeypatch):
     cmd = small_cone.heightmap(node_grid)
     monkeypatch.setenv("FAKE_SPARLAB_FAIL", "1")
-    with pytest.raises(FormingError, match="exited with 3") as err:
+    with pytest.raises(FormingError, match=r"exited with 3 \(a step stopped\)") as err:
         simulate(small_setup, cmd, tmp_path / "w")
     assert "failure requested" in err.value.record["log_tail"]
+    assert err.value.record["termination"].startswith("step 'form' (1 of 3)")
     assert run_count(counter) == 1
     with pytest.raises(FormingError, match="failed before"):
         simulate(small_setup, cmd, tmp_path / "w")
@@ -72,7 +75,14 @@ def test_run_deck_and_version_errors(tmp_path, small_setup, small_cone, node_gri
     d = build_deck(small_setup, small_cone.heightmap(node_grid), tmp_path / "deck")
     res = run_deck(d, executable=fake_solver, timeout=60)
     assert res.step_names == ["form", "unload", "release"]
-    assert sparlab_version(fake_solver).startswith("sparlab_form")
+    assert sparlab_version(fake_solver).startswith("sparlab ")     # "sparlab <version> (<rev>)"
+    # every run is --strict-config: a key sparlab_form does not read is exit 2
+    doc = json.loads((d / "deck.json").read_text())
+    doc["forming"]["tools"][0]["contact"] = {}
+    (d / "deck.json").write_text(json.dumps(doc))
+    with pytest.raises(FormingError, match=r"exited with 2 \(configuration error\)") as err:
+        run_deck(d, executable=fake_solver, timeout=60)
+    assert "forming.tools[0].contact" in err.value.record["log_tail"]
     broken = tmp_path / "broken"
     broken.write_text("#!/bin/sh\nexit 1\n")
     broken.chmod(0o755)
