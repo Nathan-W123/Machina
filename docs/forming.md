@@ -262,7 +262,7 @@ refuses unknown ones).
 | `steps[].time` | see below | `[t_begin, t_end]` [s], not before the previous step's end; later only if the tools active in both steps do not move in between |
 | `steps[].max_tool_travel` | half the smallest slave-node size | largest travel of an active tool in one increment [m] |
 | `steps[].increments` | 1 (form), 10 (release) | the window in this many equal increments at the start (and at most) |
-| `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default: the DOFs stay where the step finds them; a `value` is refused) or `"absolute"` (`value` the absolute end value) |
+| `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default: the DOFs stay where the step finds them; a non-zero `value` is refused) or `"absolute"` (`value` the absolute end value) |
 | `newton.*` | see above | Newton settings |
 | `output.vtk` | true | per-step VTK files (`--no-vtk` overrides) |
 | `output.snapshots` | `"steps"` | `"steps"`: per-step files; `"none"`: only summary, mesh and tool forces; an integer N: per-step files plus a snapshot every N increments |

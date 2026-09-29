@@ -1317,8 +1317,17 @@ TEST_CASE("the forming block of a deck is read in full, strictly, and refused wh
   // A value on a held constraint would be ignored (the top level prescribes it).
   refuse(R"({"name": "B", "fix": ["y", "z"],)",
          R"({"name": "B", "fix": ["y", "z"], "value": [0, 0, 0.001],)",
-         "'forming.steps[2].boundary_conditions[1].value' is given, but the constraint's mode "
-         "is \"hold\"");
+         "'forming.steps[2].boundary_conditions[1].value' is not zero, but the constraint's "
+         "mode is \"hold\"");
+  // Zero - "fixed" - is accepted with hold (decks write it for supports), and
+  // so is a value of a component the constraint does not fix.
+  for (const std::string value : {"[0, 0, 0]", "[0.001, 0, 0]"}) {
+    std::string text = kFullForming;
+    const std::string from = R"({"name": "B", "fix": ["y", "z"],)";
+    text.replace(text.find(from), from.size(),
+                 R"({"name": "B", "fix": ["y", "z"], "value": )" + value + ",");
+    CHECK_NOTHROW(parse_deck(forming_deck(text)));
+  }
   refuse(R"({"name": "punch", "shape")", R"({"name": "punch,1", "shape")",
          "tool name 'punch,1' must be non-empty");
   {

@@ -1210,10 +1210,15 @@ Configuration parse_configuration(const json::Value& document, const std::string
           sc.name = sc.constraint.region.name;
           sc.mode = parse_constraint_mode(bc.string_or("mode", "hold"));
           // A held constraint keeps its DOFs where the step finds them: a
-          // value there would be ignored, while the same entry at the top
-          // level prescribes it.
-          if (sc.mode == StepConstraint::Mode::Hold && bc.child("value").exists()) {
-            throw ConfigError("'" + bc.path() + ".value' is given, but the constraint's mode "
+          // non-zero value there would be ignored, while the same entry at
+          // the top level prescribes it. (Zero, "fixed", is accepted: decks
+          // write it for clamps and supports that have not moved.)
+          bool moved = false;
+          for (int k = 0; k < dim; ++k) {
+            moved = moved || (sc.constraint.fixes(k) && sc.constraint.value(k) != 0.0);
+          }
+          if (sc.mode == StepConstraint::Mode::Hold && moved) {
+            throw ConfigError("'" + bc.path() + ".value' is not zero, but the constraint's mode "
                               "is \"hold\" (the default), which keeps its DOFs where the step "
                               "finds them; give \"mode\": \"absolute\" to move them to the "
                               "value over the step");
