@@ -20,7 +20,8 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 128 tests (42 for precomp.ml), ~105 s; the integration test skips without the binary
+python3 -m pytest python/tests -q    # 133 tests (42 for precomp.ml), ~150 s; the 4 integration tests
+                                     # (~2 min more) skip without build/bin/sparlab_form
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
@@ -526,23 +527,40 @@ value is from the test's own configuration.
 | Formed surface from a synthetic result (stretched, deflected sheet) | the deformed nodes | 1e-15 m | `test_fea_results` |
 | STL round trip | the height map | 1e-15 m (ASCII), 2e-9 m (binary, float32) | `test_geometry` |
 
+With the real `sparlab_form` (`test_integration_sparlab.py`, skipped without
+`build/bin/sparlab_form`), against the contract of `docs/forming.md` and
+physical sense rather than exact answers:
+
+| Check | Expected | Measured | Test |
+|-------|----------|----------|------|
+| Every deck variant precomp writes: Hill48, von Mises and Chaboche materials; the three kinematics; contact and every solver key; clamped only; spiral; Tet4 | accepted by `--strict-config`, the analysis built | 9 of 9; a `contact` key in the tool refused (exit 2, naming it) | `test_integration_sparlab` |
+| The test double and `sparlab_form` on one deck | the same files, CSV columns, summary and `mesh.json` keys, mesh and step windows | identical | `test_integration_sparlab` |
+| Tiny SPIF: 20 x 20 x 1 mm AA5754-O blank, 8 x 8 x 2 Hex8, 4 mm tool, one spiral revolution to 1 mm ending in contact, unload, 3-2-1 release | depth about the tool's 1 mm; the sheet under the removed tool rises; no reaction after the release; the force on the tool upwards, of order 1 kN | depth 0.937 / 0.913 / 0.953 mm after form / unload / release; rise 25-45 um; release reactions 8e-13 N; fz >= 0 at all 51 increments, peak 1 070 N; 71 increments, 328 iterations, 3.1 s | `test_integration_sparlab` |
+| The original small cone: 80 mm blank, 20 x 20 x 1 Hex8, two contours to 4 mm | completes, depth below twice the target's | completes, 270 increments, about 100 s | `test_integration_sparlab` |
+
 ## Limitations
 
-* **The C++ contract is provisional.** `sparlab_form` is being written in
-  parallel; the deck keys of the `forming` object (`tools`, `steps`,
-  `increments.max_tool_travel`, the `--config` / `--output` command line) and
-  the result files follow the design contract, and the loader has been
-  exercised only against synthetic directories and a test double
-  (`python/tests/fake_sparlab_form.py`). `test_integration_sparlab.py` runs the
-  real executable and is skipped until it exists. When `docs/forming.md`
-  lands, `precomp.fea.deck.forming_block` and `precomp.fea.results` are the
-  two places to align.
-* **Force sign.** The tool force columns are taken to be the force on the
-  sheet; `precomp.robot.forces_on_path(sign=...)` states the convention
-  explicitly and must be checked against the solver's documentation.
-* **Materials.** The library values are nominal, not certified; Hill48 and
-  Armstrong-Frederick data are written under keys the current solver does not
-  model; Swift and Hollomon laws are approximated by linear + Voce hardening
+* **The C++ contract.** The deck, the command line and the result files
+  follow `docs/forming.md` (sections 2 and 3) as of this revision; every run
+  uses `--strict-config`, so a key the solver stops reading fails loudly. The
+  test double (`python/tests/fake_sparlab_form.py`) mirrors the contract and
+  `test_integration_sparlab.py` checks it against the real executable, file
+  by file and key by key, when `build/bin/sparlab_form` exists; a change of
+  the C++ contract is a change of `precomp.fea.deck.forming_block`,
+  `precomp.fea.results` and the double.
+* **Forming model.** One spherical tool; the path's final retract is not
+  simulated (the "unload" step removes the tool). The node-to-surface
+  contact resolves a tool poorly on elements not much smaller than it
+  (`docs/forming.md`, section 6), and Hex8 sheets with few layers are stiff
+  in bending: the numbers of a coarse deck are indicative. Where the tool
+  circles inside its own radius (a small floor), the sheet inside the loop
+  can end below the tool tip: one 1 mm contour of a 4 mm tool on a 3.3 mm
+  radius over a 20 mm blank left the sheet 1.31-1.35 mm deep, on 8 x 8 x 2,
+  16 x 16 x 2 and 16 x 16 x 4 Hex8 alike.
+* **Materials.** The library values are nominal, not certified; Hill48 with
+  r < 1 (the aluminium alloys) is known to underestimate the equibiaxial
+  yield stress, which later criteria (Yld2000) correct and SparLab does not
+  have; Swift and Hollomon laws are approximated by linear + Voce hardening
   (errors in the table above).
 * **Geometry.** A pyramid's corner radius must be at least the horizontal run
   of its wall plus the bottom fillet's tangent length (so the corners are C1
