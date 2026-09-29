@@ -446,6 +446,41 @@ TEST_CASE("a flat punch compresses an elastic block by the exact force, penalty 
   CHECK(errors_rigid[2] / errors_rigid[1] == Approx(0.1).epsilon(0.02));
 }
 
+TEST_CASE("a tool that grazes the surface from the reference state converges without a cut",
+          "[forming]") {
+  // The sphere's path reaches the block's top exactly at the end of the
+  // first increment (0.5 mm of 1.5 mm travel), where a node's gap is zero to
+  // round-off: its contact force, and so the reference force, are round-off
+  // too, and the state must converge on the round-off of the positions.
+  std::vector<DisplacementConstraint> bcs;
+  DisplacementConstraint base;
+  base.region = box(-kInf, kInf, -kInf, kInf, -kInf, -0.002, "base");
+  for (int k = 0; k < 3; ++k) base.set(k, true);
+  bcs.push_back(base);
+  FemModel model = finalised(hex_block(10, 10, 2, 0.01, 0.01, 0.002, 0.0, 0.0, -0.002),
+                             default_material(), 1.0, StressState::ThreeDimensional, bcs);
+  Assembler assembler(model);
+  RigidTool tool;
+  tool.radius = 0.005;
+  tool.friction = 0.1;
+  tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
+  tool.trajectory = path({0.0, 1.0}, {Vector3(0.005, 0.005, 0.005 + 5.0e-4),
+                                      Vector3(0.005, 0.005, 0.005 - 1.0e-3)});
+  FormingOptions o;
+  o.tools.push_back(tool);
+  FormingStep step;
+  step.name = "press";
+  step.tools = {"tool"};
+  step.max_tool_travel = 5.0e-4;
+  o.steps.push_back(step);
+  const FormingResult r = FormingAnalysis(model, assembler, o).run();
+  REQUIRE(r.completed);
+  CHECK(r.total_cuts == 0);
+  REQUIRE(r.steps[0].increments.size() >= 3);
+  CHECK(r.steps[0].increments[0].iterations <= 3);
+  CHECK(r.steps[0].increments.back().tools.at(0).force.z() > 0.0);
+}
+
 // ---------------------------------------------------------------------------
 // 4. Ironing with friction
 // ---------------------------------------------------------------------------

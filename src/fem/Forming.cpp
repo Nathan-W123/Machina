@@ -606,6 +606,13 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   Vector last_residual = start.residual.size() == n ? start.residual : Vector::Zero(n);
   Scalar last_du = 0.0;                      // largest nodal |du| of the last increment
   bool strain_warned = false;                // the small-strain warning is given once
+  // |X| per DOF, and its norm [m].
+  Vector coordinates_abs(n);
+  for (Index node = 0; node < mesh.num_nodes(); ++node) {
+    const Vector3 x = mesh.node(node);
+    for (int k = 0; k < dim; ++k) coordinates_abs(node * dim + k) = std::abs(x(k));
+  }
+  const Scalar coordinates = coordinates_abs.norm();
 
   // Residual, reactions and scales of a state.
   struct Balance {
@@ -618,7 +625,8 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
     Scalar parts = 0;  // the largest force measure of the state itself
   };
   const auto balance = [&](const Evaluation& ev, const ToolContactEvaluation& cev,
-                           const Partition& p, const Vector& r0, Scalar ramp, Scalar k_gross) {
+                           const Partition& p, const Vector& r0, Scalar ramp, Scalar k_gross,
+                           Scalar k_position) {
     Balance b;
     b.full = ev.residual + cev.residual;
     b.free = restrict(b.full, p.free);
@@ -631,8 +639,12 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
     const Scalar gross = ev.gross + cev.gross + ramp * r0.norm();
     const Scalar floor =
         std::max({1024.0 * eps * gross, 64.0 * eps * k_gross, 8.0 * eps * cev.round_off});
-    b.raw_floor = floor;
     b.floor = floor <= kFloorLimit * b.scale ? floor : 0.0;
+    // With contact a displacement is resolved only to the rounding of the
+    // position X + u it defines, which the stiffness turns into forces of
+    // eps |K| (|X| + |u|): the floor of a state whose correction is already
+    // at round-off (never accepted alone).
+    b.raw_floor = std::max(floor, 64.0 * eps * k_position);
     return b;
   };
   const auto evaluate_tangent = [&](const Vector& state, Scalar t, Evaluation& ev,
@@ -751,9 +763,13 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
       contact.begin_increment(u, t0, t1, active,
                               2.0 * tool_travel + 2.0 * last_du + contact.min_node_size());
       const Vector& from = u;
+      // A correction below this is converged: the displacement tolerance
+      // relative to the increment, no finer than the round-off of the
+      // positions X + u (a gap subtracts positions, so from the reference
+      // state - u = 0 - a grazing contact resolves no finer than that).
       const auto correction_limit = [&](Scalar increment, const Vector& x) {
         return std::max(options_.displacement_tolerance * std::max(increment, 1.0e-300),
-                        64.0 * eps * x.norm());
+                        64.0 * eps * (x.norm() + coordinates));
       };
       // Line search on the energy along du (see NonlinearStatic.cpp), with
       // g(1) already known (NaN: the full step was invalid - an inverted
@@ -824,7 +840,9 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
         }
         if (!ev.tangent.isCompressed()) ev.tangent.makeCompressed();
         const Scalar k_gross = stiffness_gross(ev.tangent, trial, part.free);
-        const Balance b = balance(ev, cev, part, r0, ramp, k_gross);
+        const Scalar k_position =
+            stiffness_gross(ev.tangent, coordinates_abs + trial.cwiseAbs(), part.free);
+        const Balance b = balance(ev, cev, part, r0, ramp, k_gross, k_position);
         const Vector& r = b.free;
         if (!r.allFinite()) {
           failure = "a non-finite residual";
@@ -946,7 +964,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
           // The residual of the accepted state, from its own evaluation.
           const bool residual_only = !have;
           if (residual_only) evaluate_residual(trial, t1, ev, cev);
-          const Balance fb = balance(ev, cev, part, r0, ramp, k_gross);
+          const Balance fb = balance(ev, cev, part, r0, ramp, k_gross, k_position);
           const Scalar final_norm = fb.free.norm();
           const Scalar accepted_floor = small_correction ? fb.raw_floor : fb.floor;
           if (final_norm <= std::max(options_.residual_tolerance * fb.scale, accepted_floor)) {
