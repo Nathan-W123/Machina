@@ -8,6 +8,7 @@ import pytest
 
 from precomp import PrecompError
 from precomp.fea import FORCE_COLUMNS, load_result
+from precomp.fea.results import files_stem
 from precomp.geometry import Grid
 
 
@@ -162,6 +163,15 @@ def test_a_stopped_run_loads_its_completed_steps_only(tmp_path):
     d = write_result(tmp_path / "s", completed=(False, False))
     with pytest.raises(PrecompError, match="no step completed"):
         load_result(d)
+
+
+def test_step_file_stems_follow_sparlab_form():
+    # forming_step_stem (src/io/FormingWriter.cpp): bytes of the name other than
+    # ASCII letters, digits, '-' and '_' become '_'; an empty name is "step"
+    assert files_stem(1, "form") == "step_1_form"
+    assert files_stem(3, "re lease/2") == "step_3_re_lease_2"
+    assert files_stem(2, "\u00e9") == "step_2___"                  # two UTF-8 bytes
+    assert files_stem(4, "") == "step_4_step"
 
 
 def test_snapshot_files_are_not_steps(tmp_path):

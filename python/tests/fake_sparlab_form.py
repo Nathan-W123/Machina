@@ -185,7 +185,8 @@ def structured_mesh(m):
 
 def files_stem(k, name):
     """step_<k>_<name> (k from 0 here, from 1 in the name), sanitised as SparLab does."""
-    clean = "".join(c if (c.isascii() and (c.isalnum() or c in "-_")) else "_" for c in name)
+    keep = set(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    clean = "".join(chr(b) if b in keep else "_" for b in name.encode("utf-8"))
     return f"step_{k + 1}_{clean or 'step'}"
 
 

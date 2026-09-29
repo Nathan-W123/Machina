@@ -283,6 +283,16 @@ def _interpolate_structured(xy: np.ndarray, values: np.ndarray, grid: Grid,
     return z, hit
 
 
+def files_stem(k: int, name: str) -> str:
+    """`step_<k>_<s>`: the stem of step k's files (k from 1), s the step name
+    with every byte (of its UTF-8) but ASCII letters, digits, `-` and `_`
+    replaced by `_`, "step" if empty - `forming_step_stem` of
+    src/io/FormingWriter.cpp."""
+    keep = set(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    clean = "".join(chr(b) if b in keep else "_" for b in name.encode("utf-8"))
+    return f"step_{k}_{clean or 'step'}"
+
+
 def _step_entries(d: Path, summary: Dict[str, Any]) -> List[Tuple[int, str, str, Dict]]:
     """(k, name, files_stem, entry) of every completed step of the summary."""
     steps = summary.get("steps")
@@ -297,7 +307,7 @@ def _step_entries(d: Path, summary: Dict[str, Any]) -> List[Tuple[int, str, str,
             continue                      # a stopped step has no files
         stem = str(entry["files_stem"])
         m = _STEM_RE.match(stem)
-        if not m or stem != f"step_{i + 1}_{safe_name(str(entry['name']))}":
+        if not m or stem != files_stem(i + 1, str(entry["name"])):
             raise PrecompError(f"{d / 'summary.json'}: steps[{i}] has files_stem {stem!r}, "
                                f"not step_{i + 1}_<name>")
         out.append((int(m.group(1)), str(entry["name"]), stem, entry))
