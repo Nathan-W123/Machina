@@ -182,6 +182,9 @@ class NonlinearSystem {
     for (Index e = 0; e < ne; ++e) {
       if (!model.material_of(e).plasticity().enabled()) continue;
       plastic_ = true;
+      // Armstrong-Frederick recovery makes the consistent tangent
+      // non-symmetric (factorised by LU, without the inertia test).
+      if (!model.material_of(e).plasticity().symmetric_tangent()) symmetric_ = false;
       committed_[static_cast<std::size_t>(e)].assign(static_cast<std::size_t>(points),
                                                      PlasticState());
       const ElementType type = model.mesh().element_type();

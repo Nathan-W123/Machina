@@ -252,8 +252,9 @@ struct NonlinearResult {
   std::vector<std::string> warnings;
   EquilibriumCheck equilibrium;  ///< final force balance, deformed loads
   /// The final tangent was symmetric and factorised by LDL^T (which reports
-  /// its inertia); false when a follower pressure left it non-symmetric and
-  /// LU factorised it.
+  /// its inertia); false when a follower pressure or a recovering
+  /// (Armstrong-Frederick) backstress left it non-symmetric and LU
+  /// factorised it.
   bool symmetric_tangent = true;
   std::string linear_solver;
   /// Final element stresses (Voigt): Cauchy and second Piola-Kirchhoff

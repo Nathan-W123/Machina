@@ -2,7 +2,10 @@
 
 #include "sparlab/core/Exceptions.hpp"
 
+#include <Eigen/LU>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -155,15 +158,299 @@ PlasticResponse return_3d(const IsotropicMaterial& m, const Vector6& strain,
   return out;
 }
 
-}  // namespace
+// ---------------------------------------------------------------------------
+// The general return: Hill48 and/or Chaboche backstresses (see the file
+// comment of Plasticity.hpp for the equations and the tangent's derivation).
+// ---------------------------------------------------------------------------
 
-PlasticResponse j2_return(const IsotropicMaterial& material, StressState state,
-                          const Vector6& strain, const PlasticState& committed, Scalar delta_t) {
-  if (state != StressState::PlaneStress) return return_3d(material, strain, committed, delta_t);
+using Vector7 = Eigen::Matrix<Scalar, 7, 1>;
+using Matrix7 = Eigen::Matrix<Scalar, 7, 7>;
+using Matrix76 = Eigen::Matrix<Scalar, 7, 6>;
 
-  // Plane stress: eps_33 such that sigma_33 = 0. The elastic predictor of
-  // eps_33 is exact for an elastic step; a plastic one converges
-  // quadratically with the consistent C_33,33 > 0.
+/// The factors of one Armstrong-Frederick backstress over a step with
+/// multiplier dl, alpha = theta alpha_n + (2/3) C chi m_t, and their
+/// derivatives with respect to dl.
+struct Decay {
+  Scalar theta = 1.0;
+  Scalar chi = 0.0;
+  Scalar dtheta = 0.0;
+  Scalar dchi = 1.0;
+};
+
+Decay decay(Scalar gamma, Scalar dl, KinematicIntegration integration) {
+  Decay d;
+  if (gamma == 0.0) {
+    d.chi = dl;  // Prager: theta = 1, chi = dl
+    return d;
+  }
+  if (integration == KinematicIntegration::Exponential) {
+    // alpha' = (2/3) C m_t - gamma alpha, integrated exactly for a fixed m_t.
+    d.theta = std::exp(-gamma * dl);
+    d.chi = -std::expm1(-gamma * dl) / gamma;
+    d.dtheta = -gamma * d.theta;
+    d.dchi = d.theta;
+  } else {
+    // alpha (1 + gamma dl) = alpha_n + (2/3) C dl m_t.
+    d.theta = 1.0 / (1.0 + gamma * dl);
+    d.chi = d.theta * dl;
+    d.dtheta = -gamma * d.theta * d.theta;
+    d.dchi = d.theta * d.theta;
+  }
+  return d;
+}
+
+/// S^-1 v: the tensorial components of an engineering-shear Voigt vector.
+Vector6 tensorial(const Vector6& v) {
+  Vector6 t = v;
+  t.tail<3>() *= 0.5;
+  return t;
+}
+
+/// The linear map D_dev of an engineering-shear strain onto 2G dev of its
+/// tensor (tensorial components): the strain derivative of s_tr.
+Matrix6 deviatoric_tangent(Scalar g) {
+  Matrix6 d = Matrix6::Zero();
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) d(i, j) = -2.0 * g / 3.0;
+    d(i, i) = 4.0 * g / 3.0;
+    d(3 + i, 3 + i) = g;
+  }
+  return d;
+}
+
+/// The residual of the closest-point equations at (xi, dl), with everything
+/// the Jacobian and the update need.
+struct GeneralPoint {
+  Scalar equivalent = 0.0;  ///< sigma_bar(xi)
+  Vector6 m;                ///< P xi / sigma_bar, engineering
+  Vector6 mt;               ///< S^-1 m, tensorial
+  Scalar b = 0.0;           ///< 2 G dl + (2/3) sum C_i chi_i
+  Scalar db = 0.0;          ///< d b / d dl
+  Vector6 back_rate;        ///< sum theta_i' alpha_i,n = -d xi_tilde / d dl
+  std::array<Decay, kMaxBackstresses> decays;
+  Vector7 residual;
+};
+
+class GeneralReturn {
+ public:
+  GeneralReturn(const IsotropicMaterial& m, const PlasticState& committed, const Vector6& s_trial)
+      : p_(m.plasticity()), g_(m.shear_modulus()), committed_(committed), s_trial_(s_trial),
+        count_(p_.kinematic_terms()) {
+    for (int i = 0; i < count_; ++i) terms_[static_cast<std::size_t>(i)] = p_.kinematic_term(i);
+  }
+
+  /// R(xi, dl); false where sigma_bar(xi) vanishes (the flow direction is
+  /// undefined there).
+  bool evaluate(const Vector6& xi, Scalar dl, GeneralPoint& e) const {
+    const Vector6 pxi = p_.yield_matrix * xi;
+    const Scalar q = xi.dot(pxi);
+    if (!(q > 0.0) || !std::isfinite(q)) return false;
+    e.equivalent = std::sqrt(q);
+    e.m = pxi / e.equivalent;
+    e.mt = tensorial(e.m);
+    Vector6 xi_tilde = s_trial_;
+    e.b = 2.0 * g_ * dl;
+    e.db = 2.0 * g_;
+    e.back_rate.setZero();
+    for (int i = 0; i < count_; ++i) {
+      const std::size_t u = static_cast<std::size_t>(i);
+      const Decay d = decay(terms_[u].recovery, dl, p_.kinematic_integration);
+      const Vector6& alpha_n = committed_.back_stresses[u];
+      xi_tilde -= d.theta * alpha_n;
+      e.b += 2.0 / 3.0 * terms_[u].modulus * d.chi;
+      e.db += 2.0 / 3.0 * terms_[u].modulus * d.dchi;
+      e.back_rate += d.dtheta * alpha_n;
+      e.decays[u] = d;
+    }
+    e.residual.head<6>() = xi - xi_tilde + e.b * e.mt;
+    e.residual(6) = e.equivalent - p_.yield(committed_.equivalent_plastic_strain + dl);
+    return true;
+  }
+
+  /// dR/d(xi, dl) at an evaluated point.
+  Matrix7 jacobian(const GeneralPoint& e, Scalar dl) const {
+    Matrix7 j;
+    j.topLeftCorner<6, 6>() = Matrix6::Identity() + (e.b / e.equivalent) * flow_curvature(e);
+    j.topRightCorner<6, 1>() = e.back_rate + e.db * e.mt;
+    j.bottomLeftCorner<1, 6>() = e.m.transpose();
+    j(6, 6) = -p_.yield_slope(committed_.equivalent_plastic_strain + dl);
+    return j;
+  }
+
+  /// S^-1 (P - m m^T) = sigma_bar d m_t / d xi.
+  Matrix6 flow_curvature(const GeneralPoint& e) const {
+    Matrix6 c = p_.yield_matrix - e.m * e.m.transpose();
+    c.bottomRows<3>() *= 0.5;
+    return c;
+  }
+
+  /// The consistent tangent at a converged point:
+  /// C^e - 2G [m_t a^T + (dl / sigma_bar) S^-1 (P - m m^T) A] with
+  /// [A; a^T] = J^-1 [D_dev; 0].
+  Matrix6 tangent(const GeneralPoint& e, Scalar dl, const Matrix6& elastic) const {
+    Matrix76 rhs = Matrix76::Zero();
+    rhs.topRows<6>() = deviatoric_tangent(g_);
+    const Matrix76 da = jacobian(e, dl).partialPivLu().solve(rhs);
+    Matrix6 c = elastic - 2.0 * g_ * (e.mt * da.row(6));
+    if (dl > 0.0) {
+      c.noalias() -= (2.0 * g_ * dl / e.equivalent) * (flow_curvature(e) * da.topRows<6>());
+    }
+    return c;
+  }
+
+  int count() const { return count_; }
+  const Backstress& term(int i) const { return terms_[static_cast<std::size_t>(i)]; }
+
+ private:
+  const PlasticityParameters& p_;
+  Scalar g_;
+  const PlasticState& committed_;
+  const Vector6& s_trial_;
+  int count_;
+  std::array<Backstress, kMaxBackstresses> terms_{};
+};
+
+/// The stored energy of the backstresses, sum_i 3 |alpha_i|^2 / (4 C_i).
+Scalar kinematic_energy(const GeneralReturn& r, const PlasticState& state) {
+  Scalar out = 0.0;
+  for (int i = 0; i < r.count(); ++i) {
+    const Scalar norm = tensor_norm(state.back_stresses[static_cast<std::size_t>(i)]);
+    out += 0.75 * norm * norm / r.term(i).modulus;
+  }
+  return out;
+}
+
+/// The 3-D closest-point return of Hill48 and/or Chaboche at a fully given
+/// strain.
+PlasticResponse return_general_3d(const IsotropicMaterial& m, const Vector6& strain,
+                                  const PlasticState& committed, Scalar delta_t,
+                                  bool want_tangent) {
+  const PlasticityParameters& p = m.plasticity();
+  const Scalar g = m.shear_modulus();
+  const Scalar k = m.lame_lambda() + 2.0 * g / 3.0;
+
+  Vector6 elastic = strain - committed.plastic_strain;
+  const Scalar thermal = m.thermal_expansion() * delta_t;
+  if (thermal != 0.0) elastic.head(3).array() -= thermal;
+  const Scalar volumetric = elastic(0) + elastic(1) + elastic(2);
+  const Vector6 s_trial = deviatoric_stress(g, elastic);
+  const GeneralReturn gr(m, committed, s_trial);
+  Vector6 xi_trial = s_trial;
+  for (int i = 0; i < gr.count(); ++i) {
+    xi_trial -= committed.back_stresses[static_cast<std::size_t>(i)];
+  }
+  const Scalar alpha_n = committed.equivalent_plastic_strain;
+  const Scalar sy_n = p.yield(alpha_n);
+  const Scalar eq_trial = std::sqrt(std::max(xi_trial.dot(p.yield_matrix * xi_trial), 0.0));
+  const Scalar f_trial = eq_trial - sy_n;
+  const Matrix6 ce = elastic_tangent(k, g);
+  if (!std::isfinite(f_trial)) {
+    throw SolverError("the closest-point return of material '" + m.name() +
+                      "' met a non-finite trial stress");
+  }
+
+  PlasticResponse out;
+  out.state = committed;
+  out.state.loading = false;
+  out.strain_33 = strain(2);
+  if (!p.enabled() || f_trial <= 1.0e-12 * sy_n) {
+    out.stress = s_trial;
+    out.stress.head(3).array() += k * volumetric;
+    out.tangent = ce;
+    out.energy = 0.5 * k * volumetric * volumetric + g * deviatoric_norm2(elastic) +
+                 p.isotropic_energy(alpha_n) + kinematic_energy(gr, committed);
+    // Still on the surface after a plastic step: the continuum tangent
+    // (the consistent one at dl = 0) - see PlasticState::loading.
+    if (p.enabled() && committed.loading && f_trial > -1.0e-10 * sy_n && eq_trial > 0.0) {
+      out.state.loading = true;
+      GeneralPoint e;
+      if (want_tangent && gr.evaluate(xi_trial, 0.0, e)) out.tangent = gr.tangent(e, 0.0, ce);
+    }
+    return out;
+  }
+
+  // Newton on (xi, dl) from the trial point, with a backtracking line search
+  // on |R| and dl >= 0.
+  Vector6 xi = xi_trial;
+  Scalar dl = 0.0;
+  GeneralPoint e;
+  gr.evaluate(xi, dl, e);  // f_trial > 0 and finite: xi_trial is finite and non-zero
+  const Scalar scale =
+      std::max({sy_n, s_trial.cwiseAbs().maxCoeff(), xi_trial.cwiseAbs().maxCoeff()});
+  const Scalar tol =
+      std::max(1.0e-13 * sy_n, 32.0 * std::numeric_limits<Scalar>::epsilon() * scale);
+  bool converged = false;
+  int it = 0;
+  for (; it < 50; ++it) {
+    const Scalar r_inf = e.residual.cwiseAbs().maxCoeff();
+    if (r_inf <= tol) {
+      converged = true;
+      break;
+    }
+    const Vector7 step = gr.jacobian(e, dl).partialPivLu().solve(-e.residual);
+    const Scalar r0 = e.residual.norm();
+    Scalar t = 1.0;
+    bool accepted = false;
+    GeneralPoint trial;
+    for (int ls = 0; ls < 40; ++ls) {
+      const Vector6 xi_t = xi + t * step.head<6>();
+      const Scalar dl_t = std::max(dl + t * step(6), 0.0);
+      if (gr.evaluate(xi_t, dl_t, trial) && trial.residual.norm() <= (1.0 - 1.0e-4 * t) * r0) {
+        xi = xi_t;
+        dl = dl_t;
+        e = trial;
+        accepted = true;
+        break;
+      }
+      t *= 0.5;
+    }
+    if (!accepted) {
+      // No descent left: round-off stagnation just above the tolerance is
+      // convergence, anything else a failure.
+      converged = r_inf <= 1.0e3 * tol;
+      break;
+    }
+  }
+  if (!converged) {
+    std::ostringstream os;
+    os << "the " << (p.criterion == YieldCriterion::Hill48 ? "Hill48" : "von Mises")
+       << " closest-point return of material '" << m.name() << "' did not converge (residual "
+       << e.residual.cwiseAbs().maxCoeff() / sy_n << " of the yield stress after " << it
+       << " iterations)";
+    throw SolverError(os.str());
+  }
+
+  out.yielding = true;
+  out.symmetric = p.symmetric_tangent();
+  out.stress = s_trial - 2.0 * g * dl * e.mt;
+  out.stress.head(3).array() += k * volumetric;
+  PlasticState& st = out.state;
+  st.loading = true;
+  st.equivalent_plastic_strain = alpha_n + dl;
+  st.plastic_strain += dl * e.m;  // engineering shear
+  st.back_stress.setZero();
+  for (int i = 0; i < gr.count(); ++i) {
+    const std::size_t u = static_cast<std::size_t>(i);
+    const Decay& d = e.decays[u];
+    st.back_stresses[u] =
+        d.theta * committed.back_stresses[u] + (2.0 / 3.0 * gr.term(i).modulus * d.chi) * e.mt;
+    st.back_stress += st.back_stresses[u];
+  }
+  const Vector6 elastic_new = elastic - dl * e.m;
+  out.energy = 0.5 * k * volumetric * volumetric + g * deviatoric_norm2(elastic_new) +
+               p.isotropic_energy(st.equivalent_plastic_strain) + kinematic_energy(gr, st);
+  out.tangent = want_tangent ? gr.tangent(e, dl, ce) : ce;
+  return out;
+}
+
+/// Plane stress around a 3-D return: eps_33 such that sigma_33 = 0. The
+/// elastic predictor of eps_33 is exact for an elastic step (the elasticity
+/// is isotropic); a plastic one converges quadratically with the consistent
+/// C_33,33 > 0.
+template <class Return3d>
+PlasticResponse plane_stress(const IsotropicMaterial& material, const Return3d& return_3d_at,
+                             const Vector6& strain, const PlasticState& committed,
+                             Scalar delta_t) {
   const Scalar g = material.shear_modulus();
   const Scalar lambda = material.lame_lambda();
   const Scalar thermal = material.thermal_expansion() * delta_t;
@@ -172,19 +459,19 @@ PlasticResponse j2_return(const IsotropicMaterial& material, StressState state,
   trial(2) = ep(2) + thermal -
              lambda / (lambda + 2.0 * g) *
                  ((strain(0) - ep(0) - thermal) + (strain(1) - ep(1) - thermal));
-  PlasticResponse out = return_3d(material, trial, committed, delta_t);
+  PlasticResponse out = return_3d_at(trial);
   const Scalar scale =
       std::max(out.stress.head(3).cwiseAbs().maxCoeff(), material.plasticity().yield_stress);
   int it = 0;
   while (std::abs(out.stress(2)) > 1.0e-12 * std::max(scale, std::numeric_limits<Scalar>::min())) {
     if (++it > 30) {
       std::ostringstream os;
-      os << "the plane-stress J2 return of material '" << material.name()
+      os << "the plane-stress return of material '" << material.name()
          << "' did not reach sigma_33 = 0 (left " << out.stress(2) << " Pa)";
       throw SolverError(os.str());
     }
     trial(2) -= out.stress(2) / out.tangent(2, 2);
-    out = return_3d(material, trial, committed, delta_t);
+    out = return_3d_at(trial);
   }
   // Condense eps_33 out: d sigma_ab = (C_ab - C_a3 C_3b / C_33) d eps_b.
   const Matrix6 c = out.tangent;
@@ -194,6 +481,33 @@ PlasticResponse j2_return(const IsotropicMaterial& material, StressState state,
   out.state.thickness_strain = trial(2);
   out.strain_33 = trial(2);
   return out;
+}
+
+}  // namespace
+
+PlasticResponse plastic_return(const IsotropicMaterial& material, StressState state,
+                               const Vector6& strain, const PlasticState& committed,
+                               Scalar delta_t, bool want_tangent) {
+  if (!material.plasticity().general()) {
+    if (state != StressState::PlaneStress) return return_3d(material, strain, committed, delta_t);
+    return plane_stress(
+        material,
+        [&](const Vector6& trial) { return return_3d(material, trial, committed, delta_t); },
+        strain, committed, delta_t);
+  }
+  if (state != StressState::PlaneStress) {
+    return return_general_3d(material, strain, committed, delta_t, want_tangent);
+  }
+  return plane_stress(
+      material,
+      [&](const Vector6& trial) {
+        return return_general_3d(material, trial, committed, delta_t, true);
+      },
+      strain, committed, delta_t);
+}
+
+Scalar equivalent_stress(const PlasticityParameters& parameters, const Vector6& stress) {
+  return std::sqrt(std::max(stress.dot(parameters.yield_matrix * stress), 0.0));
 }
 
 Scalar von_mises_stress(const Vector6& s) {

@@ -1008,6 +1008,62 @@ to `1e-12` of the stress; the tangent is condensed,
 at fixed displacement its load rate is `-C alpha dT_0 m` with the consistent
 (condensed) tangent.
 
+**Hill48 anisotropy and Chaboche kinematic hardening.** With
+`yield_criterion: hill48` or `backstresses` the return is a closest-point
+projection (Simo and Hughes, box 3.4) of the general law
+(`src/material/Plasticity.cpp`, `return_general_3d`; the header
+`Plasticity.hpp` carries the full derivation):
+
+```
+  f = sqrt(xi^T P xi) - sigma_y(a) <= 0 ,   xi = sigma - sum_i alpha_i ,
+  d eps_p = d lambda m ,   m = P xi / sigma_bar ,   da = d lambda ,
+  d alpha_i = (2/3) C_i d eps_p - gamma_i alpha_i d lambda ,
+```
+
+P the Hill48 matrix in global axes, `T^T P_mat T` with `P_mat` built from
+`F, G, H, L, M, N` in the frame RD, TD, ND and `T` the rotation of tensorial
+Voigt stresses, found once when the material is set (von Mises is
+`F = G = H = 1/2, L = M = N = 3/2`). `m` is the engineering form of the flow
+direction (the derivative by Voigt components doubles the shears); its
+normal part sums to zero, so the flow is isochoric and mean dilatation stays
+valid. `lambda` is the work-conjugate accumulated strain,
+`xi : d eps_p = sigma_bar d lambda`, which for von Mises is the radial
+return's `sqrt(2/3) dg`. Over a step with the direction of its end each
+backstress is `alpha_i = theta_i alpha_i,n + (2/3) C_i chi_i m_t` - the
+exponential `theta = exp(-gamma dl)`, `chi = (1 - theta) / gamma`, exact for a
+fixed direction, or backward Euler `theta = 1 / (1 + gamma dl)`,
+`chi = theta dl` - and, the elasticity being isotropic and `m` deviatoric,
+`xi = xi_tilde(dl) - b(dl) m_t` with `xi_tilde = s_tr - sum theta_i alpha_i,n`
+and `b = 2 G dl + (2/3) sum C_i chi_i`: the backstresses drop out and Newton
+solves seven equations for `(xi, dl)`,
+
+```
+  R1 = xi - xi_tilde + b S^-1 P xi / sigma_bar = 0 ,   R2 = sigma_bar - sigma_y(a_n + dl) = 0 ,
+```
+
+from the trial point with a backtracking line search, to `1e-13 sigma_y` -
+tight enough that stress recovery's return from the committed state is
+elastic. Differentiating the converged equations by the strain, which enters
+only through `s_tr = 2 G dev(eps)` (the linear map `D_dev`), gives
+`[A; a^T] = J^-1 [D_dev; 0]` with J the Newton Jacobian, and the consistent
+tangent
+
+```
+  C = C_e - 2 G [ m_t a^T + (dl / sigma_bar) S^-1 (P - m m^T) A ] ,
+```
+
+symmetric for linear kinematic hardening and non-symmetric as soon as a
+backstress recovers; the element then keeps it unsymmetrised and the solver
+factorises it by LU. At `dl = 0` it is the continuum tangent the loading flag
+uses. Von Mises without backstresses keeps the radial return above, bit for
+bit; the general return with `r = 1` reproduces it (stress, tangent, state) to
+`1e-12`. Hill48 with isotropic hardening follows the exact directional
+hardening curve and r-value in uniaxial stress along any direction of the
+sheet, and von Mises with backstresses the exact Armstrong-Frederick branch
+solutions - monotonic, reversed and cyclic - at any step size, since both
+paths keep their flow direction; backward Euler converges to them at first
+order (`docs/verification.md`, section 24).
+
 **The element.** With small strain the point strain is `eps = B u_e`, the
 internal force `int B^T sigma dV` and the tangent `int B^T C B dV`. Plastic
 flow is isochoric, and on an element with several integration points each

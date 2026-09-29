@@ -36,6 +36,7 @@ set(SPARLAB_TEST_SOURCES
   test_loads_thermal.cpp
   test_nonlinear.cpp
   test_plasticity.cpp
+  test_anisotropy.cpp
   test_dynamics.cpp
   test_contact.cpp
 )

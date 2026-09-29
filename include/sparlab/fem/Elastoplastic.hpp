@@ -1,8 +1,8 @@
 /// \file Elastoplastic.hpp
 /// \brief One element of an elastoplastic analysis: internal force,
-///        consistent tangent and updated internal variables from the J2
-///        return of Plasticity.hpp at each integration point, with small-
-///        strain or finite (total Lagrangian) kinematics.
+///        consistent tangent and updated internal variables from the return
+///        of Plasticity.hpp (J2, or Hill48 and Chaboche) at each integration
+///        point, with small-strain or finite (total Lagrangian) kinematics.
 ///
 /// **Small strain.** With the linear strain operator \f$B\f$ (the element's
 /// own, in the 3-D Voigt order - a plane model's out-of-plane row carries the
@@ -84,6 +84,9 @@ struct ElastoplasticElement {
   Scalar energy = 0.0;                 ///< stored energy, elastic + hardening [J]
   std::vector<PlasticState> states;    ///< per integration point, after the return
   int yielding_points = 0;             ///< points whose return was plastic
+  /// The tangent is symmetric (symmetrised to round-off); false for a
+  /// material whose backstresses recover, whose tangent is not.
+  bool symmetric = true;
 };
 
 /// The element at displacement `ue` from the converged states `committed`

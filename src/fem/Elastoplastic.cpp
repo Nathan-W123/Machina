@@ -193,7 +193,9 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
     Scalar change = 0.0;
     Scalar rate = 0.0;
     thermal_change(mat, kinematics, p.delta_t, temperature_scale, change, rate);
-    const PlasticResponse r = j2_return(mat, state, p.strain, committed[q], change);
+    // The thermal load rate needs the tangent too.
+    const PlasticResponse r =
+        plastic_return(mat, state, p.strain, committed[q], change, want_tangent || thermal);
     const Scalar w = p.weight;
     out.internal_force.noalias() += w * (p.b.transpose() * r.stress);
     out.energy += w * r.energy;
@@ -232,7 +234,11 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
     if (r.yielding) ++out.yielding_points;
     out.states.push_back(r.state);
   }
-  if (want_tangent) out.tangent = 0.5 * (out.tangent + out.tangent.transpose());
+  // Symmetric to round-off unless a backstress recovers (Armstrong-Frederick),
+  // whose consistent tangent is not symmetric and must stay so for Newton's
+  // quadratic convergence.
+  out.symmetric = mat.plasticity().symmetric_tangent();
+  if (want_tangent && out.symmetric) out.tangent = 0.5 * (out.tangent + out.tangent.transpose());
   return out;
 }
 
@@ -258,7 +264,7 @@ ElastoplasticStress elastoplastic_stress(const FemModel& model, Index e, const V
     thermal_change(mat, kinematics, p.delta_t, temperature_scale, change, rate);
     // The committed state is the converged one at this displacement, so the
     // return reproduces it (an elastic check from it).
-    const PlasticResponse r = j2_return(mat, state, p.strain, committed[q], change);
+    const PlasticResponse r = plastic_return(mat, state, p.strain, committed[q], change, false);
     Vector6 cauchy = r.stress;
     // The deformation measures use the element's own strain, not the
     // averaged one.
