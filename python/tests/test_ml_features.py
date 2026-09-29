@@ -39,7 +39,8 @@ def test_every_feature_is_finite_documented_and_in_schema_order(rng):
 
 def test_schema_hash_tracks_the_configuration_and_version():
     a, b = FeatureConfig(), FeatureConfig(time_source="depth")
-    assert FEATURE_SCHEMA_VERSION == "1"
+    assert FEATURE_SCHEMA_VERSION == "2"
+    assert "flow_stress_20_over_E" in a.names and "yield_over_E" not in a.names
     assert a.schema_hash() == FeatureConfig().schema_hash()
     assert a.schema_hash() != b.schema_hash()
     assert FeatureConfig.from_dict(b.to_dict()) == b
@@ -75,6 +76,51 @@ def test_local_features_do_not_change_when_the_part_moves_in_plane():
     assert np.abs(pa - pb).max() > 1e-3                        # these do move
     assert np.array_equal(fa.region[m:-m, m:-m],
                           fb.region[m + dj:grid.ny - m + dj, m + di:grid.nx - m + di])
+
+
+def test_time_frac_of_a_contour_path_moves_little_with_the_part():
+    """With the tool path as time source, time_frac is rebuilt from the path of
+    the moved part: a spiral gives the same values, a contour path differs at
+    a few nodes by up to ~0.03 (where its loops start)."""
+    part = Pyramid(0.045, 0.035, 50.0, 0.02, 0.03, 0.004, 0.004)
+    h = 2e-3
+    grid = Grid.centered(0.2, h)
+    X, Y = grid.mesh()
+    di, dj = 7, -4
+    base = HeightMap(grid, part.height(X, Y))
+    moved = HeightMap(grid, part.height(X - di * h, Y - dj * h))
+    cfg = FeatureConfig()
+    j = cfg.names.index("time_frac")
+    m = 30
+    for style, bound in (("spiral", 1e-9), ("contour", 0.05)):
+        st = SETUP.replace(toolpath_style=style)
+        a = feature_maps(base, st, config=cfg).values[m:-m, m:-m, j]
+        b = feature_maps(moved, st, config=cfg).values[m + dj:grid.ny - m + dj,
+                                                       m + di:grid.nx - m + di, j]
+        d = np.abs(a - b)
+        assert d.max() <= bound and np.mean(d > 1e-9) < 0.01, (style, d.max())
+
+
+def test_ring_extrema_equal_the_footprint_filters_exactly(rng):
+    """The run-decomposed ring min/max (linear in the ring radius) equals
+    scipy's footprint filters bit for bit, borders included."""
+    from scipy import ndimage
+
+    from precomp.ml.features import _footprint_extrema, _ring_footprints
+
+    for trial in range(4):
+        z = rng.normal(size=tuple(rng.integers(20, 70, 2)))
+        r = rng.uniform(4.0, 11.0)
+        fps = _ring_footprints([r * k / 4 for k in range(1, 5)])
+        for fp, (lo, hi) in zip(fps, _footprint_extrema(z, fps)):
+            assert np.array_equal(lo, ndimage.minimum_filter(z, footprint=fp, mode="nearest"))
+            assert np.array_equal(hi, ndimage.maximum_filter(z, footprint=fp, mode="nearest"))
+    # a fine grid and a large tool: 32 cells to the last ring (16.8 s before)
+    part = TruncatedCone(0.035, 50.0, 0.02, 0.005, 0.005)
+    hm = part.heightmap(Grid(-0.05, -0.05, 200, 200, 5e-4))
+    t = time.perf_counter()
+    X, _ = point_features(hm, SETUP.replace(tool_radius=8e-3), config=DEPTH_TIME)
+    assert np.all(np.isfinite(X)) and time.perf_counter() - t < 4.0
 
 
 def test_a_200_by_200_grid_featurises_within_two_seconds():

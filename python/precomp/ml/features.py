@@ -51,8 +51,10 @@ from ..toolpath import AIR, Toolpath
 
 #: Version of the feature schema. Bump it whenever a feature's definition
 #: changes (not only its name): a model trained under one version must not be
-#: fed features computed under another.
-FEATURE_SCHEMA_VERSION = "1"
+#: fed features computed under another. Version 2 renamed yield_over_E to
+#: flow_stress_20_over_E (the value, the flow stress at 20 % plastic strain
+#: over E, was never the yield stress over E).
+FEATURE_SCHEMA_VERSION = "2"
 
 #: Feature kinds, in the order they appear in the feature vector.
 KINDS = ("local", "placement", "global", "process", "material")
@@ -202,8 +204,9 @@ class FeatureConfig:
         L(FeatureSpec("thickness", "m", "initial sheet thickness", "process"))
         L(FeatureSpec("friction", "-", "Coulomb friction coefficient tool/sheet", "process"))
         L(FeatureSpec("elastic_curvature", "1/m", "elastic unloading curvature of a fully "
-                      "plastic bend, 3 sigma_0.2 / (E t): the classical springback scale of "
-                      "the sheet", "process"))
+                      "plastic bend, 3 sigma_f(0.2) / (E t), sigma_f(0.2) the flow stress at "
+                      "20 % plastic strain: the classical springback scale of the sheet",
+                      "process"))
         L(FeatureSpec("youngs_modulus", "Pa", "Young's modulus E", "material"))
         L(FeatureSpec("poisson_ratio", "-", "Poisson's ratio", "material"))
         L(FeatureSpec("yield_stress", "Pa", "initial yield stress", "material"))
@@ -220,8 +223,9 @@ class FeatureConfig:
         L(FeatureSpec("backstress_sat", "Pa",
                       f"monotonic back stress at plastic strain {BACKSTRESS_STRAIN:g} "
                       "(Prager + Armstrong-Frederick; tends to sum C / gamma)", "material"))
-        L(FeatureSpec("yield_over_E", "-", "flow stress at plastic strain 0.2 / E (elastic "
-                      "springback strain scale)", "material"))
+        L(FeatureSpec("flow_stress_20_over_E", "-", "flow stress at plastic strain 0.2 "
+                      "(20 %, not the 0.2 % proof stress) / E: the elastic springback strain "
+                      "scale", "material"))
         return out
 
     @property
@@ -288,6 +292,49 @@ def _ring_footprints(radius_cells: Sequence[float]) -> List[np.ndarray]:
     return out
 
 
+def _row_runs(row: np.ndarray) -> List[Tuple[int, int]]:
+    """(first, last) column of every run of True in a boolean row."""
+    idx = np.flatnonzero(row)
+    if idx.size == 0:
+        return []
+    cuts = np.flatnonzero(np.diff(idx) > 1)
+    return list(zip(np.r_[idx[0], idx[cuts + 1]].tolist(), np.r_[idx[cuts], idx[-1]].tolist()))
+
+
+def _footprint_extrema(z: np.ndarray, footprints: Sequence[np.ndarray]
+                       ) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """(min, max) of z over each footprint around every node, border mode
+    'nearest' - equal to ndimage.minimum_filter / maximum_filter with that
+    footprint, bit for bit, at a cost linear in the footprint radius rather
+    than its area: every row of a footprint is a few runs of columns, and the
+    extreme over a run is a 1-D running extreme (O(n) whatever its length),
+    computed once per run length on the padded array and shifted. The
+    footprints share one odd shape."""
+    ry, rx = footprints[0].shape[0] // 2, footprints[0].shape[1] // 2
+    ny, nx = z.shape
+    zp = np.pad(z, ((ry, ry), (rx, rx)), mode="edge")
+    cache: Dict[Tuple[str, int], np.ndarray] = {}
+    out = []
+    for fp in footprints:
+        pair = []
+        for op, filt, red in (("min", ndimage.minimum_filter1d, np.minimum),
+                              ("max", ndimage.maximum_filter1d, np.maximum)):
+            acc: Optional[np.ndarray] = None
+            for i in range(fp.shape[0]):
+                for a, b in _row_runs(fp[i]):
+                    w = b - a + 1
+                    if (op, w) not in cache:
+                        cache[(op, w)] = filt(zp, w, axis=1, mode="nearest")
+                    # column c of the filtered row holds the extreme over
+                    # [c - w // 2, c - w // 2 + w - 1]; the run [x + a, x + b]
+                    # of the padded row is centred on c = x + a + w // 2
+                    v = cache[(op, w)][i:i + ny, a + w // 2:a + w // 2 + nx]
+                    acc = v.copy() if acc is None else red(acc, v, out=acc)
+            pair.append(acc)
+        out.append((pair[0], pair[1]))
+    return out
+
+
 def material_features(setup: FormingSetup) -> Dict[str, float]:
     """The material descriptors of `setup.material` (names as in the schema)."""
     m = setup.material
@@ -301,7 +348,7 @@ def material_features(setup: FormingSetup) -> Dict[str, float]:
                r90=1.0 if m.r90 is None else m.r90)
     a = BACKSTRESS_STRAIN
     out["backstress_sat"] = float(m.uniaxial_stress(a) - m.flow_stress(a))
-    out["yield_over_E"] = float(m.flow_stress(FLOW_STRAINS[0]) / m.youngs_modulus)
+    out["flow_stress_20_over_E"] = float(m.flow_stress(FLOW_STRAINS[0]) / m.youngs_modulus)
     return {k: float(v) for k, v in out.items()}
 
 
@@ -485,13 +532,15 @@ def feature_maps(commanded: HeightMap, setup: Union[FormingSetup, Mapping[str, A
     cols["polar_sin"], cols["polar_cos"] = dy / reg, dx / reg
     cols["time_frac"] = _time_map(commanded, setup, toolpath, depth_frac, config)
     radii = [ring_step * k / h for k in range(1, config.rings + 1)]
-    for k, fp in enumerate(_ring_footprints(radii), 1):
+    fps = _ring_footprints(radii)
+    for k, fp in enumerate(fps, 1):
         if not fp.any():
             raise ValueError(f"ring {k} contains no grid node at spacing {h:g} m")
+    for k, (fp, (lo, hi)) in enumerate(zip(fps, _footprint_extrema(z, fps)), 1):
         kern = fp.astype(float) / fp.sum()
         cols[f"ring{k}_mean"] = _pad_convolve(z, kern) - z
-        cols[f"ring{k}_min"] = ndimage.minimum_filter(z, footprint=fp, mode="nearest") - z
-        cols[f"ring{k}_max"] = ndimage.maximum_filter(z, footprint=fp, mode="nearest") - z
+        cols[f"ring{k}_min"] = lo - z
+        cols[f"ring{k}_max"] = hi - z
     e = float(setup.free_half_width)
     cols["clamp_dist"] = e - np.maximum(np.abs(X), np.abs(Y))
     cols["blank_radius"] = np.hypot(X, Y) / e
