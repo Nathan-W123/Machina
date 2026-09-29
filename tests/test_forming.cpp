@@ -428,6 +428,9 @@ TEST_CASE("a flat punch compresses an elastic block by the exact force, penalty 
       if (nxy == 1) {
         const Scalar kappa = s * e / std::sqrt(area / 4.0);
         const Scalar exact = rigid / (1.0 + e / (kappa * height));
+        log::info("flat punch, s = ", s, ": force ", force, " N against ", exact,
+                  " N with the penalty in series (relative error ",
+                  std::abs(force - exact) / exact, "), rigid contact ", rigid, " N");
         CHECK(std::abs(force - exact) / exact < 1.0e-9);
         CHECK(last.tools[0].max_penetration == Approx(exact / (area * kappa)).epsilon(1e-9));
         errors_rigid.push_back(std::abs(force - rigid) / rigid);
@@ -442,6 +445,8 @@ TEST_CASE("a flat punch compresses an elastic block by the exact force, penalty 
   }
   // The force converges to the rigid-contact one as 1/s.
   REQUIRE(errors_rigid.size() == 3);
+  log::info("flat punch: error against rigid contact ", errors_rigid[0], ", ", errors_rigid[1],
+            ", ", errors_rigid[2], " at s = 10, 100, 1000");
   CHECK(errors_rigid[1] / errors_rigid[0] == Approx(0.1).epsilon(0.02));
   CHECK(errors_rigid[2] / errors_rigid[1] == Approx(0.1).epsilon(0.02));
 }
@@ -533,6 +538,10 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
     const ToolRecord& t = last.tools.at(0);
     INFO("F = " << t.force.transpose() << " N, " << t.active_nodes << " node(s), "
                 << t.slipping_nodes << " slipping");
+    log::info("ironing, ", to_string(shape), ": ", t.active_nodes, " node(s) in contact, ",
+              t.slipping_nodes, " slipping; friction load / (mu normal load) - 1 = ",
+              t.friction_load / (mu * t.normal_load) - 1.0, "; -F_x / F_z = ",
+              -t.force.x() / t.force.z());
     CHECK(t.active_nodes >= 4);
     CHECK(t.slipping_nodes == t.active_nodes);
     CHECK(t.friction_load == Approx(mu * t.normal_load).epsilon(1.0e-6));
@@ -545,6 +554,67 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
       CHECK(-t.force.x() / t.force.z() == Approx(mu).epsilon(0.1));
     }
   }
+}
+
+TEST_CASE("two opposed tools pinch a sheet with equal and opposite forces", "[forming]") {
+  // Double-sided forming: a sphere on each face of a clamped elastic sheet,
+  // their paths mirror images about its mid-plane, pressed in and moved
+  // together. By that symmetry the two tools take equal and opposite normal
+  // forces and equal friction forces, and each face touches only its own
+  // tool; the clamp carries the friction - the resultant of the reactions is
+  // the total force on the tools (the body's equilibrium).
+  const Scalar t = 0.002;
+  std::vector<DisplacementConstraint> bcs;
+  DisplacementConstraint frame;
+  frame.region = box(-kInf, 0.0, -kInf, kInf, -kInf, kInf, "left");
+  frame.region.members.push_back(box(0.012, kInf).members[0]);
+  for (int k = 0; k < 3; ++k) frame.set(k, true);
+  bcs.push_back(frame);
+  FemModel model = finalised(hex_block(12, 6, 4, 0.012, 0.006, t, 0.0, 0.0, -t),
+                             default_material(), 1.0, StressState::ThreeDimensional, bcs);
+  Assembler assembler(model);
+  const Scalar r = 0.004;
+  const Scalar depth = 5.0e-5;
+  RigidTool top;
+  top.name = "top";
+  top.radius = r;
+  top.friction = 0.1;
+  top.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top face");
+  top.trajectory = path({0.0, 1.0, 2.0}, {Vector3(0.005, 0.003, r + 1.0e-4),
+                                          Vector3(0.005, 0.003, r - depth),
+                                          Vector3(0.007, 0.003, r - depth)});
+  RigidTool bottom = top;
+  bottom.name = "bottom";
+  bottom.surface = box(-kInf, kInf, -kInf, kInf, -kInf, -t, "bottom face");
+  for (Vector3& p : bottom.trajectory.points) p.z() = -t - p.z();
+  FormingOptions o;
+  o.residual_tolerance = 1.0e-10;
+  o.displacement_tolerance = 1.0e-10;
+  o.tools = {top, bottom};
+  FormingStep step;
+  step.name = "pinch";
+  step.tools = {"top", "bottom"};
+  step.max_tool_travel = 5.0e-4;
+  o.steps.push_back(step);
+  const FormingResult res = FormingAnalysis(model, assembler, o).run();
+  REQUIRE(res.completed);
+  const FormingIncrement& last = res.steps[0].increments.back();
+  REQUIRE(last.tools.size() == 2);
+  const ToolRecord& a = last.tools[0];
+  const ToolRecord& b = last.tools[1];
+  INFO("top " << a.force.transpose() << " N, bottom " << b.force.transpose() << " N");
+  CHECK(a.active_nodes > 0);
+  CHECK(a.active_nodes == b.active_nodes);
+  CHECK(a.force.z() > 0.0);
+  CHECK(b.force.z() < 0.0);
+  CHECK(std::abs(a.force.z() + b.force.z()) < 1.0e-6 * a.force.z());
+  CHECK(std::abs(a.force.x() - b.force.x()) < 1.0e-6 * a.force.z());
+  Vector3 reactions = Vector3::Zero();
+  const Vector& rf = res.steps[0].reactions;
+  for (Index node = 0; node < model.mesh().num_nodes(); ++node) {
+    reactions += rf.segment(node * 3, 3);
+  }
+  CHECK((reactions - (a.force + b.force)).norm() < 1.0e-6 * a.force.z());
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +753,8 @@ TEST_CASE("a release onto 3-2-1 supports is invariant under a rigid motion of th
     const Scalar err = (moved.final_state.displacement - rigid).cwiseAbs().maxCoeff();
     INFO("rotation " << angle << " rad: largest deviation from the rigid motion " << err
                      << " m");
+    log::info("release with the supports moved rigidly (rotation ", angle,
+              " rad): largest deviation from the rigid motion ", err, " m");
     CHECK(err < 1.0e-14);
     CHECK(moved.steps[0].max_plastic_strain ==
           Approx(held.steps[0].max_plastic_strain).epsilon(1e-12));
