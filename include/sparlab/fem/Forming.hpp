@@ -278,7 +278,12 @@ struct FormingResult {
   bool plastic = false;
   bool mean_dilatation = false;
   std::string kinematics;
-  std::string linear_solver;  ///< the factorisations used
+  std::string linear_solver;  ///< the factorisations used, and how often
+  /// The factorisation attempts that failed, and how often (a Cholesky of a
+  /// tangent that is not positive definite, followed by LDL^T; an LDL^T with
+  /// a vanishing pivot, followed by LU; a singular LU, which fails the
+  /// iteration); empty if none.
+  std::string failed_factorisations;
   /// Wall-clock seconds by phase: "element_tangent" (element loop and
   /// assembly with the tangent), "element_residual" (without it: line search
   /// and acceptance), "contact", "factorisation" (scatter into the

@@ -114,7 +114,7 @@ class PartitionedFactor {
         }
         llt_.factorize(kff_);
         if (llt_.info() == Eigen::Success) return use(Kind::Cholmod, "CHOLMOD supernodal LLT");
-        ++counts_["CHOLMOD LLT not positive definite"];
+        ++failed_["CHOLMOD supernodal LLT (not positive definite)"];
       }
 #endif
       ScopedTimer st(timing, "factor_ldlt");
@@ -130,6 +130,7 @@ class PartitionedFactor {
           return use(Kind::Ldlt, "SimplicialLDLT");
         }
       }
+      ++failed_["SimplicialLDLT (vanishing pivot)"];
     }
 #ifdef SPARLAB_HAVE_CHOLMOD
     if (suitesparse_) {
@@ -139,7 +140,10 @@ class PartitionedFactor {
         umf_ready_ = true;
       }
       umf_.factorize(kff_);
-      if (umf_.info() != Eigen::Success) return false;
+      if (umf_.info() != Eigen::Success) {
+        ++failed_["UMFPACK LU (singular)"];
+        return false;
+      }
       return use(Kind::Umfpack, "UMFPACK LU");
     }
 #endif
@@ -149,7 +153,10 @@ class PartitionedFactor {
       lu_ready_ = true;
     }
     lu_.factorize(kff_);
-    if (lu_.info() != Eigen::Success) return false;
+    if (lu_.info() != Eigen::Success) {
+      ++failed_["SparseLU (singular)"];
+      return false;
+    }
     return use(Kind::Lu, "SparseLU");
   }
 
@@ -169,16 +176,22 @@ class PartitionedFactor {
   const SparseMatrix& matrix() const { return kff_; }
   /// The factorisations used so far and how often, e.g.
   /// "CHOLMOD supernodal LLT x 812, UMFPACK LU x 40".
-  std::string names() const {
+  std::string names() const { return listing(counts_); }
+  /// The attempts that failed, each followed by the next factorisation in
+  /// line (an LU that fails fails the iteration), and how often, e.g.
+  /// "CHOLMOD supernodal LLT (not positive definite) x 2"; empty if none.
+  std::string failures() const { return listing(failed_); }
+
+ private:
+  enum class Kind { None, Cholmod, Ldlt, Lu, Umfpack };
+
+  static std::string listing(const std::map<std::string, int>& counts) {
     std::string out;
-    for (const auto& [name, count] : counts_) {
+    for (const auto& [name, count] : counts) {
       out += (out.empty() ? "" : ", ") + name + " x " + std::to_string(count);
     }
     return out;
   }
-
- private:
-  enum class Kind { None, Cholmod, Ldlt, Lu, Umfpack };
 
   bool use(Kind kind, const char* name) {
     kind_ = kind;
@@ -250,7 +263,8 @@ class PartitionedFactor {
   std::vector<Eigen::Index> positions_;  ///< nonzero of `full` -> nonzero of kff_, or -1
   SparseMatrix kff_;
   Kind kind_ = Kind::None;
-  std::map<std::string, int> counts_;
+  std::map<std::string, int> counts_;  ///< factorisations used
+  std::map<std::string, int> failed_;  ///< attempts that failed
   Eigen::SimplicialLDLT<SparseMatrix> ldlt_;
   bool ldlt_ready_ = false;
   Eigen::SparseLU<SparseMatrix> lu_;
@@ -1294,6 +1308,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   result.final_state.reference_force = reference;
   result.final_state.tools_active = placed;
   result.linear_solver = factor.names();
+  result.failed_factorisations = factor.failures();
   timing.add("total", wall.elapsed_seconds());
   if (!result.completed) log::warn("forming analysis stopped: ", result.termination);
   return result;

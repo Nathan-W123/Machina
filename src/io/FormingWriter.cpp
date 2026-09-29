@@ -140,6 +140,7 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
   timing.set("iterations", num(result.total_iterations));
   timing.set("cuts", num(result.total_cuts));
   timing.set("linear_solver", str(result.linear_solver));
+  timing.set("failed_factorisations", str(result.failed_factorisations));
   timing.set("suitesparse", json::Value::make_bool(options.suitesparse &&
                                                    forming_suitesparse_available()));
   out.set("timing", timing);

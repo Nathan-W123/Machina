@@ -1393,6 +1393,13 @@ TEST_CASE("a forming run writes the result files of its output contract", "[form
     CHECK(steps.array_items()[0].find(key) != nullptr);
   }
   CHECK(steps.array_items()[2].find("type")->string_value() == "release");
+  // The factorisations used, and apart from them those that failed.
+  const json::Value& timing = *summary.find("timing");
+  REQUIRE(timing.find("linear_solver") != nullptr);
+  REQUIRE(timing.find("failed_factorisations") != nullptr);
+  CHECK(timing.find("linear_solver")->string_value() == r.linear_solver);
+  CHECK(timing.find("failed_factorisations")->string_value() == r.failed_factorisations);
+  CHECK(r.linear_solver.find('(') == std::string::npos);
   std::filesystem::remove_all(dir);
 }
 

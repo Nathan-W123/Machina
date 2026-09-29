@@ -133,6 +133,9 @@ int main(int argc, char** argv) {
     std::cout << "  runtime: " << app::format(runtime, 4) << " s (" << result.total_increments
               << " increments, " << result.total_iterations << " Newton iterations; "
               << result.linear_solver << ")\n";
+    if (!result.failed_factorisations.empty()) {
+      std::cout << "  failed factorisations: " << result.failed_factorisations << "\n";
+    }
     std::cout << "  output:  " << writer.directory() << "\n";
     if (!result.completed) {
       std::cerr << "[error] the forming analysis stopped: " << result.termination << "\n";
