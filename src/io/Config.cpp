@@ -1209,6 +1209,15 @@ Configuration parse_configuration(const json::Value& document, const std::string
               bc, step.name + "_bc" + std::to_string(bc_index++), dim);
           sc.name = sc.constraint.region.name;
           sc.mode = parse_constraint_mode(bc.string_or("mode", "hold"));
+          // A held constraint keeps its DOFs where the step finds them: a
+          // value there would be ignored, while the same entry at the top
+          // level prescribes it.
+          if (sc.mode == StepConstraint::Mode::Hold && bc.child("value").exists()) {
+            throw ConfigError("'" + bc.path() + ".value' is given, but the constraint's mode "
+                              "is \"hold\" (the default), which keeps its DOFs where the step "
+                              "finds them; give \"mode\": \"absolute\" to move them to the "
+                              "value over the step");
+          }
           step.constraints.push_back(std::move(sc));
         }
         previous_tools = listed;

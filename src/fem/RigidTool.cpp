@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -199,6 +200,16 @@ FrictionTangent parse_friction_tangent(const std::string& text) {
 
 void RigidTool::validate(int dim) const {
   const std::string label = "tool '" + name + "'";
+  // The name is a field of tool_forces.csv (and names the tool in the
+  // summary): no separator, quote or space to escape.
+  const bool plain = !name.empty() && std::all_of(name.begin(), name.end(), [](char ch) {
+    return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' || ch == '-' ||
+           ch == '.';
+  });
+  if (!plain) {
+    throw ConfigError("tool name '" + name + "' must be non-empty and use only letters, digits, "
+                      "'_', '-' and '.' (it is a field of tool_forces.csv)");
+  }
   if (shape != Shape::Plane && !(radius > 0.0 && std::isfinite(radius))) {
     throw ConfigError(label + ": the " + to_string(shape) + " needs a positive radius");
   }

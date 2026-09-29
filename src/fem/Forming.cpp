@@ -309,6 +309,14 @@ Partition build_partition(const Mesh& mesh, const std::vector<StepConstraint>& c
     bool any = false;
     for (int k = 0; k < dim; ++k) any = any || c.constraint.fixes(k);
     if (!any) throw ConfigError(label + " fixes no component");
+    for (int k = 0; k < dim; ++k) {
+      if (c.mode == StepConstraint::Mode::Hold && c.constraint.fixes(k) &&
+          c.constraint.value(k) != 0.0) {
+        throw ConfigError(label + " holds its DOFs where the step finds them (mode hold) but "
+                                  "gives them a value, which would be ignored; use mode "
+                                  "absolute to move them to it");
+      }
+    }
     const std::vector<Index> nodes = c.constraint.region.select_nodes(mesh);
     if (nodes.empty()) throw ConfigError(label + " selects no node");
     for (Index node : nodes) {

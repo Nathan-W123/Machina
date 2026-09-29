@@ -238,7 +238,7 @@ refuses unknown ones).
 | `mean_dilatation` | `"auto"` | B-bar of elastoplastic Q4 / Hex8 (as in `nonlinear`) |
 | `friction_tangent` | `"exact"` | `"exact"` (consistent, LU) or `"symmetric"` (a positive semi-definite friction stiffness: Cholesky, linear convergence where nodes slip) |
 | `solver` | `"auto"` | `"auto"`: SuiteSparse when built in; `"eigen"`: Eigen's factorisations |
-| `tools[].name` | `"tool<i>"` | unique |
+| `tools[].name` | `"tool<i>"` | unique; letters, digits, `_`, `-` and `.` only (a field of `tool_forces.csv`) |
 | `tools[].shape` | `"sphere"` | `"sphere"`, `"plane"` or `"cylinder"` |
 | `tools[].radius` | required (sphere, cylinder) | `> 0` [m] |
 | `tools[].normal` | required (plane) | the plane's normal, out of the tool towards the body |
@@ -254,7 +254,7 @@ refuses unknown ones).
 | `steps[].time` | see below | `[t_begin, t_end]` [s], not before the previous step's end; later only if the tools active in both steps do not move in between |
 | `steps[].max_tool_travel` | half the smallest slave-node size | largest travel of an active tool in one increment [m] |
 | `steps[].increments` | 1 (form), 10 (release) | the window in this many equal increments at the start (and at most) |
-| `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default) or `"absolute"` (`value` the absolute end value) |
+| `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default: the DOFs stay where the step finds them; a `value` is refused) or `"absolute"` (`value` the absolute end value) |
 | `newton.*` | see above | Newton settings |
 | `output.vtk` | true | per-step VTK files (`--no-vtk` overrides) |
 | `output.snapshots` | `"steps"` | `"steps"`: per-step files; `"none"`: only summary, mesh and tool forces; an integer N: per-step files plus a snapshot every N increments |
@@ -263,7 +263,9 @@ A step's default window: for a `form` step with tools, the union of their
 trajectories' spans, starting no earlier than the previous step ended; for a
 `release` step (or a form step without tools) the unit interval after the
 previous step. The deck is refused - naming the key - for an unknown tool in
-a step, a release keeping a tool the previous step does not list, a
+a step, a release keeping a tool the previous step does not list, a tool
+name with other characters than letters, digits, `_`, `-` and `.`, a `value`
+on a held step constraint, a
 non-positive radius, negative friction, a time window that runs backwards,
 a trajectory with fewer than two knots or times that do not increase, and
 (when the analysis is built) a surface that selects no face, constraints

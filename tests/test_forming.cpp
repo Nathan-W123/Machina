@@ -376,6 +376,15 @@ TEST_CASE("tool contact refuses what it cannot model", "[forming]") {
   bad.surface = box(-kInf, kInf, -kInf, kInf, 0.5, kInf);
   CHECK_THROWS_WITH(ToolContact(model, {bad}), ContainsSubstring("selects no boundary face"));
   CHECK_THROWS_WITH(ToolContact(model, {tool, tool}), ContainsSubstring("used twice"));
+  // The name is a field of tool_forces.csv: no separator to escape.
+  for (const std::string name : {"roll,er", "a b", "", "\"q\""}) {
+    bad = tool;
+    bad.name = name;
+    CHECK_THROWS_WITH(ToolContact(model, {bad}), ContainsSubstring("must be non-empty and use only"));
+  }
+  bad = tool;
+  bad.name = "Tool_2-b.v1";
+  CHECK_NOTHROW(ToolContact(model, {bad}));
   // A node through the sphere's centre: the increment is cut.
   ToolContact contact(model, {tool});
   Vector u = Vector::Zero(model.dofs().num_dofs());
@@ -1270,6 +1279,29 @@ TEST_CASE("the forming block of a deck is read in full, strictly, and refused wh
             "region": {"nearest_node": [0, 0, 0]})", R"("mode": "clamp",
             "region": {"nearest_node": [0, 0, 0]})", "expected \"hold\" or \"absolute\"");
   refuse(R"("snapshots": 2)", R"("snapshots": "all")", "'forming.output.snapshots'");
+  // A value on a held constraint would be ignored (the top level prescribes it).
+  refuse(R"({"name": "B", "fix": ["y", "z"],)",
+         R"({"name": "B", "fix": ["y", "z"], "value": [0, 0, 0.001],)",
+         "'forming.steps[2].boundary_conditions[1].value' is given, but the constraint's mode "
+         "is \"hold\"");
+  refuse(R"({"name": "punch", "shape")", R"({"name": "punch,1", "shape")",
+         "tool name 'punch,1' must be non-empty");
+  {
+    std::string text = kFullForming;
+    const std::string from = R"({"name": "B", "fix": ["y", "z"],)";
+    text.replace(text.find(from), from.size(),
+                 R"({"name": "B", "fix": ["y", "z"], "mode": "absolute", "value": [0, 0, 0.001],)");
+    const Configuration a = parse_deck(forming_deck(text));
+    CHECK(a.forming.options.steps[2].constraints[1].constraint.value(2) == 0.001);
+    // The API refuses a held constraint with a value too.
+    FormingOptions held = a.forming.options;
+    held.steps[2].constraints[1].mode = StepConstraint::Mode::Hold;
+    FemModel held_model = build_model(a);
+    Assembler held_assembler(held_model);
+    CHECK_THROWS_WITH(FormingAnalysis(held_model, held_assembler, held),
+                      ContainsSubstring("step 'release', constraint 'B' holds its DOFs") &&
+                          ContainsSubstring("use mode absolute"));
+  }
   refuse(R"("friction_tangent": "exact")", R"("friction_tangent": "approximate")",
          "expected \"exact\" or \"symmetric\"");
   {
