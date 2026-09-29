@@ -131,3 +131,13 @@ def proxy_split(proxy_samples):
     pick = lambda ids: [byid[i] for i in ids]  # noqa: E731
     return {"train": pick(train), "calibration": pick(cal), "test": pick(test),
             "pool": pick(pool), "family": pick(fam)}
+
+
+@pytest.fixture(scope="session")
+def gbm_surrogate(proxy_split, ml_features):
+    """A calibrated GBMEnsemble surrogate with its envelope, trained without
+    the held-out family."""
+    from precomp.ml import GBMEnsemble, train_surrogate
+    return train_surrogate(GBMEnsemble(4, max_iter=100), proxy_split["train"],
+                           calibration=proxy_split["calibration"], features=ml_features,
+                           points_per_sample=250, seed=0)

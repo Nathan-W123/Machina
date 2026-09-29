@@ -29,10 +29,17 @@ physics" or "scan". torch is needed only for MLPEnsemble and FieldUNet.
 
 from .dataset import (SOURCE_LABELS, Dataset, Sample, Table, build_table, family_split,
                       grouped_kfold, grouped_split, source_label)
+from .evaluate import EvaluationReport, cross_validate, evaluate_surrogate, family_holdout
 from .features import (FEATURE_SCHEMA_VERSION, FeatureConfig, FeatureSpec, feature_maps,
                        global_features, point_features, region_labels)
 from .generate import (DesignPoint, DesignSpace, PerturbationSpec, ProxyParams, ProxySimulator,
                        SparlabSimulator, design_points, generate, simulate_samples)
+from .models import (FEAPrior, FieldUNet, GBMEnsemble, MLPEnsemble, ResidualModel,
+                     TransferModel, model_from_state)
+from .ood import OODEnvelope
+from .registry import load_model, read_manifest, save_model
+from .surrogate import DeviationSurrogate, train_surrogate, transfer_surrogate
+from .uncertainty import ConformalCalibrator, coverage_report, intervals
 
 __all__ = [
     "FEATURE_SCHEMA_VERSION", "FeatureConfig", "FeatureSpec", "point_features", "feature_maps",
@@ -41,4 +48,10 @@ __all__ = [
     "family_split", "source_label", "SOURCE_LABELS",
     "DesignSpace", "DesignPoint", "design_points", "PerturbationSpec", "ProxyParams",
     "ProxySimulator", "SparlabSimulator", "generate", "simulate_samples",
+    "GBMEnsemble", "MLPEnsemble", "FieldUNet", "ResidualModel", "TransferModel", "FEAPrior",
+    "model_from_state",
+    "ConformalCalibrator", "intervals", "coverage_report", "OODEnvelope",
+    "DeviationSurrogate", "train_surrogate", "transfer_surrogate",
+    "save_model", "load_model", "read_manifest",
+    "EvaluationReport", "evaluate_surrogate", "cross_validate", "family_holdout",
 ]
