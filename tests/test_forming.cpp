@@ -32,6 +32,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
 
 #include <algorithm>
@@ -268,8 +269,8 @@ TEST_CASE("the penalty contact tangent is the exact derivative of its forces, wi
       // and an anchor so the trial sticks or slips clearly.
       ToolContactEvaluation ev0 = contact.evaluate(u, t, false);
       REQUIRE(ev0.tools[0].active_nodes >= 3);
+      ToolHistory h(1);
       if (regime != "frictionless" && regime != "new") {
-        ToolHistory h(1);
         const Mesh& mesh = model.mesh();
         for (Index node : contact.slave_nodes(0)) {
           Vector3 x = mesh.node(node) + u.segment(node * 3, 3);
@@ -304,6 +305,26 @@ TEST_CASE("the penalty contact tangent is the exact derivative of its forces, wi
       }
       if (regime == "stick" || regime == "new") CHECK(slipping == 0);
       if (regime == "frictionless") CHECK(symmetric);
+
+      // The symmetric friction tangent: the same forces, symmetric node
+      // blocks whose friction part is positive semi-definite - for the
+      // plane, whose normal part is too, the whole block. (The symmetric
+      // part of the exact tangent is indefinite where a node slips.)
+      ToolContact sym(model, {tool}, FrictionTangent::Symmetric);
+      sym.begin_increment(u, t, t, {1}, 1.0e-3);
+      if (!h[0].empty()) sym.set_history(h);
+      const ToolContactEvaluation es = sym.evaluate(u, t, true);
+      CHECK(es.symmetric);
+      CHECK((es.residual - contact.evaluate(u, t, false).residual).cwiseAbs().maxCoeff() == 0.0);
+      Scalar lowest = 0.0;
+      Scalar top = 0.0;
+      for (const auto& b : es.tangent) {
+        CHECK((b.k - b.k.transpose()).cwiseAbs().maxCoeff() == 0.0);
+        const Vector3 values = Eigen::SelfAdjointEigenSolver<Matrix3>(b.k).eigenvalues();
+        lowest = std::min(lowest, values.minCoeff());
+        top = std::max(top, values.maxCoeff());
+      }
+      if (shape == RigidTool::Shape::Plane) CHECK(lowest >= -1.0e-12 * top);
     }
   }
 
@@ -560,6 +581,19 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
       CHECK(std::abs(t.force.y()) < 1.0e-6 * t.force.z());
     } else {
       CHECK(-t.force.x() / t.force.z() == Approx(mu).epsilon(0.1));
+    }
+    // The symmetric friction tangent reaches the same state (Newton's
+    // method converges more slowly with it, from contact on).
+    if (shape == RigidTool::Shape::Plane) {
+      o.friction_tangent = FrictionTangent::Symmetric;
+      const FormingResult rs = FormingAnalysis(model, assembler, o).run();
+      REQUIRE(rs.completed);
+      log::info("ironing, plane, symmetric friction tangent: ", rs.total_iterations,
+                " iterations (exact tangent ", r.total_iterations, "), ", rs.total_cuts,
+                " cuts; ", rs.linear_solver);
+      CHECK(rs.total_cuts == 0);
+      const ToolRecord& ts = rs.steps.back().increments.back().tools.at(0);
+      CHECK((ts.force - t.force).norm() < 1.0e-8 * t.force.norm());
     }
   }
 }

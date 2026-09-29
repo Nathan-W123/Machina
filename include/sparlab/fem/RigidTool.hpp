@@ -65,10 +65,19 @@
 /// The force on the node is \f$f_N + F_T\f$. The tangent is the exact
 /// derivative of that force at fixed history - transport, projection, the
 /// normal force in the slip cone and the normalisation included - which is
-/// not symmetric; `FrictionTangent::Symmetric` uses its symmetric part
-/// instead (a symmetric factorisation, slower Newton convergence). A node
-/// that leaves contact loses its history. The history is keyed by mesh node,
-/// so it does not depend on the Dirichlet partition of an analysis step.
+/// not symmetric. `FrictionTangent::Symmetric` replaces its friction part by
+/// a positive semi-definite approximation, the friction force's stiffness in
+/// the tangent plane alone: \f$\kappa_T A P\f$ in stick and
+/// \f$(\mu p_N/|F^{tr}|)\,\kappa_T A\,(P - ee^T)\f$ in slip
+/// (\f$P = I - nn^T\f$, \f$e = F^{tr}/|F^{tr}|\f$), without the transport
+/// and curvature terms and without the slip force's dependence on the gap,
+/// \f$\mu\kappa A\,en^T\f$ - a symmetric factorisation, and Newton
+/// converges linearly where nodes slip. (The symmetric part of the exact
+/// tangent is no substitute: in the plane of n and e a slipping node's block
+/// is \f$\kappa A\,[[1, \mu/2], [\mu/2, 0]]\f$, indefinite, and Newton's
+/// method fails with it as contact begins.) A node that leaves contact
+/// loses its history. The history is keyed by mesh node, so it does not
+/// depend on the Dirichlet partition of an analysis step.
 ///
 /// **Search.** Before each increment, from the converged state
 /// \f$u_0\f$ at \f$t_0\f$ to \f$t_1\f$, a node is a candidate for tool k if
@@ -177,7 +186,7 @@ RigidTool::Shape parse_tool_shape(const std::string& text);
 /// How the frictional contact tangent enters Newton's method.
 enum class FrictionTangent {
   Exact,     ///< the consistent, non-symmetric tangent (LU)
-  Symmetric  ///< its symmetric part (a symmetric factorisation)
+  Symmetric  ///< a positive semi-definite friction part (a symmetric factorisation)
 };
 std::string to_string(FrictionTangent mode);
 /// "exact" or "symmetric".

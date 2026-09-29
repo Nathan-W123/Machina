@@ -490,9 +490,13 @@ ToolContactEvaluation ToolContact::evaluate(const Vector& u, Scalar t, bool want
         const Scalar trial_norm = trial.norm();
         const Scalar limit = mu * pn;
         Matrix3 d_ft;
+        // The symmetric tangent's friction part (see the header): the
+        // stiffness of the friction force in the tangent plane alone.
+        Matrix3 k_sym;
         if (trial_norm <= limit) {
           ft = trial;
           d_ft = d_trial;
+          k_sym = kt * p;
         } else {
           slipping = true;
           const Vector3 e = trial / trial_norm;
@@ -500,9 +504,14 @@ ToolContactEvaluation ToolContact::evaluate(const Vector& u, Scalar t, bool want
           // d(mu p_N)/dx = -mu kappa A n^T.
           d_ft = -(mu * ka) * (e * nrm.transpose()) +
                  (limit / trial_norm) * (identity - e * e.transpose()) * d_trial;
+          k_sym = (limit / trial_norm) * kt * (p - e * e.transpose());
         }
         force += ft;
-        k_node -= d_ft;
+        if (friction_tangent_ == FrictionTangent::Symmetric) {
+          k_node += k_sym;
+        } else {
+          k_node -= d_ft;
+        }
         ToolNodeHistory h;
         h.force = ft;
         h.relative = r;
@@ -529,7 +538,7 @@ ToolContactEvaluation ToolContact::evaluate(const Vector& u, Scalar t, bool want
       res.area += s.area[idx];
       if (want_tangent) {
         if (friction_tangent_ == FrictionTangent::Symmetric) {
-          k_node = 0.5 * (k_node + k_node.transpose()).eval();
+          k_node = 0.5 * (k_node + k_node.transpose()).eval();  // its round-off
         }
         const Matrix3 kd = k_node.topLeftCorner(3, 3);
         const Scalar top = kd.cwiseAbs().maxCoeff();

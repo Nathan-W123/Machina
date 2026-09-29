@@ -96,11 +96,19 @@ ratio `rho_T` default 1), and the node sticks where `|F_tr| <= mu p_N`,
 slipping otherwise with `F_T = mu p_N F_tr/|F_tr|`. The tangent is the exact
 derivative of the node force at fixed history (transport, projection, the
 normal force in the slip cone): it is not symmetric, so the tangent is
-factorised by LU; `friction_tangent: "symmetric"` uses its symmetric part
-instead (a symmetric factorisation, but Newton converges only linearly
-where nodes slip - on a fully plastic, fully slipping punch it did not
-converge at all, so it is an option for light friction only). A node that
-leaves contact loses its history. The history is keyed by mesh node, so it
+factorised by LU. `friction_tangent: "symmetric"` replaces its friction part
+by a positive semi-definite approximation, the friction force's stiffness in
+the tangent plane alone - `kappa_T A P` in stick, `(mu p_N / |F_tr|)
+kappa_T A (P - e e^T)` in slip (`P = I - n n^T`, `e = F_tr / |F_tr|`) -
+without the transport and curvature terms and the slip force's dependence
+on the gap, `mu kappa A e n^T`. The tangent then takes a Cholesky
+factorisation, but Newton converges only linearly where nodes slip: ironing
+an elastic block with a flat punch took 47 iterations instead of 31, an
+elastoplastic block with a sphere 3 063 instead of 392. (The symmetric part
+of the exact tangent is no substitute: in the plane of `n` and `e` a
+slipping node's block is `kappa A [[1, mu/2], [mu/2, 0]]`, indefinite, and
+Newton's method stalled with it where contact began.) A node that leaves
+contact loses its history. The history is keyed by mesh node, so it
 survives a change of partition.
 
 **Search.** Before each increment (from the converged `u_0` at `t_0` to `t_1`)
@@ -215,7 +223,7 @@ refuses unknown ones).
 | `kinematics` | `"finite"` | `"finite"` (total Lagrangian, large rotation) or `"small_strain"` |
 | `material_model` | `"saint_venant_kirchhoff"` | elastic law with finite kinematics (`"neo_hookean"` for elastic models only) |
 | `mean_dilatation` | `"auto"` | B-bar of elastoplastic Q4 / Hex8 (as in `nonlinear`) |
-| `friction_tangent` | `"exact"` | `"exact"` (consistent, LU) or `"symmetric"` (its symmetric part) |
+| `friction_tangent` | `"exact"` | `"exact"` (consistent, LU) or `"symmetric"` (a positive semi-definite friction stiffness: Cholesky, linear convergence where nodes slip) |
 | `solver` | `"auto"` | `"auto"`: SuiteSparse when built in; `"eigen"`: Eigen's factorisations |
 | `tools[].name` | `"tool<i>"` | unique |
 | `tools[].shape` | `"sphere"` | `"sphere"`, `"plane"` or `"cylinder"` |
@@ -284,6 +292,7 @@ build, with `-dirty` for uncommitted changes.
 | Contact tangent vs central differences (step 1e-9 m) of the contact residual at fixed history (sphere, plane, cylinder; frictionless, stick, slip, new contact; 13 to 215 nodes in contact; a 2-D circle in slip) | largest error relative to the largest tangent entry `7.2e-10` (sphere `7.0e-10`, plane `5.4e-10`, cylinder `7.2e-10`, 2-D `1.7e-10`; tolerance `1e-6`) |
 | Flat punch on an elastic column (one Hex8 in section): force vs `E A delta / H / (1 + E/(kappa H))`, the penalty in series | `4.5e-12`, `1.9e-11`, `3.6e-10` at `s` = 10, 100, 1000 (tolerance `1e-9`); against rigid contact `1.96e-2`, `2.0e-3`, `2.0e-4` - exactly `1/s` |
 | Ironing, `mu = 0.2`: sphere (R = 20 mm) and flat punch pressed into an elastic block and dragged 10 mm | in steady sliding every contact node slips (9 and 231 nodes); friction load / normal load = `mu` to `7e-16`; flat punch `-F_x / F_z = 0.2` (tested to `1e-6`); sphere `0.19986`, its contact normals tilted |
+| The symmetric friction tangent (`friction_tangent: "symmetric"`), at the tangent test's states and on the flat-punch ironing | the same forces; symmetric node blocks, positive semi-definite for the plane in stick and slip; the ironing completes without a cut (47 iterations, the exact tangent 31) at the same tool force to `1e-8` |
 | Double-sided pinch: two spheres on the two faces of a clamped sheet, paths mirrored about its mid-plane, pressed and moved together with friction | equal and opposite normal forces and equal friction forces to `1e-6`; the reactions' resultant equals the total force on the tools to `1e-6` |
 | Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12 |
 | Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `5.2e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged |
