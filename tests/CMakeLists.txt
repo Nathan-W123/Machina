@@ -50,12 +50,20 @@ if(SPARLAB_ENABLE_WARNINGS AND NOT MSVC)
 endif()
 
 include(Catch)
+# `ctest -j N` runs N test processes at once, and each would start an OpenMP
+# thread per core: with N near the core count the cores are oversubscribed
+# and OpenMP's threads, which spin while they wait at a barrier, take the
+# CPU from the ones with work. One thread per test case keeps the cores
+# busy with work instead (the forming cases under ctest -j4 on four cores:
+# 30 s instead of 78 s in all, the release case 3.9 s instead of 21.6 s).
+# The multigrid test sets its own thread counts to compare them.
 catch_discover_tests(sparlab_tests
   TEST_PREFIX "sparlab."
-  PROPERTIES TIMEOUT 900
+  PROPERTIES TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=1"
 )
 
 # A single target that runs the whole suite in one process, which is what the
-# `make test` convenience target and CI use.
+# `make test` convenience target and CI use. It keeps its threads, but they
+# sleep rather than spin while they wait, since it runs beside the cases.
 add_test(NAME sparlab.all COMMAND sparlab_tests)
-set_tests_properties(sparlab.all PROPERTIES TIMEOUT 1800)
+set_tests_properties(sparlab.all PROPERTIES TIMEOUT 1800 ENVIRONMENT "OMP_WAIT_POLICY=PASSIVE")

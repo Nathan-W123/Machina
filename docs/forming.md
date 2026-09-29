@@ -314,7 +314,7 @@ build, with `-dirty` for uncommitted changes.
 
 ## 4. Verification
 
-`tests/test_forming.cpp` (`[forming]`; the smoke case is also `[slow]`):
+`tests/test_forming.cpp` (`[forming]`):
 
 | Check | Measured |
 |-------|----------|
@@ -329,14 +329,17 @@ build, with `-dirty` for uncommitted changes.
 | Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `6.3e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged; 41 iterations and no cut, as held (without the rigid predictor 765 iterations and 2 cuts, and 175) |
 | Springback of an elastic-perfectly plastic beam (L = 8 h) bent by end displacements to `3 k_y` (plane stress Q4, small strain), released onto 3-2-1: curvature change of the central half vs the exact elastic unloading `M(3 k_y)/(EI) = 1.4444 k_y` | `1.4565`, `1.4482`, `1.4453 k_y` with 4, 8, 16 Q4 through the depth: errors `8.4e-3`, `2.6e-3`, `5.6e-4` (order 1.7 then 2.2); support reactions below `1e-6` of the reference force |
 | A sphere grazing the surface exactly at the end of the first increment, from the reference state (a round-off reference force) | converges without a cut, the first increment in at most 3 iterations |
-| SPIF smoke case (section 5) | completes; the centre sinks 1.65 mm (tool tip at 2 mm), the release moves the part by up to 0.18 mm; tool force positive in z at every increment in contact |
+| SPIF smoke case (section 5) on a coarse 12 x 12 x 2 mesh with 12 chords a contour (86 increments, 785 iterations; about 17 s on one thread) | completes; the centre sinks 1.70 mm (tool tip at 2 mm), the release moves the part by up to 0.16 mm; tool force positive in z at every increment in contact. The 20 x 20 x 2 deck sinks 1.65 mm and springs back 0.18 mm. In both the `retract` step exercises nothing: the tool has no node in contact by the end of the second contour (on the 20 x 20 deck, at the last two increments of `form`), and the retract moves the part by about `1e-18 m` - a 5 mm tool on 2 to 3.3 mm elements touches the deformed surface at one or two nodes and can pass between them |
 | The `forming` block: every key, trajectory file, refusals; the result files and summary keys of the contract | every key read in strict mode; every refusal names its key; every file with its exact header and row count |
 
-Every check also passes in a build without SuiteSparse. Run alone, the
-`[forming]` cases other than the smoke case take about 60 s and the smoke
-case 70 s; under `ctest -j4` on the shared machine, where four test
-processes' OpenMP threads contend, the ironing and rigid-release cases took
-112 s and 140 s and the smoke case 287 s.
+Every check also passes in a build without SuiteSparse. `ctest` runs each
+case with one OpenMP thread (`tests/CMakeLists.txt`): under `ctest -j4`
+several test processes share the cores, and OpenMP threads that spin while
+they wait then take the CPU from the ones with work - on the shared machine
+(load average 10 to 15) the fourteen `[forming]` cases took 78 s with a
+thread per core each and 30 s with one: the ironing case 78 s and 30 s, the
+smoke case 68 s and 26 s, the springback case 38 s and 9 s, the rigid
+release 22 s and 4 s.
 
 ## 5. Cost
 

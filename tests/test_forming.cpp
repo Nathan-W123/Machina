@@ -1094,11 +1094,14 @@ ToolTrajectory contour_path(Scalar r, Scalar r1, Scalar d1, Scalar r2, Scalar d2
 }  // namespace
 
 TEST_CASE("single-point incremental forming of a clamped blank completes and springs back",
-          "[forming][slow]") {
+          "[forming]") {
   // A 40 mm x 40 mm x 1 mm aluminium blank (Hex8, 2 layers, mean dilatation),
   // clamped on a 5 mm frame, formed by a 5 mm radius sphere along two
   // contour levels to 2 mm depth, the tool retracted, the blank unclamped
-  // onto 3-2-1 supports at three corners.
+  // onto 3-2-1 supports at three corners. A coarse mesh (12 x 12 x 2, 3.3 mm
+  // elements) and path (12 chords a contour) keep it at about 17 s on one
+  // thread; configs/forming/spif_smoke.json is the same case on a 20 x 20 x 2
+  // mesh (docs/forming.md, sections 4 and 5).
   IsotropicMaterial m(70.0e9, 0.33, 2700.0, "aa1050");
   PlasticityParameters p;
   p.yield_stress = 100.0e6;
@@ -1106,7 +1109,7 @@ TEST_CASE("single-point incremental forming of a clamped blank completes and spr
   m.set_plasticity(p);
   const Scalar half = 0.02;
   const Scalar t = 0.001;
-  const Mesh mesh = hex_block(20, 20, 2, 2 * half, 2 * half, t, -half, -half, -t);
+  const Mesh mesh = hex_block(12, 12, 2, 2 * half, 2 * half, t, -half, -half, -t);
   FemModel model = finalised(mesh, m);
   Assembler assembler(model);
   const Scalar frame = 0.015;
@@ -1122,7 +1125,7 @@ TEST_CASE("single-point incremental forming of a clamped blank completes and spr
   tool.radius = 0.005;
   tool.friction = 0.05;
   tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
-  tool.trajectory = contour_path(tool.radius, 0.008, 0.001, 0.007, 0.002, 24);
+  tool.trajectory = contour_path(tool.radius, 0.008, 0.001, 0.007, 0.002, 12);
   FormingOptions o;
   o.tools.push_back(tool);
   FormingStep form;
@@ -1130,7 +1133,7 @@ TEST_CASE("single-point incremental forming of a clamped blank completes and spr
   form.tools = {"tool"};
   form.t_begin = 0.0;
   form.t_end = 3.1;
-  form.max_tool_travel = 1.0e-3;
+  form.max_tool_travel = 1.6e-3;  // half the element size
   form.constraints.push_back(constraint(clamp, {0, 1, 2}));
   o.steps.push_back(form);
   FormingStep retract = form;
