@@ -153,19 +153,30 @@ struct ElastoplasticElement {
   /// The tangent is symmetric (symmetrised to round-off); false for a
   /// material whose backstresses recover, whose tangent is not.
   bool symmetric = true;
+  /// An element with internal modes (the incompatible-mode Hex8): their
+  /// parameters at this displacement, found by the local Newton iteration of
+  /// IncompatibleModes.hpp from the committed ones [m], and its iterations;
+  /// empty and 0 otherwise.
+  Vector internal;
+  int internal_iterations = 0;
 };
 
 /// The element at displacement `ue` from the converged states `committed`
 /// (one per point of the element's stiffness rule), with the nodal
 /// temperature changes `temperature` (per unit load factor; may be null)
 /// scaled by `temperature_scale`. `mean_dilatation` selects B-bar (ignored
-/// in plane stress).
-/// \throws SolverError when a return fails to converge.
+/// in plane stress). An element with internal modes (the incompatible-mode
+/// Hex8) solves for them from their committed parameters `internal` (null:
+/// zero) and returns the condensed force and tangent (IncompatibleModes.hpp).
+/// \throws SolverError when a return, or the local iteration of internal
+///         modes, fails to converge; ConfigError for mean dilatation with
+///         internal modes.
 ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const Vector& ue,
                                            const std::vector<PlasticState>& committed,
                                            bool mean_dilatation, const Vector* temperature,
                                            Scalar temperature_scale, bool want_tangent,
-                                           Kinematics kinematics = Kinematics::SmallStrain);
+                                           Kinematics kinematics = Kinematics::SmallStrain,
+                                           const Vector* internal = nullptr);
 
 /// Stress state of an element at a converged state, from the point returns:
 /// the point averages of the Cauchy stress (small strain: \f$\sigma\f$) and
@@ -193,11 +204,14 @@ struct ElastoplasticStress {
   Vector6 kirchhoff = Vector6::Zero();
   Vector6 logarithmic_strain = Vector6::Zero();
 };
+/// With internal modes, `internal` holds their committed (converged)
+/// parameters, and the measures are those of the enhanced deformation.
 ElastoplasticStress elastoplastic_stress(const FemModel& model, Index e, const Vector& ue,
                                          const std::vector<PlasticState>& committed,
                                          bool mean_dilatation, const Vector* temperature,
                                          Scalar temperature_scale,
-                                         Kinematics kinematics = Kinematics::SmallStrain);
+                                         Kinematics kinematics = Kinematics::SmallStrain,
+                                         const Vector* internal = nullptr);
 
 /// Number of integration points of the model's stiffness rule.
 int elastoplastic_points(const FemModel& model);

@@ -1,5 +1,6 @@
 #include "sparlab/fem/Elastoplastic.hpp"
 
+#include "IncompatibleModes.hpp"
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/fem/TotalLagrangian.hpp"
 #include "sparlab/material/Hyperelastic.hpp"
@@ -245,9 +246,15 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
                                            const std::vector<PlasticState>& committed,
                                            bool mean_dilatation, const Vector* temperature,
                                            Scalar temperature_scale, bool want_tangent,
-                                           Kinematics kinematics) {
+                                           Kinematics kinematics, const Vector* internal) {
   if (model.dofs_per_node() != model.dim()) {
     throw ConfigError("the elastoplastic analysis is written for continuum elements");
+  }
+  if (model.element().num_internal_dofs() > 0) {
+    detail::refuse_mean_dilatation(mean_dilatation);
+    return detail::incompatible_elastoplastic_element(model, e, ue, committed, internal,
+                                                      temperature, temperature_scale,
+                                                      want_tangent, kinematics);
   }
   Kinematic kin = kinematics_of(model, e, ue, kinematics, mean_dilatation, temperature);
   if (committed.size() != kin.points.size()) {
@@ -372,7 +379,13 @@ ElastoplasticElement elastoplastic_element(const FemModel& model, Index e, const
 ElastoplasticStress elastoplastic_stress(const FemModel& model, Index e, const Vector& ue,
                                          const std::vector<PlasticState>& committed,
                                          bool mean_dilatation, const Vector* temperature,
-                                         Scalar temperature_scale, Kinematics kinematics) {
+                                         Scalar temperature_scale, Kinematics kinematics,
+                                         const Vector* internal) {
+  if (model.element().num_internal_dofs() > 0) {
+    detail::refuse_mean_dilatation(mean_dilatation);
+    return detail::incompatible_elastoplastic_stress(model, e, ue, committed, internal,
+                                                     temperature, temperature_scale, kinematics);
+  }
   const Kinematic kin = kinematics_of(model, e, ue, kinematics, mean_dilatation, temperature);
   if (committed.size() != kin.points.size()) {
     throw SolverError("elastoplastic element: the stored internal variables do not match "
@@ -459,4 +472,15 @@ ElastoplasticStress elastoplastic_stress(const FemModel& model, Index e, const V
   return out;
 }
 
+// The helpers the incompatible-mode kernels share (IncompatibleModes.hpp).
+namespace detail {
+
+void refuse_inverted_point(const Matrix& f, int dim) { refuse_inverted(f, dim); }
+
+void elastoplastic_temperature_change(const IsotropicMaterial& mat, Kinematics kinematics,
+                                      Scalar dt0, Scalar lambda, Scalar& change, Scalar& rate) {
+  thermal_change(mat, kinematics, dt0, lambda, change, rate);
+}
+
+}  // namespace detail
 }  // namespace sparlab

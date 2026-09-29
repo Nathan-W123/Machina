@@ -41,6 +41,7 @@ set(SPARLAB_TEST_SOURCES
   test_dynamics.cpp
   test_contact.cpp
   test_forming.cpp
+  test_incompatible_modes.cpp
 )
 
 add_executable(sparlab_tests ${SPARLAB_TEST_SOURCES})

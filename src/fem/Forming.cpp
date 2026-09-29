@@ -712,6 +712,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   nl.mean_dilatation = options_.mean_dilatation;
   NonlinearSystem system(model_, assembler_, nl);
   if (!start.plastic.empty()) system.set_committed(start.plastic);
+  if (!start.internal.empty()) system.set_internal(start.internal);
   ToolContact contact(model_, options_.tools, options_.friction_tangent);
   if (!start.friction.empty()) contact.set_history(start.friction);
   // The tools in place in the state (active in the step that produced it).
@@ -1292,15 +1293,15 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
       if (system.routed_through_return(e)) {
         const ElastoplasticStress st =
             elastoplastic_stress(model_, e, ue, system.committed(e), system.averaged(e), nullptr,
-                                 0.0, options_.kinematics);
+                                 0.0, options_.kinematics, system.internal(e));
         sr.element_von_mises(e) = st.von_mises;
         if (system.elastoplastic(e)) {
           sr.element_plastic_strain(e) = st.max_equivalent_plastic_strain;
         }
         max_strain = std::max(max_strain, st.max_strain);
       } else {
-        const TotalLagrangianStress st =
-            total_lagrangian_stress(model_, e, ue, options_.law, nullptr, 0.0);
+        const TotalLagrangianStress st = total_lagrangian_stress(model_, e, ue, options_.law,
+                                                                 nullptr, 0.0, system.internal(e));
         sr.element_von_mises(e) =
             dim == 3 ? von_mises(st.cauchy, StressState::ThreeDimensional, 0.0)
                      : von_mises_plane(st.cauchy(0), st.cauchy(1), st.cauchy(2), st.cauchy_zz);
@@ -1363,6 +1364,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   }
   result.final_state.displacement = u;
   result.final_state.plastic = system.committed_all();
+  result.final_state.internal = system.internal_all();
   result.final_state.friction = contact.history();
   result.final_state.time = time;
   result.final_state.residual = last_residual;

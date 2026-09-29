@@ -166,6 +166,41 @@ Vector resolve_region_temperatures(const Mesh& mesh, const TemperatureSpec& spec
   return t;
 }
 
+Vector linear_internal_parameters(const FemModel& model, Index e, const Vector& ue,
+                                  const Vector* temperature) {
+  const Element& element = model.element();
+  const int ni = element.num_internal_dofs();
+  if (ni == 0) return Vector();
+  const Mesh& mesh = model.mesh();
+  const Matrix coords = mesh.element_coordinates(e);
+  const Matrix& d = model.constitutive_of(e);
+  const InternalCondensation c =
+      element.condense_internal(coords, d, model.thickness(), model.integration());
+  Vector alpha = -(c.coupling * ue);
+  if (temperature != nullptr && model.material_of(e).thermal_expansion() != 0.0) {
+    const Scalar t = mesh.dim() == 2 ? model.thickness() : 1.0;
+    Vector fa = Vector::Zero(ni);
+    for (const IntegrationPoint& ip : element.integration_rule(model.integration())) {
+      const StrainOperator op = element.strain_operator(coords, ip.point);
+      const Vector eps0 = element_thermal_strain(model, e, ip.point, *temperature);
+      fa.noalias() += (t * ip.weight * op.detJ) *
+                      (element.internal_strain_operator(coords, ip.point).transpose() * (d * eps0));
+    }
+    alpha.noalias() += c.inverse * fa;
+  }
+  return alpha;
+}
+
+Vector linear_point_strain(const FemModel& model, Index e, const NaturalPoint& point,
+                           const Vector& ue, const Vector& alpha) {
+  const Matrix coords = model.mesh().element_coordinates(e);
+  Vector strain = model.element().strain_operator(coords, point).b * ue;
+  if (alpha.size() > 0) {
+    strain.noalias() += model.element().internal_strain_operator(coords, point) * alpha;
+  }
+  return strain;
+}
+
 Scalar element_temperature_change(const FemModel& model, Index element,
                                   const NaturalPoint& point, const Vector& temperature) {
   const Mesh& mesh = model.mesh();
@@ -206,6 +241,8 @@ ThermalLoad assemble_thermal_load(const FemModel& model, const Vector& temperatu
     const Matrix& d = model.constitutive_of(e);
     const Matrix coords = mesh.element_coordinates(e);
     Vector fe = Vector::Zero(element.num_dofs());
+    const int ni = element.num_internal_dofs();
+    Vector fa = Vector::Zero(ni);  // int B~^T D eps0 of the internal modes
     for (const IntegrationPoint& ip : rule) {
       const StrainOperator op = element.strain_operator(coords, ip.point);
       const Vector eps0 = element_thermal_strain(model, e, ip.point, temperature);
@@ -213,6 +250,17 @@ ThermalLoad assemble_thermal_load(const FemModel& model, const Vector& temperatu
       const Scalar dv = t * ip.weight * op.detJ;
       fe.noalias() += dv * (op.b.transpose() * sigma0);
       out.self_energy += 0.5 * dv * eps0.dot(sigma0);
+      if (ni > 0) fa.noalias() += dv * (element.internal_strain_operator(coords, ip.point).transpose() * sigma0);
+    }
+    if (ni > 0) {
+      // Condensed: f* = int B-hat^T D eps0 = f_u - (K_aa^-1 K_au)^T f_a, and
+      // the self energy of the element's own relaxation, less
+      // 1/2 f_a^T K_aa^-1 f_a (both with the scaled D, whose factor cancels
+      // in the coupling and scales the inverse).
+      const InternalCondensation c = element.condense_internal(coords, d, model.thickness(),
+                                                               model.integration());
+      fe.noalias() -= c.coupling.transpose() * fa;
+      if (s > 0.0) out.self_energy -= 0.5 * fa.dot(c.inverse * fa) / s;
     }
     model.dofs().scatter_add(mesh.element_nodes(e), npe, fe, out.force);
   }

@@ -81,13 +81,15 @@ SparseMatrix assemble_geometric_stiffness(const FemModel& model, const Assembler
       return element.geometric_stiffness(coords, model.constitutive_of(e), ue, s,
                                          model.thickness(), model.integration());
     }
-    // Thermal prestress: sigma = s D (B u - eps0) at each point.
+    // Thermal prestress: sigma = s D (B u - eps0) at each point (with the
+    // condensed internal modes of an incompatible-mode element).
+    const Vector alpha = linear_internal_parameters(model, e, ue, temperature);
     std::vector<Vector> stresses;
     stresses.reserve(rule.size());
     for (const IntegrationPoint& ip : rule) {
-      const StrainOperator op = element.strain_operator(coords, ip.point);
       const Vector eps0 = element_thermal_strain(model, e, ip.point, *temperature);
-      stresses.push_back(s * (model.constitutive_of(e) * (op.b * ue - eps0)));
+      stresses.push_back(s * (model.constitutive_of(e) *
+                              (linear_point_strain(model, e, ip.point, ue, alpha) - eps0)));
     }
     return element.geometric_stiffness_of_stress(coords, stresses, model.thickness(),
                                                  model.integration());

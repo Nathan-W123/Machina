@@ -1,5 +1,6 @@
 #include "sparlab/elements/Hex8.hpp"
 
+#include "Hex8Kernels.hpp"
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/elements/Quad4.hpp"
 #include "sparlab/elements/Quadrature.hpp"
@@ -16,89 +17,13 @@ constexpr Scalar kCorner[8][3] = {{-1.0, -1.0, -1.0}, {1.0, -1.0, -1.0}, {1.0, 1
                                   {-1.0, 1.0, -1.0},  {-1.0, -1.0, 1.0}, {1.0, -1.0, 1.0},
                                   {1.0, 1.0, 1.0},    {-1.0, 1.0, 1.0}};
 
-using Hex8Coords = Eigen::Matrix<Scalar, 3, 8>;
-
-Hex8Coords hex8_coords(const Matrix& coords) {
-  if (coords.rows() != 3 || coords.cols() != 8) {
-    std::ostringstream os;
-    os << "Hex8 expects a 3 x 8 nodal coordinate matrix, received " << coords.rows()
-       << " x " << coords.cols();
-    throw MeshError(os.str());
-  }
-  return coords;
-}
-
-void require_unit_thickness(Scalar thickness) {
-  if (thickness != 1.0) {
-    std::ostringstream os;
-    os << "a solid (Hex8) element has no thickness; received " << thickness
-       << " m. Leave model.thickness at its default of 1 for a 3-D mesh";
-    throw ConfigError(os.str());
-  }
-}
-
-/// Jacobian, its determinant and the Cartesian shape gradients at one point.
-struct Hex8Mapping {
-  Eigen::Matrix<Scalar, 8, 3> dn_dx;
-  Scalar det = 0.0;
-};
-
-Hex8Mapping hex8_mapping(const Hex8Coords& coords, Scalar xi, Scalar eta, Scalar zeta,
-                         const char* context) {
-  const Eigen::Matrix<Scalar, 8, 3> dn_dxi = hex8_shape_gradients_natural(xi, eta, zeta);
-  // J(i,j) = dx_i / dxi_j
-  const Matrix3 jac = coords * dn_dxi;
-  // Explicit 3x3 determinant and adjugate: this runs at every Gauss point of
-  // every element and needs no LU machinery.
-  const Scalar c00 = jac(1, 1) * jac(2, 2) - jac(1, 2) * jac(2, 1);
-  const Scalar c01 = jac(1, 2) * jac(2, 0) - jac(1, 0) * jac(2, 2);
-  const Scalar c02 = jac(1, 0) * jac(2, 1) - jac(1, 1) * jac(2, 0);
-  const Scalar det = jac(0, 0) * c00 + jac(0, 1) * c01 + jac(0, 2) * c02;
-  if (!(det > 0.0)) {
-    std::ostringstream os;
-    os << "Hex8 Jacobian determinant is " << det << " m^3 at (xi, eta, zeta) = (" << xi
-       << ", " << eta << ", " << zeta << ") " << context
-       << "; the element is inverted, folded or its nodes do not follow the VTK "
-          "hexahedron ordering";
-    throw MeshError(os.str());
-  }
-  Matrix3 jinv;
-  jinv(0, 0) = c00 / det;
-  jinv(1, 0) = c01 / det;
-  jinv(2, 0) = c02 / det;
-  jinv(0, 1) = (jac(0, 2) * jac(2, 1) - jac(0, 1) * jac(2, 2)) / det;
-  jinv(1, 1) = (jac(0, 0) * jac(2, 2) - jac(0, 2) * jac(2, 0)) / det;
-  jinv(2, 1) = (jac(0, 1) * jac(2, 0) - jac(0, 0) * jac(2, 1)) / det;
-  jinv(0, 2) = (jac(0, 1) * jac(1, 2) - jac(0, 2) * jac(1, 1)) / det;
-  jinv(1, 2) = (jac(0, 2) * jac(1, 0) - jac(0, 0) * jac(1, 2)) / det;
-  jinv(2, 2) = (jac(0, 0) * jac(1, 1) - jac(0, 1) * jac(1, 0)) / det;
-
-  Hex8Mapping map;
-  map.det = det;
-  // dN/dx = dN/dxi * J^{-1}  (row a holds grad N_a).
-  map.dn_dx = dn_dxi * jinv;
-  return map;
-}
-
-Eigen::Matrix<Scalar, 6, 24> hex8_strain_matrix(const Eigen::Matrix<Scalar, 8, 3>& dn_dx) {
-  Eigen::Matrix<Scalar, 6, 24> b = Eigen::Matrix<Scalar, 6, 24>::Zero();
-  for (int a = 0; a < 8; ++a) {
-    const Scalar dx = dn_dx(a, 0);
-    const Scalar dy = dn_dx(a, 1);
-    const Scalar dz = dn_dx(a, 2);
-    const int c = 3 * a;
-    b(0, c + 0) = dx;  // eps_xx
-    b(1, c + 1) = dy;  // eps_yy
-    b(2, c + 2) = dz;  // eps_zz
-    b(3, c + 0) = dy;  // gamma_xy = du/dy + dv/dx
-    b(3, c + 1) = dx;
-    b(4, c + 1) = dz;  // gamma_yz = dv/dz + dw/dy
-    b(4, c + 2) = dy;
-    b(5, c + 0) = dz;  // gamma_zx = du/dz + dw/dx
-    b(5, c + 2) = dx;
-  }
-  return b;
-}
+using detail::Hex8Coords;
+using detail::Hex8Mapping;
+using detail::hex8_coords;
+using detail::hex8_mapping;
+using detail::hex8_stiffness_rule;
+using detail::hex8_strain_matrix;
+using detail::require_unit_thickness;
 
 }  // namespace
 
@@ -181,7 +106,7 @@ Matrix Hex8Element::stiffness(const Matrix& coords_in, const Matrix& d_in,
   const Hex8Coords coords = hex8_coords(coords_in);
   const Matrix6 d = d_in;
   Eigen::Matrix<Scalar, 24, 24> ke = Eigen::Matrix<Scalar, 24, 24>::Zero();
-  for (const auto& gp : gauss_legendre_cube(opts.stiffness_points)) {
+  for (const auto& gp : hex8_stiffness_rule(opts)) {
     const Hex8Mapping map = hex8_mapping(coords, gp.xi, gp.eta, gp.zeta,
                                          "during stiffness integration");
     const Eigen::Matrix<Scalar, 6, 24> b = hex8_strain_matrix(map.dn_dx);
@@ -216,7 +141,7 @@ Matrix Hex8Element::consistent_mass(const Matrix& coords_in, Scalar density,
 std::vector<NaturalPoint> Hex8Element::stress_evaluation_points(
     const IntegrationOptions& opts) const {
   std::vector<NaturalPoint> points;
-  for (const auto& gp : gauss_legendre_cube(opts.stiffness_points)) {
+  for (const auto& gp : hex8_stiffness_rule(opts)) {
     NaturalPoint p;
     p.xi = gp.xi;
     p.eta = gp.eta;
@@ -263,7 +188,7 @@ Vector Hex8Element::boundary_traction(const Matrix& coords_in, int local_face,
 std::vector<IntegrationPoint> Hex8Element::integration_rule(
     const IntegrationOptions& opts) const {
   std::vector<IntegrationPoint> rule;
-  for (const auto& gp : gauss_legendre_cube(opts.stiffness_points)) {
+  for (const auto& gp : hex8_stiffness_rule(opts)) {
     IntegrationPoint ip;
     ip.point.xi = gp.xi;
     ip.point.eta = gp.eta;

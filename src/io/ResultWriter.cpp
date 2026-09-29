@@ -191,6 +191,11 @@ json::Value mesh_stats_json(const Configuration& config, const FemModel& model) 
   json::Value out = json::Value::make_object();
   out.set("source", json::Value::make_string(to_string(config.mesh_kind)));
   out.set("element_type", json::Value::make_string(to_string(mesh.element_type())));
+  out.set("element_formulation",
+          json::Value::make_string(to_string(model.integration().formulation)));
+  out.set("stiffness_rule_points",
+          json::Value::make_number(static_cast<Scalar>(
+              model.element().integration_rule(model.integration()).size())));
   out.set("dim", json::Value::make_number(dim));
   out.set("num_nodes", json::Value::make_number(mesh.num_nodes()));
   out.set("num_elements", json::Value::make_number(mesh.num_elements()));
@@ -1783,6 +1788,11 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
     } else {
       c.set("max_green_strain", json::Value::make_number(r.max_green_strain));
       c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
+    }
+    if (model.element().num_internal_dofs() > 0) {
+      c.set("max_local_iterations", json::Value::make_number(r.max_local_iterations));
+      c.set("max_converged_local_iterations",
+            json::Value::make_number(r.max_converged_local_iterations));
     }
     if (r.plastic) {
       json::Value p = json::Value::make_object();

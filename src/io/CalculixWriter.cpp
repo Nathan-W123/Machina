@@ -502,7 +502,8 @@ std::string calculix_element_type(const FemModel& model) {
     case ElementType::Quad4:
       return model.stress_state() == StressState::PlaneStrain ? "CPE4" : "CPS4";
     case ElementType::Hex8:
-      return "C3D8";
+      // CalculiX's C3D8I is the Hex8 with the three incompatible modes.
+      return model.element().num_internal_dofs() > 0 ? "C3D8I" : "C3D8";
     case ElementType::Tri3:
       return model.stress_state() == StressState::PlaneStrain ? "CPE3" : "CPS3";
     case ElementType::Tet4:
@@ -581,6 +582,13 @@ std::vector<std::string> write_calculix_decks(const FemModel& model, const std::
                                               const CalculixNonlinearExport* nonlinear,
                                               const CalculixTransientExport* transient) {
   if (!model.finalized()) throw IoError("the model must be finalised before export");
+  const IntegrationOptions& rule = model.integration();
+  if (rule.thickness_points > 0 && rule.thickness_points != rule.stiffness_points) {
+    throw IoError("the model integrates its Hex8 elements with " +
+                  std::to_string(rule.thickness_points) +
+                  " points through the thickness, which CalculiX's C3D8 and C3D8I (2 x 2 x 2 "
+                  "points) cannot: the deck would be a different problem");
+  }
   const std::vector<LoadCaseSpec>& specs = model.load_case_specs();
   bool faces_needed = false;
   for (const LoadCaseSpec& spec : specs) {

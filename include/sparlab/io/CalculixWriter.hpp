@@ -138,13 +138,15 @@ std::string calculix_plasticity_obstacle(const IsotropicMaterial& material);
 ///         thermal strain from the initial nodal temperature), for a
 ///         transient that calculix_transient_obstacle refuses, or for a
 ///         non-linear case with a material that calculix_plasticity_obstacle
-///         refuses.
+///         refuses, or for a Hex8 stiffness rule with its own point count
+///         through the thickness (`IntegrationOptions::thickness_points`).
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
                                               const std::string& case_name,
                                               const CalculixNonlinearExport* nonlinear = nullptr,
                                               const CalculixTransientExport* transient = nullptr);
 
-/// CalculiX element keyword for the model's element type and stress state.
+/// CalculiX element keyword for the model's element type and stress state
+/// (C3D8I for the incompatible-mode Hex8).
 std::string calculix_element_type(const FemModel& model);
 
 }  // namespace sparlab

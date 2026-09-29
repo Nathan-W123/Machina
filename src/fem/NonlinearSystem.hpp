@@ -116,6 +116,11 @@ struct Evaluation {
   /// number of points whose return was plastic.
   std::vector<std::vector<PlasticState>> states;
   int yielding_points = 0;
+  /// Elements with internal modes (the incompatible-mode Hex8): their
+  /// parameters at this state, found from the committed ones (empty when
+  /// the model has none), and the most local iterations an element took.
+  std::vector<Vector> modes;
+  int max_internal_iterations = 0;
 };
 
 /// Norm over the free DOFs of |K| |u|, the tangent's absolute entries times
@@ -275,13 +280,53 @@ class NonlinearSystem {
     return c.empty() ? virgin_ : c;
   }
   /// Make the internal variables of a converged evaluation the committed
-  /// ones.
+  /// ones: the points' states, and the parameters of the elements' internal
+  /// modes (elastic elements have them too).
   void commit(Evaluation& ev) {
+    max_committed_local_ = std::max(max_committed_local_, ev.max_internal_iterations);
+    if (!internal_.empty() && ev.modes.size() == internal_.size()) {
+      internal_ = std::move(ev.modes);
+      ev.modes.clear();
+    }
     if (!plastic_) return;
     for (std::size_t e = 0; e < committed_.size(); ++e) {
       if (!committed_[e].empty()) committed_[e] = std::move(ev.states[e]);
     }
     ev.states.clear();
+  }
+  /// The committed parameters of element e's internal modes (null for an
+  /// element without them).
+  const Vector* internal(Index e) const {
+    return internal_.empty() ? nullptr : &internal_[static_cast<std::size_t>(e)];
+  }
+  /// The most local iterations an element with internal modes took, in any
+  /// evaluation and in the evaluations that were committed (0 without
+  /// internal modes).
+  int max_local_iterations() const { return max_local_; }
+  int max_committed_local_iterations() const { return max_committed_local_; }
+  /// The committed internal-mode parameters of every element (empty for a
+  /// model without internal modes): part of the history a restart carries.
+  const std::vector<Vector>& internal_all() const { return internal_; }
+  /// Replace them - a restart from `internal_all` of a system of the same
+  /// model and element formulation.
+  /// \throws ConfigError when the element count or an element's parameter
+  ///         count differs.
+  void set_internal(std::vector<Vector> parameters) {
+    if (parameters.size() != internal_.size()) {
+      throw ConfigError("the saved internal-mode history has " +
+                        std::to_string(parameters.size()) + " element(s); the model keeps " +
+                        std::to_string(internal_.size()) +
+                        " (none unless its elements have incompatible modes)");
+    }
+    for (std::size_t e = 0; e < parameters.size(); ++e) {
+      if (parameters[e].size() != internal_[e].size() || !parameters[e].allFinite()) {
+        throw ConfigError("the saved internal-mode parameters of element " + std::to_string(e) +
+                          " have " + std::to_string(parameters[e].size()) +
+                          " entries or are not finite; the element has " +
+                          std::to_string(internal_[e].size()));
+      }
+    }
+    internal_ = std::move(parameters);
   }
   /// The committed internal variables of every element (empty for an
   /// elastic element): the history a restart carries over.
@@ -337,6 +382,8 @@ class NonlinearSystem {
     std::vector<Scalar> energy_el(static_cast<std::size_t>(ne), 0.0);
     std::vector<std::vector<PlasticState>> states(plastic_ ? static_cast<std::size_t>(ne) : 0);
     std::vector<int> yielding(plastic_ ? static_cast<std::size_t>(ne) : 0, 0);
+    std::vector<Vector> modes(internal_.size());
+    std::vector<int> local_iterations(internal_.size(), 0);
     std::string failure;
 #ifdef SPARLAB_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
@@ -352,18 +399,24 @@ class NonlinearSystem {
         if (routed_through_return(e)) {
           ElastoplasticElement ep = elastoplastic_element(
               model_, e, ue, committed(e), averaged(e), temperature, lambda, want_tangent,
-              options_.kinematics);
+              options_.kinematics, internal_of(e));
           tl.internal_force = std::move(ep.internal_force);
           tl.tangent = std::move(ep.tangent);
           tl.thermal_force_rate = std::move(ep.thermal_force_rate);
           tl.energy = ep.energy;
+          tl.internal = std::move(ep.internal);
+          tl.internal_iterations = ep.internal_iterations;
           if (elastoplastic(e)) {
             states[static_cast<std::size_t>(e)] = std::move(ep.states);
             yielding[static_cast<std::size_t>(e)] = ep.yielding_points;
           }
         } else {
           tl = total_lagrangian_element(model_, e, ue, options_.law, temperature, lambda,
-                                        want_tangent);
+                                        want_tangent, internal_of(e));
+        }
+        if (!internal_.empty()) {
+          modes[static_cast<std::size_t>(e)] = std::move(tl.internal);
+          local_iterations[static_cast<std::size_t>(e)] = tl.internal_iterations;
         }
         const auto it = faces_.find(e);
         if (it != faces_.end()) {
@@ -437,6 +490,11 @@ class NonlinearSystem {
       if (plastic_) out.yielding_points += yielding[static_cast<std::size_t>(e)];
     }
     out.states = std::move(states);
+    out.modes = std::move(modes);
+    for (int it : local_iterations) {
+      out.max_internal_iterations = std::max(out.max_internal_iterations, it);
+    }
+    max_local_ = std::max(max_local_, out.max_internal_iterations);
     out.external = lambda * (dead_ + pressure);
     out.load_rate += pressure;
     if (centrifugal_.size() > 0) {
@@ -465,6 +523,15 @@ class NonlinearSystem {
     committed_.resize(static_cast<std::size_t>(ne));
     averaged_.assign(static_cast<std::size_t>(ne), 0);
     virgin_.assign(static_cast<std::size_t>(points), PlasticState());
+    // Incompatible modes: every element keeps its parameters, starting at
+    // zero; they relax the isochoric constraint themselves and take no mean
+    // dilatation (IncompatibleModes.hpp).
+    const int modes = model.element().num_internal_dofs();
+    const bool incompatible = modes > 0;
+    if (incompatible) {
+      internal_.assign(static_cast<std::size_t>(ne), Vector::Zero(modes));
+      if (options_.mean_dilatation == MeanDilatation::All) refuse_mean_dilatation();
+    }
     for (Index e = 0; e < ne; ++e) {
       if (!model.material_of(e).plasticity().enabled()) continue;
       if (model.dim() == 2 && !model.material_of(e).plasticity().plane_compatible()) {
@@ -480,12 +547,24 @@ class NonlinearSystem {
                                                      PlasticState());
       const ElementType type = model.mesh().element_type();
       const bool wanted =
-          options_.mean_dilatation == MeanDilatation::All ||
-          (options_.mean_dilatation == MeanDilatation::Auto &&
-           (type == ElementType::Quad4 || type == ElementType::Hex8));
+          !incompatible &&
+          (options_.mean_dilatation == MeanDilatation::All ||
+           (options_.mean_dilatation == MeanDilatation::Auto &&
+            (type == ElementType::Quad4 || type == ElementType::Hex8)));
       averaged_[static_cast<std::size_t>(e)] =
           wanted && points > 1 && model.stress_state() != StressState::PlaneStress;
     }
+  }
+
+  /// The committed internal-mode parameters of element e, or null.
+  const Vector* internal_of(Index e) const { return internal(e); }
+  static void refuse_mean_dilatation() {
+    throw ConfigError(
+        "\"mean_dilatation\": \"all\" is not combined with the incompatible-mode Hex8: "
+        "averaging the dilatation of its modes leaves a zero-energy mode, and averaging the "
+        "compatible dilatation alone softens the bending of a sheet one element thick; the "
+        "modes relax the isochoric constraint of plastic flow themselves. Use \"auto\" or "
+        "\"none\"");
   }
 
   const FemModel& model_;
@@ -497,6 +576,11 @@ class NonlinearSystem {
   std::vector<std::vector<PlasticState>> committed_;  ///< per element; empty if elastic
   std::vector<char> averaged_;                        ///< per element: mean dilatation
   std::vector<PlasticState> virgin_;                  ///< one per point, for elastic elements
+  std::vector<Vector> internal_;  ///< per element: committed internal-mode parameters, or empty
+  /// Local-iteration statistics (evaluate runs its parallel loop inside and
+  /// updates this after it, from the calling thread).
+  mutable int max_local_ = 0;
+  int max_committed_local_ = 0;
   Vector dead_;
   Vector temperature_;
   std::map<Index, std::vector<PressureFace>> faces_;
