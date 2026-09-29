@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "precomp"
+version = "0.1.0"
+description = "Springback pre-compensation for robotic incremental sheet forming, on top of the SparLab finite-element solver"
+readme = "docs/precomp.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "pandas>=1.5",
+    "scikit-learn>=1.2",
+    "joblib>=1.2",
+    "contourpy>=1.0",
+    "matplotlib>=3.6",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+precomp = "precomp.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["precomp", "precomp.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
