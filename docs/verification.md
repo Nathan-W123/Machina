@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 271 cases, 18 509 assertions
+make test              # the Catch2 suite: 291 cases, 20 152 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -1792,11 +1792,74 @@ What the cross-validation found, and how it was resolved:
   fully integrated Hex8 is stiffer (the tip load had to rise from 13.5 kN to
   20 kN to yield the root), which is the element, not the dynamics.
 
+## 26. Incremental forming
+
+The forming analysis (`docs/forming.md`) is checked in `tests/test_forming.cpp`
+(`[forming]`), each claim against an exact answer:
+
+* **Trajectories**: interpolation, clamping outside the span, the right
+  derivative, monotone and random lookups through the cached segment, and
+  the CSV reader's errors, which name the line.
+* **The contact tangent** against central differences (step 1e-9 m) of the
+  contact residual at fixed friction history, for a sphere, a tilted plane
+  and a cylinder, frictionless, sticking, slipping and newly in contact
+  (13 to 215 nodes in contact), and a 2-D circle in slip: the largest error
+  relative to the largest tangent entry is `7.2e-10` (sphere `7.0e-10`, plane
+  `5.4e-10`, cylinder `7.2e-10`, 2-D `1.7e-10`); every node of the slip cases
+  slips and every node of the stick cases sticks.
+* **A flat punch on an elastic column** (one Hex8 in section, so every top
+  node has the same penalty stiffness; uniaxial stress): the punch force
+  against `E A delta / H / (1 + E / (kappa H))`, the penalty in series,
+  `4.5e-12`, `1.9e-11` and `3.6e-10` at `s` = 10, 100, 1000; against rigid
+  contact `1.96e-2`, `2.0e-3`, `2.0e-4` - exactly `1/s`. A 3 x 3 section
+  (edge nodes stiffer) lies within the compliance bound.
+* **Ironing** with `mu = 0.2`: a sphere (R = 20 mm) and a flat punch pressed
+  into an elastic block and dragged 10 mm. In steady sliding every node in
+  contact slips (9 and 231 nodes), and the friction load is `mu` times the
+  normal load to `7e-16`; the flat punch's resultants obey `-F_x = mu F_z`
+  (tested to `1e-6`); the sphere's give `0.19986`, its contact normals
+  tilted.
+* **Double-sided forming**: two spheres on the two faces of a clamped elastic
+  sheet, their paths mirror images about its mid-plane, pressed in and moved
+  together with friction, take equal and opposite normal forces and equal
+  friction forces to `1e-6`, each face touching only its own tool; the
+  resultant of the clamp's reactions equals the total force on the tools to
+  `1e-6`.
+* **Rigid-body invariance of a release**: a stress-free block released onto
+  3-2-1 supports stays exactly where it is, and follows a translation of the
+  supports to `1e-12`; a plastically bent strip (finite kinematics) released
+  twice from the same restarted state, the second time with the supports'
+  values moved by a translation and by a 0.03 rad rotation, ends moved
+  rigidly: largest deviation `5.2e-18` and `1.1e-17 m` (tested to
+  `1e-14 m`), its plastic history unchanged.
+* **Springback against the exact unloading**: an elastic-perfectly plastic
+  plane-stress beam (L = 8 h) bent by end displacements to `3 k_y`, where
+  `M = M_p (1 - (k_y/k)^2/3)` (the moment-curvature relation of section 24),
+  then released onto 3-2-1 supports; the curvature of the central half
+  springs back by `M(3 k_y)/(E I) = 1.4444 k_y`, measured `1.4565`, `1.4482`,
+  `1.4453 k_y` with 4, 8 and 16 Q4 through the depth: errors `8.4e-3`,
+  `2.6e-3`, `5.6e-4` (order 1.7, then 2.2); the supports' reactions end below
+  `1e-6` of the reference force.
+* **Single-point incremental forming** (the smoke case of `docs/forming.md`,
+  `[slow]`): completes; the blank's centre sinks 1.65 mm, the release moves it
+  by up to 0.18 mm; the tool force is positive in z at every increment in
+  contact.
+* **The deck and the output contract**: every key of the `forming` block read
+  strictly, a trajectory file beside the deck, each refusal, and a run
+  writing every file of the contract with its exact header and row counts.
+
+Every one of them also passes in a build without SuiteSparse
+(`-DSPARLAB_WITH_CHOLMOD=OFF`).
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
 
 * **no comparison against experiment**;
+* the forming analysis is verified on exact solutions only; no forming run
+  is compared with another code or with a measured part, and the springback
+  of the SPIF cases is not mesh-converged (their meshes are coarse for a
+  5 mm tool, and Hex8 through a sheet's thickness is stiff in bending);
 * the cross-validation covers linear static displacements on thirty-eight
   problems, five of them on the three meshes read from files - six of them
   under pressure, body and thermal loads, with conducted temperatures on four

@@ -20,14 +20,15 @@ reports its line and column.
 | `material` | object | required | see below |
 | `material_regions` | array | `[]` | other materials on element regions; see below |
 | `model` | object | `{}` | idealisation and integration |
-| `boundary_conditions` | array | required, non-empty | displacement constraints |
-| `load_cases` | array | required, non-empty | loading |
+| `boundary_conditions` | array | required, non-empty (optional with `forming`) | displacement constraints |
+| `load_cases` | array | required, non-empty (optional with `forming`) | loading |
 | `solver` | object | `{}` | linear solver and equilibrium tolerances |
 | `modal` | object | `{}` | free-vibration analysis |
 | `buckling` | object | `{}` | linear buckling check of the load cases |
 | `nonlinear` | object | `{}` | non-linear statics: large deflection, finite strain, plasticity |
 | `transient` | object | `{}` | transient dynamics (HHT-alpha), linear or non-linear |
 | `frequency_response` | object | `{}` | steady harmonic response |
+| `forming` | object | absent | incremental forming by rigid tools, run by `sparlab_form`; its keys, defaults and refusals are in [`forming.md`](forming.md), section 2 |
 | `topology` | object | `{}` | topology optimisation |
 | `output` | object | `{}` | which artefacts to write |
 

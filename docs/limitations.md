@@ -46,10 +46,17 @@ method through limit points. What it does not do:
   pattern, and fully integrated Q4 and Hex8 lock without the mean
   dilatation that is their default - a locked collapse load comes out high,
   which is unconservative;
-* no contact; the static path is quasi-static, and a snap-through that the
-  arc-length method follows is a sequence of equilibria, not the dynamic jump
-  a real structure would make - the non-linear transient (below) integrates
-  that jump, with its own limits;
+* contact (`contact` block) is small-sliding - the contact geometry of the
+  reference configuration, a gap linear in the displacement - with
+  `small_strain` kinematics only; tools that travel far over a surface need
+  the forming analysis (`sparlab_form`, `docs/forming.md`), whose penalty
+  contact is evaluated in the current configuration but is rigid-tool only,
+  approximate (a penetration of about `p h / (s E)`), implicit and
+  quasi-static, and has no remeshing, trimming, thermal effects or tool spin
+  (its own limitations are listed there); the static path is quasi-static,
+  and a snap-through that the arc-length method follows is a sequence of
+  equilibria, not the dynamic jump a real structure would make - the
+  non-linear transient (below) integrates that jump, with its own limits;
 * at a bifurcation of a perfect structure there is no branch switching: load
   control stops there, and the arc-length method stays on the fundamental
   path. A post-buckling analysis needs an imperfection built into the mesh

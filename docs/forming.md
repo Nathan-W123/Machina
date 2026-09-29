@@ -1,0 +1,405 @@
+# Incremental forming: moving rigid tools, step sequences, springback
+
+`sparlab_form` runs the forming analysis of a deck's `forming` block: a
+sheet (or any continuum model) formed by rigid tools that travel along
+tabulated trajectories - the hemispherical stylus of single-point incremental
+forming (SPIF), two opposed tools (DSIF), a backing plate, a flat punch - and
+then released from its tools and clamps onto statically determinate
+supports, where it springs back. It is the finite-element engine of a
+springback pre-compensation loop: every result file it writes is part of an
+output contract other tools read (below).
+
+The library API is `include/sparlab/fem/Forming.hpp` (the analysis) and
+`include/sparlab/fem/RigidTool.hpp` (trajectories, tools, contact); the
+header comments state the formulation in full, and this page summarises it.
+
+## 1. Formulation
+
+### 1.1 State and steps
+
+The analysis carries one state from step to step: the displacement `u` from
+the reference configuration, the internal variables of every elastoplastic
+integration point, the friction history of every tool's contact nodes and
+the pseudo-time `t`. The elements, the kinematics (`finite`, total
+Lagrangian; or `small_strain`), the J2 plasticity with isotropic and
+kinematic hardening and the mean dilatation of Q4 and Hex8 are those of the
+non-linear static analysis (`NonlinearSystem`, `docs/formulation.md` 7c-7d):
+every Newton iteration returns the points from their committed state, and
+only a converged increment commits - a cut increment leaves no trace. No
+load case acts; the tools and the prescribed displacements drive the model.
+
+A step is `form` (the listed tools follow their trajectories over the
+step's pseudo-time window) or `release` (the start imbalance is ramped out,
+tools removed or a subset kept). Each step has its own Dirichlet partition:
+a list of displacement constraints, each `hold` (the DOF stays where the
+step found it) or `absolute` (moved linearly over the step from there to the
+given value). A step without constraints takes the model's
+`boundary_conditions` in `absolute` mode (a clamp with value 0 holds the
+reference position). Every step's constraints must suppress every rigid-body
+motion of the model; this is checked before the run and a violation names
+the step and the free motions (e.g. "rotation about x").
+
+### 1.2 Equilibrium of a step
+
+With `s` in [0, 1] the fraction of the step, the prescribed DOFs at their
+values of `s` and the free DOFs `f`:
+
+```
+R_f(u, t) - (1 - s) R_0f = 0,        R = f_int(u) - f_c(u, t)
+```
+
+`f_c` are the penalty contact forces of the step's active tools at pseudo-time
+`t(s)` and `R_0 = R(u_0, t_0)` is the imbalance of the start state on the
+step's free DOFs. A step that keeps the previous step's partition and tools
+finds `R_0f` within tolerance of zero; after a change it holds the reactions
+of the released constraints and the forces of the removed tools, which the
+step ramps out linearly - the springback of a release. The ramped imbalance
+is a dead load: fixed in space while the part moves.
+
+### 1.3 Penalty contact in the current configuration
+
+For slave node `j` (the nodes of the boundary faces a tool's `surface`
+selects) at its current position `x = X_j + u_j` and the tool's reference
+point `c(t)`:
+
+| tool | gap `g` | normal `n` | `dn/dx` |
+|------|---------|------------|---------|
+| sphere, radius `R` | `|x - c| - R` | `(x - c)/|x - c|` | `(I - n n^T)/d` |
+| cylinder, axis `a` | `|r_perp| - R`, `r_perp = (I - a a^T)(x - c)` | `r_perp/|r_perp|` | `(I - a a^T - n n^T)/d` |
+| plane, normal `n` | `n . (x - c)` | `n` (out of the tool) | 0 |
+
+Where `g < 0` the node takes the normal force `f_N = -kappa_j A_j g n`,
+with `A_j` its tributary area on the selected reference faces (`sum int N_j dA`,
+times the thickness in 2-D) and `kappa_j = s E_j / h_j` [Pa/m] - `s` the
+penalty scale (default 10), `E_j` the stiffest adjacent Young's modulus,
+`h_j = sqrt(A_j)` (3-D) or `A_j / t` (2-D). The node's spring `kappa_j A_j`
+is then about `s E h`, `s` times the stiffness of an element of its size,
+and the penetration a contact pressure `p` leaves is about `p h / (s E)`
+(4 um for 300 MPa on 1 mm aluminium elements at `s = 10`). The force enters
+the residual as `-f_N`, with the exact node-diagonal tangent
+`kappa A [n n^T + g dn/dx]`.
+
+A node closer than half the radius to a sphere's centre (or a cylinder's
+axis) means the increment drove the tool through the surface: the increment
+is cut.
+
+**Friction** is regularised Coulomb friction by an elastic-slip return map
+(backward Euler over the increment), with a history per slave node and tool:
+the tangential force `F_T` and the relative position `q = x - c` at the last
+converged increment. The committed force is transported onto the current
+tangent plane (its normal part removed, its magnitude kept), the slip
+increment is `delta = (I - n n^T)(x - c(t) - q)`, the trial force
+`F_tr = F_hat - kappa_T A delta` (`kappa_T = rho_T kappa`, the tangential
+ratio `rho_T` default 1), and the node sticks where `|F_tr| <= mu p_N`,
+slipping otherwise with `F_T = mu p_N F_tr/|F_tr|`. The tangent is the exact
+derivative of the node force at fixed history (transport, projection, the
+normal force in the slip cone): it is not symmetric, so the tangent is
+factorised by LU; `friction_tangent: "symmetric"` uses its symmetric part
+instead (a symmetric factorisation, but Newton converges only linearly
+where nodes slip - on a fully plastic, fully slipping punch it did not
+converge at all, so it is an option for light friction only). A node that
+leaves contact loses its history. The history is keyed by mesh node, so it
+survives a change of partition.
+
+**Search.** Before each increment (from the converged `u_0` at `t_0` to `t_1`)
+a node is a candidate for a tool if `x_j(u_0)` lies within `R + m` of the
+segment `[c(t_0), c(t_1)]` (increments never cross a trajectory knot, so the
+tool moves on that segment), with the margin `m = 2 x (tool travel) + 2 x
+(largest nodal displacement change of the last increment) + h_min`. Every
+evaluation checks that no slave node has moved more than `m` from
+`x_j(u_0)`; if one has, that evaluation takes every slave node. A node left
+out therefore provably has `|x_j - c(t)| > R` for every `t` of the
+increment: the filter never changes the result.
+
+### 1.4 Increments and Newton's method
+
+A `form` step advances the pseudo-time over its window in increments such
+that no active tool travels more than `max_tool_travel` (default half the
+smallest slave-node size `h_j`) in one; trajectory knots are reached exactly,
+so no corner of a path is cut. A `release` step runs `s` from 0 to 1 in
+`increments` equal parts (default 10). A failing increment is halved, up to
+`max_cuts` times in a row; one that converges in at most 4 iterations lets
+the next grow by 1.5, up to the step's cap.
+
+Newton's method starts each increment from the converged state with the
+prescribed DOFs at their new values and the tools at their new positions,
+with the consistent tangent and the energy line search of the non-linear
+static analysis (full step when `|g(1)| <= 0.8 |g(0)|`, else regula falsi;
+an inverted element or a node through a tool halves the step). The
+evaluation of the full step, tangent included, is kept as the next
+iteration's (and the accepted state's), so an iteration costs one element
+evaluation when the line search accepts the full step. A node that the
+correction would drive into a tool from outside has no penalty stiffness in
+the tangent, and the step would overshoot it deep into the tool - after
+which the line search creeps towards the contact, iteration after iteration.
+Such nodes join the active set with the penalty law extended linearly to
+their current gap, and the correction is solved again (a semismooth Newton
+step on the predicted active set); on the smoke case below this removed
+every increment cut and a third of the iterations.
+
+An increment converges when both `|R_f - (1 - s) R_0f| <= eps_R F_ref` and the
+correction is below `eps_u` times the increment of `u` - or the residual is
+at its round-off floor - and the residual of the accepted state is checked
+again before its history is committed. The **reference force** `F_ref` is the
+largest of the ramped imbalance, the reactions, the contact forces and every
+such value met at a converged state of the analysis so far: at the end of a
+release onto determinate supports the external forces and the reactions
+vanish, and a scale made of them alone would leave the tolerance at zero
+(the defect the non-linear static driver has, which cannot converge to a
+load-free residually stressed state). The round-off floor adds the
+contact's own, `8 eps kappa A (|x| + |c|)`: a gap is a difference of
+positions, each exact to its rounding. For the same reason a displacement is
+resolved only to the rounding of the position `X + u` it defines: the
+correction limit is no finer than `64 eps (|u| + |X|)`, and a state whose
+correction is at that limit is accepted with a residual up to
+`64 eps || |K| (|X| + |u|) ||` - even far above the forces of the state (a
+stress-free body moved rigidly by its supports, a tool grazing the surface
+from the reference state, whose reference force is itself round-off). That
+floor is never accepted alone, since a runaway state inflates it.
+
+### 1.5 Linear algebra
+
+The free-free tangent's sparsity pattern is analysed once per Dirichlet
+partition; each iteration scatters the assembled values into it through a
+cached index map and refactorises numerically. With SuiteSparse
+(`-DSPARLAB_WITH_CHOLMOD=AUTO`, the default, finds it; `ON` requires it,
+`OFF` never uses it): CHOLMOD supernodal Cholesky for a symmetric tangent,
+Eigen's `SimplicialLDLT` if that fails (the tangent is not positive
+definite), and UMFPACK LU for a non-symmetric one (friction) or when
+`LDL^T` meets a vanishing pivot. Without it, Eigen's `SimplicialLDLT` and
+`SparseLU`. `"solver": "eigen"` in the deck selects Eigen's factorisations
+in a SuiteSparse build (for comparisons). The summary records how often
+each factorisation ran and the time each phase took.
+
+## 2. Configuration
+
+The `forming` block of a deck (`sparlab_form` needs one). With it,
+`load_cases` may be omitted (the analysis applies none; a case that carries
+loads is ignored, with a warning), and so may `boundary_conditions` when
+every step lists its own constraints. Relative trajectory files resolve
+against the deck's directory; every key is read strictly (`--strict-config`
+refuses unknown ones).
+
+```jsonc
+"forming": {
+  "kinematics": "finite",                  // or "small_strain"
+  "material_model": "saint_venant_kirchhoff",
+  "mean_dilatation": "auto",               // "auto" | "all" | "none" | true | false
+  "friction_tangent": "exact",             // or "symmetric"
+  "solver": "auto",                        // or "eigen"
+  "tools": [
+    { "name": "tool", "shape": "sphere", "radius": 0.005,
+      "surface": { "box": { "zmin": 0.0 } },
+      "friction": 0.05, "penalty": 10.0, "tangential_penalty": 1.0,
+      "trajectory": { "file": "toolpath.csv" } }   // or { "times": [...], "points": [[x,y,z], ...] }
+  ],
+  "steps": [
+    { "name": "form", "type": "form", "tools": ["tool"], "max_tool_travel": 5.0e-4,
+      "boundary_conditions": [ { "name": "clamp", "fix": ["x","y","z"], "region": {...} } ] },
+    { "name": "retract", "type": "form", "tools": ["tool"], "time": [3.1, 3.2] },
+    { "name": "unclamp", "type": "release", "increments": 10,
+      "boundary_conditions": [ { "name": "A", "fix": ["x","y","z"], "mode": "hold", "region": {...} },
+                               { "name": "B", "fix": ["y","z"], "region": {...} },
+                               { "name": "C", "fix": ["z"], "region": {...} } ] }
+  ],
+  "newton": { "max_iterations": 30, "residual_tolerance": 1e-6, "displacement_tolerance": 1e-6,
+              "line_search": true, "max_cuts": 10, "max_increments": 100000 },
+  "output": { "vtk": true, "snapshots": "steps" }   // "steps" | "none" | an increment stride
+}
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `kinematics` | `"finite"` | `"finite"` (total Lagrangian, large rotation) or `"small_strain"` |
+| `material_model` | `"saint_venant_kirchhoff"` | elastic law with finite kinematics (`"neo_hookean"` for elastic models only) |
+| `mean_dilatation` | `"auto"` | B-bar of elastoplastic Q4 / Hex8 (as in `nonlinear`) |
+| `friction_tangent` | `"exact"` | `"exact"` (consistent, LU) or `"symmetric"` (its symmetric part) |
+| `solver` | `"auto"` | `"auto"`: SuiteSparse when built in; `"eigen"`: Eigen's factorisations |
+| `tools[].name` | `"tool<i>"` | unique |
+| `tools[].shape` | `"sphere"` | `"sphere"`, `"plane"` or `"cylinder"` |
+| `tools[].radius` | required (sphere, cylinder) | `> 0` [m] |
+| `tools[].normal` | required (plane) | the plane's normal, out of the tool towards the body |
+| `tools[].axis` | `[0, 0, 1]` (cylinder) | the cylinder's axis (3-D; in 2-D it is z) |
+| `tools[].surface` | required | a region: the boundary faces whose nodes all lie in it are the slave surface |
+| `tools[].friction` | 0 | Coulomb coefficient, `>= 0` |
+| `tools[].penalty` | 10 | penalty scale `s`, `kappa = s E / h` |
+| `tools[].tangential_penalty` | 1 | `kappa_T / kappa` |
+| `tools[].trajectory` | required | `{ "file": "path.csv" }` (header `t,x,y,z`, s and m; blank lines and `#` comments allowed) or `{ "times": [...], "points": [[...], ...] }`; at least two knots, times strictly increasing; the sphere's centre, a point of the plane, a point of the cylinder's axis; constant outside its span |
+| `steps[].name` | `"step<k>"` | unique; part of the result file names |
+| `steps[].type` | `"form"` | `"form"` or `"release"` |
+| `steps[].tools` | `[]` | active tools; a release may keep only tools the step before it lists |
+| `steps[].time` | see below | `[t_begin, t_end]` [s], not before the previous step's end |
+| `steps[].max_tool_travel` | half the smallest slave-node size | largest travel of an active tool in one increment [m] |
+| `steps[].increments` | 1 (form), 10 (release) | the window in this many equal increments at the start (and at most) |
+| `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default) or `"absolute"` (`value` the absolute end value) |
+| `newton.*` | see above | Newton settings |
+| `output.vtk` | true | per-step VTK files (`--no-vtk` overrides) |
+| `output.snapshots` | `"steps"` | `"steps"`: per-step files; `"none"`: only summary, mesh and tool forces; an integer N: per-step files plus a snapshot every N increments |
+
+A step's default window: for a `form` step with tools, the union of their
+trajectories' spans, starting no earlier than the previous step ended; for a
+`release` step (or a form step without tools) the unit interval after the
+previous step. The deck is refused - naming the key - for an unknown tool in
+a step, a release keeping a tool the previous step does not list, a
+non-positive radius, negative friction, a time window that runs backwards,
+a trajectory with fewer than two knots or times that do not increase, and
+(when the analysis is built) a surface that selects no face or constraints
+that leave a rigid-body motion free.
+
+## 3. Output contract
+
+`sparlab_form --config deck.json --output dir [--threads n] [--verbosity lvl]
+[--strict-config] [--no-vtk] [--version]` runs no linear static solve: it
+builds the model (validating the mesh and the material), runs the steps and
+writes, into `dir`:
+
+| File | Content |
+|------|---------|
+| `summary.json` | `case`, `sparlab_version` (`"<version> (<git revision>)"`), `completed`, `termination`, `runtime_s`, `timing` (seconds per phase: `element_tangent_s`, `element_residual_s`, `contact_s`, `factorisation_s` with `factor_<kind>_s` per factorisation, `solve_s`, `total_s`; `increments`, `iterations`, `cuts`, `linear_solver` with the count of each factorisation, `suitesparse`), `analysis` (kinematics, tolerances), `steps` (per step: `name`, `type`, `completed`, `increments`, `iterations`, `cuts`, `max_plastic_strain`, `reaction_norm_N`, `warnings`, and `termination`, `files_stem`, `t_begin_s`, `t_end_s`, `tools`, `constrained_dofs`, `start_imbalance_N`, `reference_force_N`, `max_displacement_change_m`, `max_displacement_m`), `tools` (per tool: shape, radius, friction, penalty, trajectory span and length, peak force and its time, largest contact node count and penetration), `mesh` (element type, dim, nodes, elements, DOFs, bounding box), `warnings`, `files`, `provenance` |
+| `config.json` | the deck, verbatim |
+| `mesh.json` | nodes, connectivity (`ResultWriter::write_mesh`) |
+| `step_<k>_<s>_nodes.csv` | `node,X,Y,Z,ux,uy,uz`: reference coordinates and the displacement at the end of step `k` (1-based) named `s` [m]; Z and uz are 0 on a 2-D model |
+| `step_<k>_<s>_elements.csv` | `element,eq_plastic_strain,von_mises_Pa`: the largest equivalent plastic strain of the element's integration points, and the von Mises stress of its point-averaged Cauchy stress |
+| `step_<k>_<s>.vtk` | the same fields for ParaView (unless `--no-vtk`) |
+| `step_<k>_<s>_inc_<i>_nodes.csv`, `.vtk` | snapshots every `output.snapshots` increments (step ends excluded) |
+| `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m`: per converged increment and active tool, the tool's reference point [m] and the force the body exerts **on the tool** [N] |
+
+`s` is the step name with every character other than letters, digits, `-`
+and `_` replaced by `_`. Only completed steps have files. The exit status is
+0 when every step completed and 3 when one stopped (the reason is in
+`summary.json` and on stderr; the steps before it are written); 2 for a
+configuration error, 4 for an I/O error. `--version` prints one line,
+`sparlab <version> (<git revision>)`; the revision is recorded at every
+build, with `-dirty` for uncommitted changes.
+
+## 4. Verification
+
+`tests/test_forming.cpp` (`[forming]`; the smoke case is also `[slow]`):
+
+| Check | Measured |
+|-------|----------|
+| Trajectory: interpolation, clamping, velocity, monotone and random lookups, CSV parsing and its errors (line numbers) | exact |
+| Contact tangent vs central differences (step 1e-9 m) of the contact residual at fixed history (sphere, plane, cylinder; frictionless, stick, slip, new contact; 13 to 215 nodes in contact; a 2-D circle in slip) | largest error relative to the largest tangent entry `7.2e-10` (sphere `7.0e-10`, plane `5.4e-10`, cylinder `7.2e-10`, 2-D `1.7e-10`; tolerance `1e-6`) |
+| Flat punch on an elastic column (one Hex8 in section): force vs `E A delta / H / (1 + E/(kappa H))`, the penalty in series | `4.5e-12`, `1.9e-11`, `3.6e-10` at `s` = 10, 100, 1000 (tolerance `1e-9`); against rigid contact `1.96e-2`, `2.0e-3`, `2.0e-4` - exactly `1/s` |
+| Ironing, `mu = 0.2`: sphere (R = 20 mm) and flat punch pressed into an elastic block and dragged 10 mm | in steady sliding every contact node slips (9 and 231 nodes); friction load / normal load = `mu` to `7e-16`; flat punch `-F_x / F_z = 0.2` (tested to `1e-6`); sphere `0.19986`, its contact normals tilted |
+| Double-sided pinch: two spheres on the two faces of a clamped sheet, paths mirrored about its mid-plane, pressed and moved together with friction | equal and opposite normal forces and equal friction forces to `1e-6`; the reactions' resultant equals the total force on the tools to `1e-6` |
+| Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12 |
+| Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `5.2e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged |
+| Springback of an elastic-perfectly plastic beam (L = 8 h) bent by end displacements to `3 k_y` (plane stress Q4, small strain), released onto 3-2-1: curvature change of the central half vs the exact elastic unloading `M(3 k_y)/(EI) = 1.4444 k_y` | `1.4565`, `1.4482`, `1.4453 k_y` with 4, 8, 16 Q4 through the depth: errors `8.4e-3`, `2.6e-3`, `5.6e-4` (order 1.7 then 2.2); support reactions below `1e-6` of the reference force |
+| A sphere grazing the surface exactly at the end of the first increment, from the reference state (a round-off reference force) | converges without a cut, the first increment in at most 3 iterations |
+| SPIF smoke case (section 5) | completes; the centre sinks 1.65 mm (tool tip at 2 mm), the release moves the part by up to 0.18 mm; tool force positive in z at every increment in contact |
+| The `forming` block: every key, trajectory file, refusals; the result files and summary keys of the contract | every key read in strict mode; every refusal names its key; every file with its exact header and row count |
+
+Every check also passes in a build without SuiteSparse. Run alone, the
+`[forming]` cases other than the smoke case take about 60 s and the smoke
+case 70 s; under `ctest -j4` on the shared machine, where four test
+processes' OpenMP threads contend, the ironing and rigid-release cases took
+112 s and 140 s and the smoke case 287 s.
+
+## 5. Cost
+
+Measured with `sparlab_form --threads 4` on the development machine: four
+cores shared with other jobs (load average 2 to 11 during the runs, so the
+element times in particular vary by a factor of two between runs), GCC 13
+`-O3`, SuiteSparse 7 over the **reference (netlib) BLAS**, which is slow for
+CHOLMOD's supernodes and UMFPACK's fronts - an optimised BLAS would shorten
+the factorisations markedly. `"solver": "eigen"` runs the same build with
+Eigen's factorisations; the iteration counts are identical, and the results
+agree to `1e-17 m`.
+
+| Case | DOFs | Path | Increments | Newton iterations | SuiteSparse | Eigen |
+|------|------|------|------------|-------------------|-------------|-------|
+| Smoke (`configs/forming/spif_smoke.json`): 40 x 40 x 1 mm, 20 x 20 x 2 Hex8, 5 mm tool, 2 contours to 2 mm, retract, unclamp | 3 969 | 100 mm | 137 | 1 274 | **75 s** | 122 s |
+| Cone, first quarter contour: 60 x 60 x 1 mm, 60 x 60 x 2 Hex8, plunge and a quarter of the 1 mm contour, unclamp | 33 489 | 23.6 mm | 61 | 693 | **939 s** | 1 289 s |
+| Cone, full (`configs/forming/spif_cone_60.json`): ten contours with a 1 mm step-down to 10 mm, retract, unclamp | 33 489 | 622 mm | 1 470 (from the path) | ~18 700 (12.7 per increment) | **~7 h** (extrapolated) | ~9.6 h |
+
+Where the time goes (seconds):
+
+| Phase | Smoke, SuiteSparse | Smoke, Eigen | Cone quarter, SuiteSparse | Cone quarter, Eigen |
+|-------|--------------------|--------------|---------------------------|---------------------|
+| factorisation (total) | 41.1 (55 %) | 57.7 | 686.3 (73 %) | 1 041.9 (81 %) |
+| - LU, friction (UMFPACK / SparseLU) | 35.4 (1 248 x 28 ms) | 48.3 | 582.5 (723 x 0.81 s) | 805.1 (723 x 1.11 s) |
+| - Cholesky (CHOLMOD / SimplicialLDLT) | 4.7 (335 x 14 ms) | 8.0 | 93.2 (178 x 0.52 s) | 231.6 (184 x 1.26 s) |
+| element tangent (evaluation and assembly) | 25.6 | 54.3 | 181.7 | 192.9 |
+| element residual (line search, acceptance) | 2.5 | 4.6 | 19.4 | 21.4 |
+| solve | 4.2 | 2.2 | 38.8 | 19.6 |
+| contact (evaluation, search, anticipation) | 0.1 | 0.1 | 0.5 | 0.5 |
+| **total** | **75.4** | **122.0** | **939.1** | **1 288.7** |
+
+A build without SuiteSparse (`-DSPARLAB_WITH_CHOLMOD=OFF`) runs the Eigen
+path: the smoke case took 170 s, 70 s of it factorisation, under a load
+average of 11.
+
+The full cone was not run to the end: at about 17 s per increment it takes
+about 7 hours. The estimate multiplies the 1 470 increments its path needs
+(0.5 mm travel, 48 chords per circle, every knot reached; the same count
+predicts the quarter run's 51 exactly) by the quarter run's 12.7 iterations
+per increment and 1.36 s per iteration (1.86 s with Eigen); the deeper
+contours, with more of the sheet plastic, may need more.
+
+What the numbers say:
+
+* **The factorisation dominates** - 55 % on 4 000 DOFs, 73 % on 33 000 -
+  and friction makes the tangent non-symmetric, so every iteration with a
+  slipping node takes an LU (UMFPACK, 1.6 to 2 times the cost of CHOLMOD
+  here) rather than a Cholesky. SuiteSparse is worth 1.4 to 1.6 times overall on this machine.
+* **Newton needs 9 to 13 iterations per increment** on these meshes: the
+  first iteration meets the tool's new penetration (a residual of order
+  `kappa A` times the travel), and the plastic zone under the tool is then
+  redistributed over several iterations; on the coarse smoke mesh the tool
+  carries its load on one or two nodes. Smaller tool travel means more,
+  cheaper increments, not less work.
+* The contact itself (evaluation, search, anticipation) is negligible.
+* **The next gains** are, in order: an optimised BLAS under SuiteSparse; a
+  modified Newton method that keeps a factorisation over several iterations
+  (an iteration then costs an element evaluation, 0.26 s with the tangent at
+  33 000 DOFs, and a back-substitution of about 50 ms, instead of adding a
+  factorisation of 0.5 to 0.8 s);
+  a symmetric factorisation with the friction's non-symmetric part applied
+  iteratively; and, for full-size parts, explicit dynamics with mass
+  scaling, which is how incremental forming is usually simulated at scale.
+
+## 6. Limitations
+
+* **Penalty contact.** The contact is enforced approximately: a node
+  penetrates the tool by about `p h / (s E)`. Raising the penalty scale
+  reduces it (the force error of the punch test falls as 1/s) but stiffens the
+  system; there is no augmented-Lagrangian correction. The contact is
+  node-to-rigid-surface: the slave surface is sampled at its nodes, so a tool
+  much smaller than the elements (or a coarse mesh under a small tool) is
+  resolved poorly - on the smoke case a 5 mm tool on 2 mm elements carries
+  its load on one or two nodes, which is what makes its increments converge
+  slowly.
+* **Plasticity at large strain.** The elastoplastic law is J2 with an
+  additive split of the Green-Lagrange strain, meant for small elastic
+  strains at large rotation; incremental forming reaches equivalent plastic
+  strains of order one, beyond which its stresses are approximate (the run
+  warns beyond a strain of 0.05). Equilibrium and springback remain
+  consistent with that law; a multiplicative finite-strain J2 would be needed
+  for quantitative stresses at those strains.
+* **Implicit and quasi-static.** No inertia, no strain rate. Every increment
+  is solved by Newton's method with a direct sparse factorisation per
+  iteration, which is the dominant cost for large sheets (section 5); a
+  forming path of hundreds of millimetres over a fine sheet takes hours.
+  An explicit integrator (with mass scaling) is the usual answer for full-size
+  parts and is not provided.
+* **Hex8 through the thickness.** A sheet meshed with a few fully integrated
+  Hex8 layers is stiff in bending (shear locking grows with the element
+  aspect ratio); mean dilatation cures volumetric, not shear, locking.
+  Several layers and moderate aspect ratios are needed for springback
+  accuracy; there is no enhanced-strain or solid-shell element.
+* **No remeshing, no trimming, no element deletion**; no thermal effects (the
+  analysis applies no temperature); no tool spin (tools translate, so the
+  friction direction is that of the translation only); no tool wear or
+  deformable tools; one cell type per mesh; linear elements only (Q4, Tri3,
+  Hex8, Tet4: a Tet10 face's corner weights vanish).
+* **Release.** The imbalance a release ramps out is a dead load, fixed in
+  space: supports that rotated the part far while it springs back would
+  change the path of its unloading (and any reverse yielding along it). A
+  release onto supports that are not statically determinate leaves
+  reactions that hold the part deformed; the run warns when they exceed
+  1e-3 of the reference force.
+* **The ramp of a changed partition is linear.** A form step that starts
+  from an imbalanced state (constraints released, a tool added in contact)
+  ramps that imbalance out over the whole step, which is exact only at its
+  end.

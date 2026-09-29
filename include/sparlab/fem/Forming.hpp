@@ -57,11 +57,18 @@
 /// friction, its non-symmetric part) with a line search on the energy - the
 /// non-linear static analysis's: full step when \f$|g(1)| \le 0.8|g(0)|\f$,
 /// else regula falsi, an element inversion or a node through a tool halving
-/// the step. It converges when both
+/// the step; the full step's evaluation, tangent included, is kept as the
+/// next iteration's. A node the correction would drive into a tool from
+/// outside - without penalty stiffness in the tangent, it would overshoot
+/// deep into the tool - joins the active set with the penalty extended to
+/// its gap and the correction is solved again (a semismooth Newton step on
+/// the predicted active set). It converges when both
 /// \f$\|R_f - (1-s)R_{0f}\| \le \epsilon_R F_{ref}\f$ and the correction is
 /// below \f$\epsilon_u\f$ times the increment of u - or the residual is at
-/// its round-off floor - and the residual of the accepted state is checked
-/// again before its history is committed. The reference force
+/// its round-off floor, which includes the contact's (a gap subtracts
+/// positions: a displacement is resolved only to the rounding of X + u) -
+/// and the residual of the accepted state is checked again before its
+/// history is committed. The reference force
 /// \f$F_{ref}\f$ is the largest of the ramped imbalance, the reactions,
 /// the contact forces and every such value met at a converged state of the
 /// analysis so far (never zero): at the end of a release the external

@@ -39,6 +39,7 @@ relative.
 | **Linear buckling** | `(K + lambda K_G) phi = 0` of each load case by subspace iteration, with the buckling spectral transformation and an inertia-placed shift when reversed-load modes crowd the spectrum; a check of the analysed model, the full design domain and the **exported part** |
 | **Large deflection** | **Geometrically non-linear statics** (total Lagrangian, consistent tangent) with the Saint Venant-Kirchhoff or a compressible **neo-Hookean** law, **follower pressures**, the centrifugal load at the deformed position (spin softening), the multiplicative finite-strain **thermal** split, prescribed displacements; Newton with an energy line search under load control - which **stops at a limit or bifurcation point** and brackets it, using the tangent's inertia - or **Crisfield's arc-length method** through snap-through; monitors, Cauchy and second Piola-Kirchhoff stresses, the deformed force balance, CalculiX `NLGEOM` export |
 | **Plasticity** | **J2 (von Mises) plasticity** with linear and **Voce** isotropic and **Prager kinematic** hardening, by the backward-Euler radial return with its consistent tangent, in 3-D, plane strain and **plane stress** (the thickness strain solved at every point), with thermal strain; **small-strain** kinematics or the return in the Green-Lagrange strain at **large rotation**; **mean dilatation** (B-bar, and its Green-strain form) against volumetric locking; point history committed only on convergence; **load paths that unload and reverse** (permanent set, residual stress, the Bauschinger effect); load control that stops at a **plastic collapse** with it bracketed; equivalent plastic strain fields, CalculiX `*PLASTIC` export |
+| **Contact and forming** | **Unilateral contact** in the non-linear statics (small sliding): rigid planes, cylinders and spheres and deformable pairs by the **dual mortar** method, frictionless or with **Coulomb friction**, by a semismooth Newton method; and the **incremental-forming analysis** (`sparlab_form`, [`docs/forming.md`](docs/forming.md)): rigid **sphere, plane and cylinder tools on tabulated trajectories** (CSV or inline) in **penalty contact in the current configuration** (large sliding, exact tangent), with **Coulomb friction by an elastic-slip return map** and its consistent non-symmetric tangent, **step sequences** with per-step constraints (`hold` / `absolute`), trajectory knots reached exactly and increments capped by tool travel, restartable state (displacement, plastic and friction history), a **release ramp onto 3-2-1 supports** for springback with a reference-force residual scale that converges to the load-free residually stressed state, pattern-cached factorisation with optional **CHOLMOD / UMFPACK**, and a fixed output contract (per-step nodal and element fields, tool force histories) |
 | **Dynamics** | **Transient response** by the **HHT-alpha** method (the trapezoidal rule at `alpha = 0`, numerical damping of unresolved modes below it) with consistent or lumped mass, **Rayleigh damping**, step, table and harmonic amplitudes on the loads and on **prescribed motion** (a shaken support), from rest or a released preload, the energy balance tracked every step; the **non-linear transient** (large deflection, J2 plasticity) by Newton's method at every step with the plastic history committed on convergence; the **steady harmonic response** by a direct complex solve per frequency with structural and Rayleigh damping, flagging an undamped resonance; monitors of displacement, velocity, acceleration and reaction, VTK snapshot series, CalculiX `*DYNAMIC` export |
 | **Topology optimisation** | SIMP with penalty continuation, density and sensitivity filters, a **Heaviside projection** with `beta` continuation, the **robust (eroded / blueprint / dilated) formulation** for a minimum length scale, an **additive-manufacturing overhang filter**, analytical sensitivities, optimality criteria *or* the method of moving asymptotes, aggregated **stress** and **buckling** constraints with adjoint sensitivities, passive solid/void regions, multi-load-case objective, length-scale, erosion and overhang checks of the result |
 | **Geometry** | The structure before and after optimisation as VTK and watertight binary STL, with closure, manifoldness and volume checks |
@@ -93,6 +94,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build -
 ./build/bin/sparlab_topopt --config configs/benchmarks/column_buckling.json     --output results/u
 ./build/bin/sparlab_topopt --config configs/benchmarks/mbb_beam_overhang.json   --output results/t --overhang -y
 ./build/bin/sparlab_solve  --config configs/verification/engine_mount_tet10_analysis.json --output results/s --buckling 4
+./build/bin/sparlab_form   --config configs/forming/spif_smoke.json --output results/f
 ./build/bin/sparlab_verify --study all --output results/verification
 ./build/bin/sparlab_bench  --dim 3 --sizes 8,16,32,64 --solver amg_cg --output results/benchmark
 python3 python/scripts/cross_validate.py --case results/x --output results/cross_validation
@@ -110,6 +112,7 @@ Run any executable with `--help` for its full flag list.
 | Cross-validate against CalculiX and scikit-fem | `make cross-validation` |
 | Tet4 against Tet10 on the engine mount (needs `gmsh`) | `make tet10-study` |
 | Solve one benchmark | `make benchmark CASE=aerospace_bracket` |
+| Incremental forming (smoke case) | `./build/bin/sparlab_form --config configs/forming/spif_smoke.json --output results/spif_smoke` |
 | Run all benchmarks (2-D and 3-D) | `make benchmarks` |
 | Run the aerospace design study | `make study` |
 | Runtime scaling benchmarks (direct vs multigrid vs Jacobi; Q4, Hex8, Tet4) | `make scaling` |
@@ -235,6 +238,22 @@ left out of the dynamics, their `*DYNAMIC` response contradicting CalculiX's
 own `*FREQUENCY`. The harmonic responses agree with a direct complex solve
 to `1.0e-10`. Of the 198 comparisons, 192 are judged and pass, and 6 are
 informational.
+
+### Incremental forming
+
+`sparlab_form` ([`docs/forming.md`](docs/forming.md)) is verified against
+exact answers: the contact tangent against finite differences to `7.2e-10`,
+a flat punch's force against the penalty-in-series solution to `4.5e-12`
+(at the default penalty), Coulomb sliding at `mu` times the normal load to
+`7e-16`, a release invariant under rigid motions of its supports to
+`1.1e-17 m`, and the springback of an
+elastoplastic beam against the exact elastic unloading of its
+moment-curvature relation, converging to `5.6e-4` at 16 Q4 through the depth.
+The single-point forming smoke case (3 969 DOFs, a 100 mm toolpath) runs in
+75 s with SuiteSparse (122 s with Eigen's factorisations); a 60 x 60 x 2
+Hex8 cone (33 489 DOFs) costs about 17 s per 0.5 mm of toolpath, some 7
+hours for ten contours to 10 mm - the factorisation takes three quarters of
+it (section 5 of `docs/forming.md`).
 
 ### Benchmarks
 
@@ -721,7 +740,7 @@ Full table, including every tolerance and its default, in
 ## Architecture
 
 ```
-  apps/            sparlab_solve  sparlab_topopt  sparlab_verify  sparlab_bench
+  apps/            sparlab_solve  sparlab_form  sparlab_topopt  sparlab_verify  sparlab_bench
                             |
      +----------------------+----------------------+
      |                      |                      |
@@ -826,7 +845,8 @@ in linear and in curved quadratic tetrahedra, with how they were generated),
 [`configs/verification/`](configs/verification/) (the static, modal,
 buckling, load, large-deflection, elastoplastic, transient and
 frequency-response decks the cross-validation uses, on all five element
-types).
+types), [`configs/forming/`](configs/forming/) (single-point incremental
+forming: the smoke case and the 60 x 60 x 2 cone, with their toolpaths).
 
 A transient or harmonic analysis is one more block:
 
@@ -884,6 +904,12 @@ results/<case>/
                             (harmonic runs) the complex monitors per frequency, and the
                             complex fields at the snapshot frequencies
 ```
+
+`sparlab_form` writes its own contract (`docs/forming.md`, section 3):
+`summary.json`, `config.json`, `mesh.json`, per completed step `k` named `s`
+`step_<k>_<s>_nodes.csv` (`node,X,Y,Z,ux,uy,uz`), `step_<k>_<s>_elements.csv`
+(`element,eq_plastic_strain,von_mises_Pa`) and `step_<k>_<s>.vtk`, and
+`tool_forces.csv` (`step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m`).
 
 `summary.json` is the single source of truth for every number quoted in the
 documentation.
@@ -944,12 +970,17 @@ Things this project deliberately does, because the opposite is easy and wrong:
 ## Assumptions and limitations
 
 The short version: plane or solid continuum only (no plates, shells or
-beams), no contact; static analysis linear, or non-linear in
-`sparlab_solve` - large deflection, and rate-independent J2 plasticity at
-small strain, with large rotation (no finite-strain plasticity, creep or
-damage) - with no branch switching at a bifurcation of a perfect structure
-and no sequences of different loads within a case; dynamics by implicit
-direct integration with a constant step and one amplitude per case (no
+beams); contact in the non-linear statics for small sliding only, and in the
+forming analysis for rigid tools only, by a penalty (a penetration of about
+`p h / (s E)`), implicit and quasi-static (hours for a fine sheet and a long
+toolpath), with no remeshing, trimming, thermal effects or tool spin; static
+analysis linear, or non-linear in `sparlab_solve` - large deflection, and
+rate-independent J2 plasticity at small strain, with large rotation (no
+finite-strain plasticity, creep or damage; the forming analysis applies the
+same law at forming strains, where its stresses are approximate) - with no
+branch switching at a bifurcation of a perfect structure and no sequences of
+different loads within a case (the forming analysis has step sequences);
+dynamics by implicit direct integration with a constant step and one amplitude per case (no
 explicit integration, modal superposition, response spectra or random
 vibration) and a linear harmonic response with Rayleigh and structural
 damping, while modal, linear (bifurcation) buckling and the optimisation stay
@@ -982,6 +1013,7 @@ treating any number here as a design answer.
 | [`docs/topology_optimization.md`](docs/topology_optimization.md) | SIMP, filters, the Heaviside projection, the robust formulation and length-scale check, the overhang filter, sensitivity derivation, optimality criteria, MMA, the aggregated stress and buckling constraints and their adjoints, passive regions, continuation, convergence, diagnostics |
 | [`docs/conventions.md`](docs/conventions.md) | units, coordinates and numbering in both dimensions, element face tables, mesh-file numbering, signs, Voigt ordering, energy definitions, tolerances, determinism |
 | [`docs/architecture.md`](docs/architecture.md) | layering, the dimension-generic core, component responsibilities, design decisions, extension points |
+| [`docs/forming.md`](docs/forming.md) | the incremental-forming analysis: rigid tools on trajectories, penalty contact with friction in the current configuration, steps, the release ramp and its residual scale, the linear algebra, the `forming` block, the output contract of `sparlab_form`, verification, cost and limitations |
 | [`docs/configuration.md`](docs/configuration.md) | complete input-deck reference (structured and file meshes, mesh order, materials and plasticity, solvers and multigrid, buckling, the non-linear analysis and load paths, projection and the robust formulation, overhang, MMA, stress and buckling constraints) and the command-line overrides |
 | [`docs/verification.md`](docs/verification.md) | every verification and validation check in 2-D and 3-D, the simplices and the quadratic tetrahedron, the mesh readers, the multigrid solver, the projection, buckling, the robust and overhang options, the MMA and constraint tests, the cross-validation against CalculiX and scikit-fem, with measured values and what is not covered |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | the benchmark cases in detail, the projection comparison, the two parts read from mesh files, the 356 475-DOF solid, Tet4 against Tet10, the buckling-constrained column, the robust and overhang comparisons, convergence behaviour, runtime and solver scaling |
