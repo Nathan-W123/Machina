@@ -203,19 +203,52 @@ def cmd_compensate(args: argparse.Namespace) -> int:
     result = compensate(target, setup, model, method=args.method, iterations=args.iterations,
                         alpha=args.alpha, verify=not args.no_verify, work_dir=args.work_dir,
                         smoothing=args.smoothing, direction=args.direction,
-                        tolerance=args.stop_tolerance)
+                        tolerance=args.stop_tolerance,
+                        allow_out_of_envelope=args.allow_out_of_envelope)
     out = result.save(args.out)
     from .metrology import signed_deviation
-    prov = {"method": result.method, "verification": result.verification,
-            "setup": setup.physics_dict()}
+    prov: Dict[str, Any] = {"method": result.method, "verification": result.verification,
+                            "setup": setup.physics_dict()}
+    notes: List[str] = []
     if model is not None:
         prov["model"] = str(args.model)
-        prov["model_data_source"] = getattr(model, "data_source", "unknown")
+        prov["model_data_source"] = result.model_data_source
         prov["predicted_surface"] = "surrogate prediction, not a simulation or measurement"
+        if result.ood is not None:
+            env = {"in_envelope": result.in_envelope,
+                   "target": {k: (result.ood_target or {}).get(k) for k in
+                              ("in_envelope", "part_score", "reasons")},
+                   "compensated": {k: result.ood.get(k) for k in
+                                   ("in_envelope", "part_score", "reasons")},
+                   "overridden": result.allowed_out_of_envelope}
+            prov["envelope"] = env
+            verdict = "inside" if result.in_envelope else "OUTSIDE"
+            line = (f"training envelope: target and compensated shape {verdict}"
+                    + ("" if result.in_envelope else " (reasons: "
+                       + ", ".join(((result.ood_target or {}).get("reasons", [])
+                                    + result.ood.get("reasons", []))[:5])
+                       + "; allowed by --allow-out-of-envelope)"))
+            print(line, file=sys.stderr)
+            notes.append(line)
+        if result.interval_note:
+            print(f"no prediction interval: {result.interval_note}", file=sys.stderr)
+            notes.append(f"No prediction interval: {result.interval_note}")
+    if result.verified is not None:
+        # the check, not the model's own prediction, is what the report shows
+        shown, what = result.verified, ("sparlab_form simulation of the compensated shape "
+                                        "(verification run)")
+    else:
+        shown, what = result.predicted, (
+            "simulation (best DA iterate)" if result.method == "fea" else
+            f"PREDICTION of the model (data source: {result.model_data_source}) - not "
+            "verified; run with --verify-fea")
+    prov["shown_formed_surface"] = what
+    notes.insert(0, f"Formed surface and deviation shown: {what}.")
     write_report(out / "report", target, title="Compensation report",
-                 deviation=signed_deviation(result.predicted, target),
-                 formed=result.predicted, commanded=result.compensated,
-                 tolerance=args.tolerance, history=result.history, provenance=prov)
+                 deviation=signed_deviation(shown, target),
+                 formed=shown, commanded=result.compensated,
+                 tolerance=args.tolerance, history=result.history, notes=notes,
+                 provenance=prov)
     print(f"wrote {out}")
     return 0
 
@@ -367,6 +400,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "--work-dir)")
     s.add_argument("--no-verify", action="store_true",
                    help="skip the verification run (the result is then a prediction only)")
+    s.add_argument("--allow-out-of-envelope", action="store_true",
+                   help="compensate even when the target or the compensated shape lies "
+                        "outside the model's training envelope (refused otherwise)")
     s.add_argument("--out", required=True, help="output directory")
     s.set_defaults(func=cmd_compensate)
 

@@ -84,16 +84,27 @@ def test_the_ml_commands_end_to_end(tmp_path, capsys, ml_threads, fake_solver, c
     assert "contradict" in capsys.readouterr().err
     assert main(base + ["--verify-fea"]) == 2                  # no --work-dir
     capsys.readouterr()
-    assert main(base + ["--verify-fea", "--work-dir", str(d / "runs")]) == 0
-    capsys.readouterr()
+    # the double's setup is not the training setup: refused without the override
+    assert main(base + ["--verify-fea", "--work-dir", str(d / "runs")]) == 2
+    assert "outside the model's training envelope" in capsys.readouterr().err
+    assert main(base + ["--verify-fea", "--work-dir", str(d / "runs"),
+                        "--allow-out-of-envelope"]) == 0
+    err = capsys.readouterr().err
+    assert "training envelope: target and compensated shape OUTSIDE" in err
+    # two calibration parts cannot support a 90 % interval: none, and why
+    assert "no prediction interval" in err and "needs at least 9 held-out parts" in err
     assert run_count(counter) == 1
     doc = json.loads((d / "comp" / "compensation.json").read_text())
     assert doc["method"] == "surrogate" and doc["verification"]["source"] == "fea"
     assert doc["ood"]["model_data_source"] == "proxy - not physics"
-    # two calibration parts cannot support a 90 % interval
+    assert doc["model_data_source"] == "proxy - not physics" and doc["in_envelope"] is False
+    assert "not simulations" in doc["history_quantity"]
     assert not (d / "comp" / "predicted_lower.npz").exists()
+    assert "needs at least 9" in doc["interval_note"]
+    assert (d / "comp" / "verified.npz").is_file()
     report = (d / "comp" / "report" / "report.md").read_text()
-    assert "proxy - not physics" in report
+    assert "proxy - not physics" in report and "OUTSIDE" in report
+    assert "sparlab_form simulation of the compensated shape" in report
 
 
 def test_ml_usage_errors_exit_with_status_2(tmp_path, capsys):
