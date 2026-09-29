@@ -2,28 +2,45 @@
 
 `build_deck` writes, into one directory,
 
-* `deck.json` - a SparLab JSON deck (mesh, material, model,
-  boundary_conditions and nonlinear blocks as `sparlab_solve` reads them,
-  `docs/configuration.md`) plus a `forming` object with the tool and the
-  ordered steps;
+* `deck.json` - a SparLab JSON deck (`docs/configuration.md`): mesh,
+  material, model and the `forming` block of `docs/forming.md` (section 2)
+  with the tool, the ordered steps and their constraints, the kinematics,
+  the Newton settings and the output. It has no top-level
+  `boundary_conditions`, `load_cases` or `nonlinear` block: every step lists
+  its own constraints, the forming analysis applies no load case, and
+  sparlab_form reads no `nonlinear` block. Every key is one sparlab_form
+  reads - the runner runs it with `--strict-config`, which refuses any other;
 * `toolpath.csv` - the tool-centre trajectory, columns `t,x,y,z`, t strictly
-  increasing in [0, 1];
+  increasing from 0 to 1;
 * `commanded.npz`, `precomp_deck.json` - the commanded surface and the
   setup, for provenance. The solver does not read them and they are not part
   of the content hash.
 
-The `forming` keys follow the contract in `docs/precomp.md` ("The forming
-deck"). They are written in one place, `forming_block`, so a change of the
-C++ contract is a change here only.
+The `forming` keys are written in one place, `forming_block`, so a change of
+the C++ contract is a change here only.
 
 Geometry: the blank is a structured mesh of the square [-L/2, L/2]^2 by
-[-t, 0], L the blank size rounded to whole elements; the clamp fixes every node (through the thickness) whose x or y lies
-within `clamp_margin` of the blank edge; the tool contacts the top faces
-(z = 0) inside the clamp; the 3-2-1 release support fixes x, y, z of the top
-node nearest (-a, -a, 0), y and z of the one nearest (a, -a, 0) and z of the
-one nearest (-a, a, 0), with a = L/2 - clamp_margin / 2 (three flange points
-in the former clamp): six constraints, no rigid-body mode left and no
-constraint on the springback.
+[-t, 0], L the blank size rounded to whole elements; the clamp fixes every
+node (through the thickness) whose x or y lies within `clamp_margin` of the
+blank edge; the tool contacts the top faces (z = 0) inside the clamp; the
+3-2-1 release support fixes x, y, z of the top node nearest (-a, -a, 0), y
+and z of the one nearest (a, -a, 0) and z of the one nearest (-a, a, 0),
+with a = L/2 - clamp_margin / 2 (three flange points in the former clamp):
+six constraints, no rigid-body mode left and no constraint on the
+springback.
+
+Steps: "form" (the tool follows the trajectory from t = 0 to its last point
+in contact with the part, clamp held: the shape under the tool), "unload"
+(a release: the tool is removed and its force ramped out, clamp held - the
+springback in the fixture) and, with release "321", "release" (the clamp
+replaced by the 3-2-1 support - the free springback). The final retract of
+the trajectory is not simulated: the "unload" step takes the tool away.
+Every step constraint is `"mode": "hold"`: its DOFs stay where the step
+finds them - the clamp at the reference position, the three support nodes
+where the clamp left them, so the released part keeps its place on the
+fixture. sparlab_form warns that the clamp of "unload" holds reactions (it
+is not statically determinate): that is the springback the fixture
+prevents, which "release" lets go.
 """
 
 from __future__ import annotations
@@ -38,7 +55,7 @@ from .._util import (PathLike, PrecompError, canonical_json, read_json, sha256_b
                      to_jsonable, write_json)
 from ..geometry.heightmap import HeightMap
 from ..toolpath import AIR, Toolpath, contour_toolpath, spiral_toolpath
-from .setup import FormingSetup
+from .setup import CONTACT_KEYS, FORMING_SOLVER_KEYS, NEWTON_KEYS, FormingSetup
 
 DECK_FILE = "deck.json"
 TOOLPATH_FILE = "toolpath.csv"
@@ -66,57 +83,74 @@ def _clamp_region(setup: FormingSetup) -> Dict[str, Any]:
 
 
 def clamp_condition(setup: FormingSetup) -> Dict[str, Any]:
-    """The clamped frame: x, y, z fixed at zero."""
-    return {"name": "clamp", "fix": ["x", "y", "z"], "value": [0.0, 0.0, 0.0],
+    """The clamped frame, a step constraint: x, y, z held (at the reference
+    position, where the analysis starts)."""
+    return {"name": "clamp", "fix": ["x", "y", "z"], "mode": "hold",
             "region": _clamp_region(setup)}
 
 
 def support_321(setup: FormingSetup) -> List[Dict[str, Any]]:
-    """The 3-2-1 release support (see the module docstring)."""
+    """The 3-2-1 release support (see the module docstring), as held step
+    constraints."""
     a = 0.5 * setup.meshed_blank_size - 0.5 * setup.clamp_margin
     return [
-        {"name": "support_xyz", "fix": ["x", "y", "z"], "value": [0.0, 0.0, 0.0],
+        {"name": "support_xyz", "fix": ["x", "y", "z"], "mode": "hold",
          "region": {"nearest_node": [-a, -a, 0.0]}},
-        {"name": "support_yz", "fix": ["y", "z"], "value": [0.0, 0.0, 0.0],
+        {"name": "support_yz", "fix": ["y", "z"], "mode": "hold",
          "region": {"nearest_node": [a, -a, 0.0]}},
-        {"name": "support_z", "fix": ["z"], "value": [0.0, 0.0, 0.0],
+        {"name": "support_z", "fix": ["z"], "mode": "hold",
          "region": {"nearest_node": [-a, a, 0.0]}},
     ]
 
 
-def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE) -> Dict[str, Any]:
-    """The deck's `forming` object: one spherical tool and the ordered steps.
+def form_end(path: Toolpath) -> float:
+    """The pseudo-time of the last point of `path` in contact with the part
+    (not `AIR`) - where the "form" step ends; 1 if every point is in the air."""
+    contact = np.flatnonzero(path.level != AIR)
+    return float(path.t[contact[-1]]) if len(contact) else 1.0
 
-    Steps: "form" (the tool follows the trajectory, clamp on), "unload" (no
-    tool, clamp on) and, with release "321", "release" (no tool, 3-2-1
-    support instead of the clamp).
-    """
+
+def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE,
+                  t_form_end: float = 1.0) -> Dict[str, Any]:
+    """The deck's `forming` object (docs/forming.md, section 2): the
+    kinematics, one spherical tool, the ordered steps (see the module
+    docstring; "form" runs from t = 0 to `t_form_end`), the Newton settings
+    of `setup.solver` and the output."""
     e = setup.free_half_width
     surface = {"name": "tool_side", "box": {"zmin": 0.0, "xmin": -e, "xmax": e,
                                             "ymin": -e, "ymax": e}}
-    tool = {"name": TOOL_NAME, "shape": "sphere", "radius": setup.tool_radius,
-            "surface": surface, "friction": setup.friction,
-            "contact": dict(setup.contact), "trajectory": {"file": toolpath_file}}
+    tool: Dict[str, Any] = {"name": TOOL_NAME, "shape": "sphere",
+                            "radius": float(setup.tool_radius), "surface": surface,
+                            "friction": float(setup.friction)}
+    tool.update({k: setup.contact[k] for k in CONTACT_KEYS if k in setup.contact})
+    tool["trajectory"] = {"file": toolpath_file}
     clamp = clamp_condition(setup)
     steps: List[Dict[str, Any]] = [
-        {"name": "form", "type": "form", "tools": [TOOL_NAME], "boundary_conditions": [clamp],
-         "increments": {"max_tool_travel": setup.max_tool_travel}},
+        {"name": "form", "type": "form", "tools": [TOOL_NAME], "time": [0.0, float(t_form_end)],
+         "max_tool_travel": float(setup.max_tool_travel), "boundary_conditions": [clamp]},
         {"name": "unload", "type": "release", "tools": [], "boundary_conditions": [clamp]},
     ]
     if setup.release == "321":
         steps.append({"name": "release", "type": "release", "tools": [],
                       "boundary_conditions": support_321(setup)})
-    return {"tools": [tool], "steps": steps}
+    block: Dict[str, Any] = {"kinematics": setup.kinematics}
+    block.update({k: setup.solver[k] for k in FORMING_SOLVER_KEYS if k in setup.solver})
+    block["tools"] = [tool]
+    block["steps"] = steps
+    newton = {k: setup.solver[k] for k in NEWTON_KEYS if k in setup.solver}
+    if newton:
+        block["newton"] = newton
+    block["output"] = {"vtk": True, "snapshots": "steps"}
+    return block
 
 
-def deck_document(setup: FormingSetup) -> Dict[str, Any]:
-    """The full deck.json content for `setup` (independent of the commanded
-    shape, which enters through the trajectory file only)."""
+def deck_document(setup: FormingSetup, t_form_end: float = 1.0) -> Dict[str, Any]:
+    """The full deck.json content for `setup`; the commanded shape enters
+    through the trajectory file and the end of the "form" step, `t_form_end`
+    (`form_end` of the tool path)."""
     n = setup.elements_per_side
     L = setup.meshed_blank_size
     mesh_type = "structured_hex" if setup.element == "hex8" else "structured_tet"
-    nonlinear = {"enabled": True, "kinematics": setup.kinematics}
-    nonlinear.update(setup.solver)
     return {
         "name": setup.name,
         "description": (f"Single-point incremental forming of a {setup.material.name} blank, "
@@ -127,10 +161,7 @@ def deck_document(setup: FormingSetup) -> Dict[str, Any]:
                  "x0": -0.5 * L, "y0": -0.5 * L, "z0": -setup.thickness},
         "material": setup.material.to_sparlab(),
         "model": {"stress_state": "three_dimensional"},
-        "boundary_conditions": [clamp_condition(setup)],
-        "nonlinear": nonlinear,
-        "forming": forming_block(setup),
-        "output": {"csv": True},
+        "forming": forming_block(setup, t_form_end=t_form_end),
     }
 
 
@@ -161,7 +192,7 @@ def build_deck(setup: FormingSetup, commanded: HeightMap, out_dir: PathLike,
     if abs(path.tool_radius - setup.tool_radius) > 1e-12:
         raise PrecompError("the tool path was made for a different tool radius")
     check_toolpath(setup, path)
-    write_json(out / DECK_FILE, deck_document(setup))
+    write_json(out / DECK_FILE, deck_document(setup, form_end(path)))
     path.to_sparlab_csv(out / TOOLPATH_FILE)
     commanded.save(out / COMMANDED_FILE)
     write_json(out / PROVENANCE_FILE, {

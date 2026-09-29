@@ -213,7 +213,7 @@ refuses unknown ones).
 
 ```jsonc
 "forming": {
-  "kinematics": "finite",                  // or "small_strain"
+  "kinematics": "finite",                  // or "finite_logarithmic", "small_strain"
   "material_model": "saint_venant_kirchhoff",
   "mean_dilatation": "auto",               // "auto" | "all" | "none" | true | false
   "friction_tangent": "exact",             // or "symmetric"
@@ -243,7 +243,7 @@ refuses unknown ones).
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `kinematics` | `"finite"` | `"finite"` (total Lagrangian, large rotation) or `"small_strain"` |
+| `kinematics` | `"finite"` | `"finite"` (total Lagrangian in the Green-Lagrange strain: large rotation, small strain), `"finite_logarithmic"` (total Lagrangian in the logarithmic strain: large-strain plasticity, as in `nonlinear`, `docs/configuration.md`) or `"small_strain"` |
 | `material_model` | `"saint_venant_kirchhoff"` | elastic law with finite kinematics (`"neo_hookean"` for elastic models only) |
 | `mean_dilatation` | `"auto"` | B-bar of elastoplastic Q4 / Hex8 (as in `nonlinear`) |
 | `friction_tangent` | `"exact"` | `"exact"` (consistent, LU) or `"symmetric"` (a positive semi-definite friction stiffness: Cholesky, linear convergence where nodes slip) |
@@ -427,13 +427,13 @@ What the numbers say:
   resolved poorly - on the smoke case a 5 mm tool on 2 mm elements carries
   its load on one or two nodes, which is what makes its increments converge
   slowly.
-* **Plasticity at large strain.** The elastoplastic law is J2 with an
-  additive split of the Green-Lagrange strain, meant for small elastic
+* **Plasticity at large strain.** With `finite` kinematics the elastoplastic
+  law is additive in the Green-Lagrange strain, meant for small elastic
   strains at large rotation; incremental forming reaches equivalent plastic
   strains of order one, beyond which its stresses are approximate (the run
-  warns beyond a strain of 0.05). Equilibrium and springback remain
-  consistent with that law; a multiplicative finite-strain J2 would be needed
-  for quantitative stresses at those strains.
+  warns beyond a strain of 0.05). `finite_logarithmic` kinematics returns in
+  the logarithmic strain, which holds at large strain (no warning; exact for
+  coaxial stretches, `docs/formulation.md` 7d); the decks of `precomp` use it.
 * **Implicit and quasi-static.** No inertia, no strain rate. Every increment
   is solved by Newton's method with a direct sparse factorisation per
   iteration, which is the dominant cost for large sheets (section 5); a

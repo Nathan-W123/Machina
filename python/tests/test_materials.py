@@ -20,9 +20,14 @@ def test_to_sparlab_has_exactly_the_current_keys_unless_extras_are_set():
     assert set(doc["plasticity"]) == CURRENT_KEYS
     assert doc["plasticity"]["yield_stress"] == 150e6
     full = m.replace(r0=0.7, r45=0.8, r90=0.9, af_C=5e9, af_gamma=40.0).to_sparlab()
-    assert full["plasticity"]["hill48"] == {"r0": 0.7, "r45": 0.8, "r90": 0.9}
-    assert full["plasticity"]["armstrong_frederick"] == {"C": 5e9, "gamma": 40.0}
-    assert set(full["plasticity"]) - CURRENT_KEYS == {"hill48", "armstrong_frederick"}
+    p = full["plasticity"]
+    # docs/configuration.md, material.plasticity: Hill48 by r-values, Chaboche backstresses
+    assert p["yield_criterion"] == "hill48"
+    assert p["anisotropy"] == {"r0": 0.7, "r45": 0.8, "r90": 0.9,
+                               "rolling_direction": [1.0, 0.0, 0.0],
+                               "sheet_normal": [0.0, 0.0, 1.0]}
+    assert p["backstresses"] == [{"modulus": 5e9, "recovery": 40.0}]
+    assert set(p) - CURRENT_KEYS == {"yield_criterion", "anisotropy", "backstresses"}
 
 
 def test_invalid_materials_are_refused():
@@ -34,6 +39,8 @@ def test_invalid_materials_are_refused():
         Material("x", 70e9, 0.3, 2700.0, 1e8, af_C=1e9)
     with pytest.raises(ValueError, match="Hill48"):
         Material("x", 70e9, 0.3, 2700.0, 1e8, r0=1.0)
+    with pytest.raises(ValueError, match="af_C"):              # SparLab: modulus > 0
+        Material("x", 70e9, 0.3, 2700.0, 1e8, af_C=0.0, af_gamma=10.0)
 
 
 def test_library_is_complete_marked_and_serialisable():

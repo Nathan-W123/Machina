@@ -20,7 +20,8 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 128 tests (42 for precomp.ml), ~105 s; the integration test skips without the binary
+python3 -m pytest python/tests -q    # 134 tests (42 for precomp.ml), ~90 s; the 4 integration tests
+                                     # (~100 s more) skip without build/bin/sparlab_form
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
@@ -59,9 +60,9 @@ height as a fill value, so derivatives stay defined.
 **Signs.** Normals point +z, towards the tool. A signed deviation is positive
 when the formed surface lies on the tool side of the target (the part came
 out too shallow). The wall angle is arctan |grad z|, 0 on a flat region. The
-tool force columns of the solver are taken to be the force the tool exerts on
-the sheet (fz < 0 while pushing down); the robot carries their negative
-([Limitations](#limitations)).
+tool force columns of the solver are the force the sheet exerts on the tool
+(fz > 0 while it pushes down; `docs/forming.md`, section 3), which is the
+load the robot carries.
 
 ## Architecture
 
@@ -97,7 +98,7 @@ nothing below `api` knows about machine learning.
 | Module | Contents |
 |--------|----------|
 | `precomp.geometry` | `Grid`, `HeightMap` (interpolation, gradients, normals, wall angle, curvature, smoothing, resampling, points, STL, `.npz`), `read_stl` / `write_stl` / `raycast_top`, the part families |
-| `precomp.materials` | `Material` (elasticity, linear + Voce isotropic and Prager kinematic hardening; optional Armstrong-Frederick and Hill48 data), Swift / Hollomon conversion, the nominal alloy library, `to_sparlab()` |
+| `precomp.materials` | `Material` (elasticity, linear + Voce isotropic and Prager kinematic hardening; optional Armstrong-Frederick backstress and Hill48 r-values), Swift / Hollomon conversion, the nominal alloy library, `to_sparlab()` |
 | `precomp.toolpath` | `tool_center_surface` (drop cutter), `contour_toolpath`, `spiral_toolpath`, `Toolpath` (trajectory and robot CSV, summary), `dsif_support_path` (experimental) |
 | `precomp.fea` | `FormingSetup`, `build_deck`, `deck_hash`, `run_deck`, `simulate` (content-addressed cache), `simulate_many` (process pool), `load_result` / `FormingResult` |
 | `precomp.metrology` | `read_point_cloud`, `align` (robust point-to-plane ICP), `signed_deviation`, `vertical_deviation`, `metrics`, region masks |
@@ -162,21 +163,27 @@ The flange stays at z = 0 everywhere outside `footprint_radius()`.
 ## Materials
 
 `Material.to_sparlab()` writes SparLab's `material` block
-(`docs/configuration.md`):
+(`docs/configuration.md`, `material.plasticity`):
 
 ```json
 {"name": "AA5754-O", "youngs_modulus": 7e10, "poisson_ratio": 0.33, "density": 2670,
  "plasticity": {"yield_stress": 1e8, "hardening_modulus": 2.38e8,
                 "saturation_stress": 1.24e8, "saturation_rate": 14.4,
                 "kinematic_hardening_modulus": 0,
-                "hill48": {"r0": 0.75, "r45": 0.7, "r90": 0.8}}}
+                "yield_criterion": "hill48",
+                "anisotropy": {"r0": 0.75, "r45": 0.7, "r90": 0.8,
+                               "rolling_direction": [1, 0, 0], "sheet_normal": [0, 0, 1]}}}
 ```
 
-`hill48` and `armstrong_frederick` (`{"C": [Pa], "gamma": [-]}`, a back
-stress with d beta = 2/3 C d eps_p - gamma beta d a, added to Prager's) are
-written only when the material sets them. They are this package's proposal
-for keys SparLab does not read yet: the current solver models isotropic J2
-only, reports unknown keys, and refuses them with `--strict-config`.
+A material with r-values (`r0`, `r45`, `r90`, all three) yields by Hill's
+1948 criterion calibrated by them, with the rolling direction along the
+deck's x axis and the sheet normal along z; `yield_stress` is then the
+uniaxial yield stress along the rolling direction. A material with an
+Armstrong-Frederick term (`af_C` > 0 [Pa], `af_gamma` >= 0 [-]: d beta =
+2/3 C d eps_p - gamma beta d a, added to Prager's) writes it as one Chaboche
+backstress, `"backstresses": [{"modulus": af_C, "recovery": af_gamma}]`.
+Without them the block is von Mises with Prager's rule only. These are the
+keys SparLab reads; every deck is run with `--strict-config`.
 
 Power laws are converted, never passed through: `from_swift(K, eps0, n)`
 keeps the initial yield stress K eps0^n exact and fits H, Q and delta to
@@ -244,40 +251,61 @@ lengths, levels, height range and the time at that feed.
 
 | File | Content | In the hash |
 |------|---------|:-----------:|
-| `deck.json` | the SparLab deck: `mesh`, `material`, `model`, `boundary_conditions`, `nonlinear`, `forming`, `output` | yes |
-| `toolpath.csv` | tool-centre trajectory `t,x,y,z`, t in [0, 1] | yes |
+| `deck.json` | the SparLab deck: `mesh`, `material`, `model`, `forming` | yes |
+| `toolpath.csv` | tool-centre trajectory `t,x,y,z`, t from 0 to 1 | yes |
 | `commanded.npz` | the commanded surface (provenance) | no |
 | `precomp_deck.json` | the setup, grid, tool-path summary, package version (provenance) | no |
 
 The mesh is `structured_hex` (or `structured_tet`) of the blank
 [-L/2, L/2]^2 x [-t, 0], `round(blank_size / element_size)` elements per side
 (L is `blank_size` rounded to whole elements) and `layers` through the
-thickness. The clamp fixes x, y, z of every node within `clamp_margin` of the
-blank edges. The `forming` object follows the contract of the C++ side
-(`docs/forming.md` once written):
+thickness. The `forming` block follows `docs/forming.md` (section 2), and the
+deck has nothing else: no top-level `boundary_conditions` (every step lists
+its own), no `load_cases` (the analysis applies none) and no `nonlinear`
+block (sparlab_form does not read one - kinematics and Newton settings live
+in `forming`):
 
 ```json
 "forming": {
+  "kinematics": "finite_logarithmic",
   "tools": [{"name": "tool", "shape": "sphere", "radius": 0.005,
              "surface": {"name": "tool_side", "box": {"zmin": 0.0, "xmin": -0.08, "xmax": 0.08,
                                                      "ymin": -0.08, "ymax": 0.08}},
-             "friction": 0.1, "contact": {}, "trajectory": {"file": "toolpath.csv"}}],
+             "friction": 0.1, "trajectory": {"file": "toolpath.csv"}}],
   "steps": [
-    {"name": "form",    "type": "form",    "tools": ["tool"], "boundary_conditions": [<clamp>],
-     "increments": {"max_tool_travel": 0.001}},
+    {"name": "form",    "type": "form",    "tools": ["tool"], "time": [0.0, 0.998],
+     "max_tool_travel": 0.001,             "boundary_conditions": [<clamp>]},
     {"name": "unload",  "type": "release", "tools": [],       "boundary_conditions": [<clamp>]},
     {"name": "release", "type": "release", "tools": [],       "boundary_conditions": [<3-2-1>]}
-  ]
+  ],
+  "output": {"vtk": true, "snapshots": "steps"}
 }
 ```
 
-With `release: "321"` the last step replaces the clamp by a statically
-determinate support on three top nodes of the former clamp - x, y, z at
-(-a, -a), y, z at (a, -a), z at (-a, a) - six constraints that remove the
-rigid-body modes and restrain no springback. With `"clamped_only"` there is
-no third step. `contact` and `solver` pass through to the tool's `contact`
-object and the `nonlinear` block. `build_deck` refuses a tool path whose tool
-would reach the clamped frame.
+The clamp holds x, y, z of every node within `clamp_margin` of the blank
+edges. "form" runs the trajectory from t = 0 to its last point in contact
+with the part (the final retract is not simulated); "unload" removes the
+tool and ramps its force out with the clamp still on - the springback in the
+fixture (sparlab_form warns that the clamp holds reactions: it is not
+statically determinate, which is the point); with `release: "321"`,
+"release" replaces the clamp by a statically determinate support on three
+top nodes of the former clamp - x, y, z at (-a, -a), y, z at (a, -a), z at
+(-a, a) - six constraints that remove the rigid-body modes and restrain no
+springback. With `"clamped_only"` there is no third step. Every step
+constraint is `"mode": "hold"`: it keeps its DOFs where the step finds them,
+so the support nodes stay where the clamp held them and the released part
+keeps its place on the fixture.
+
+`kinematics` is `"finite_logarithmic"` by default - the large-strain
+formulation, whose plastic return works in the logarithmic strain, since
+SPIF reaches plastic strains of order one - or `"finite"` / `"small_strain"`.
+`contact` sets the tool's `penalty` (the scale s of kappa = s E / h, default
+10) and `tangential_penalty` (default 1); `solver` sets the keys of
+`forming.newton` (`max_iterations`, `residual_tolerance`,
+`displacement_tolerance`, `line_search`, `max_cuts`, `max_increments`) and
+`friction_tangent`, `solver`, `mean_dilatation` of `forming`. Any other key
+is refused when the setup is made. `build_deck` refuses a tool path whose
+tool would reach the clamped frame.
 
 ### Runs and the cache
 
@@ -301,8 +329,12 @@ run executes in staging and is published by one atomic rename, so a reader
 never sees a half-written entry and two processes racing on one deck cannot
 corrupt it. A failure is recorded in `FAILED` (reason, exit code, log tail)
 and raised as `FormingError`; later calls raise the recorded failure again
-without running unless `retry_failed=True`. Each run is a subprocess with
-`OMP_NUM_THREADS = setup.threads` (1 by default).
+without running unless `retry_failed=True`. Each run is a subprocess
+`sparlab_form --config deck.json --output output --strict-config` with
+`OMP_NUM_THREADS = setup.threads` (1 by default): a deck key the solver does
+not read fails the run (exit 2) rather than taking a default silently. Any
+exit status but 0 is a `FormingError` whose record names it (2 configuration
+error, 3 a step stopped - with the reason from `summary.json` - and 4 I/O).
 
 `simulate_many(jobs, work_dir, max_workers, executor="process")` runs
 (setup, commanded) pairs on a process pool (deck building and tool paths run
@@ -311,26 +343,32 @@ failed job carries its reason and is never dropped.
 
 ### Result files
 
-The loader reads the result directory as the C++ contract defines it:
+The loader reads the result directory as `docs/forming.md` (section 3)
+defines it:
 
 | File | Columns / content | Required |
 |------|-------------------|:--------:|
-| `summary.json` | steps, completion, iterations, runtime, warnings | yes |
-| `step_<k>_<name>_nodes.csv` | `node,X,Y,Z,ux,uy,uz` - reference coordinates and displacement [m] | yes, per step |
-| `step_<k>_<name>_elements.csv` | `element,eq_plastic_strain,von_mises` | no |
-| `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes` | no (needed for forces) |
-| `mesh.json` | the mesh | no |
+| `summary.json` | `completed`, `termination`, `steps` (per step `name`, `type`, `completed`, `files_stem`, ...), `tools`, `timing`, `warnings`, ... | yes |
+| `<files_stem>_nodes.csv` | `node,X,Y,Z,ux,uy,uz` - reference coordinates and displacement [m] | yes, per completed step |
+| `<files_stem>_elements.csv` | `element,eq_plastic_strain,von_mises_Pa` | no |
+| `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m` | no (needed for forces) |
+| `mesh.json`, `config.json`, `<files_stem>.vtk` | the mesh, the deck, the fields for ParaView | no |
 
-Step files are found by name and ordered by k, whether k counts from 0 or 1.
-Every table is validated - columns present, no missing values, unique node
-ids, a step named in the summary, the same nodes and reference coordinates in
-every step - and a violation is an error naming the file.
-`FormingResult.formed_surface(step, grid)` takes the nodes with reference
-Z = 0 (the tool side), moves them to their deformed positions, triangulates
-them as the reference grid and interpolates linearly at the grid nodes; a
-deformed surface that folds over in plan is refused. `thickness_map` is the
-distance between the deformed top and bottom node of each through-thickness
-column. `forming_forces()` is the force table with |f| added.
+`files_stem` is `step_<k>_<name>`, k counting from 1; the loader takes it
+from the summary, so snapshot files are never mistaken for steps, and the
+steps it loads are the completed ones. Every table is validated - columns
+present, no missing values, unique node ids, the same nodes and reference
+coordinates in every step, a node table for every completed step - and a
+violation is an error naming the file. `FormingResult.formed_surface(step,
+grid)` takes the nodes with reference Z = 0 (the tool side), moves them to
+their deformed positions, triangulates them as the reference grid and
+interpolates linearly at the grid nodes; a deformed surface that folds over
+in plan is refused. `thickness_map` is the distance between the deformed top
+and bottom node of each through-thickness column. `forming_forces()` is the
+force table with |f| added: the force the sheet exerts **on the tool**
+(fz > 0 while it pushes down), one row per converged increment of a step
+the tool is active in (`step` from 1, `active_nodes` 0 where it is in the
+air).
 
 ## Metrology
 
@@ -384,6 +422,17 @@ by default).
 Predictors: `FEAPredictor(setup, work_dir)` simulates (through the cache);
 `SurrogatePredictor(model, setup)` and `CompositePredictor(base, model, setup)`
 use any object with `predict_deviation(commanded, setup) -> (mean, std)`.
+
+With `sparlab_form` as the predictor (`benchmarks/fea_da_cone`, made by
+`python/scripts/fea_da_demo.py`): a 3 mm deep, 45 deg cone on a 40 x 40 x
+1 mm AA5754-O blank (20 x 20 x 2 Hex8, 4 mm tool) formed with a clamp as
+close as a backing plate came out 0.465 mm RMS (0.970 mm at most) from the
+target over the part, and 0.405 mm (0.833 mm) after one DA step; with a
+wider clamp 0.739 mm (1.392 mm) and 0.630 mm (1.196 mm). Each simulation
+took 2-4 minutes on one thread. DA converges slowly here: the rim sags
+where the command cannot rise above the sheet plane, the unswept floor
+follows the command by about half, and the response is not local (the
+record's README).
 
 ## Robot compliance
 
@@ -489,23 +538,40 @@ value is from the test's own configuration.
 | Formed surface from a synthetic result (stretched, deflected sheet) | the deformed nodes | 1e-15 m | `test_fea_results` |
 | STL round trip | the height map | 1e-15 m (ASCII), 2e-9 m (binary, float32) | `test_geometry` |
 
+With the real `sparlab_form` (`test_integration_sparlab.py`, skipped without
+`build/bin/sparlab_form`), against the contract of `docs/forming.md` and
+physical sense rather than exact answers:
+
+| Check | Expected | Measured | Test |
+|-------|----------|----------|------|
+| Every deck variant precomp writes: Hill48, von Mises and Chaboche materials; the three kinematics; contact and every solver key; clamped only; spiral; Tet4 | accepted by `--strict-config`, the analysis built | 9 of 9; a `contact` key in the tool refused (exit 2, naming it) | `test_integration_sparlab` |
+| The test double and `sparlab_form` on one deck | the same files, CSV columns, summary and `mesh.json` keys, mesh and step windows | identical | `test_integration_sparlab` |
+| Tiny SPIF: 20 x 20 x 1 mm AA5754-O blank, 8 x 8 x 2 Hex8, 4 mm tool, one spiral revolution to 1 mm ending in contact, unload, 3-2-1 release | depth about the tool's 1 mm; the sheet under the removed tool rises; no reaction after the release; the force on the tool upwards, of order 1 kN | depth 0.937 / 0.913 / 0.953 mm after form / unload / release; rise 25-45 um; release reactions 8e-13 N; fz >= 0 at all 51 increments, peak 1 070 N; 71 increments, 328 iterations, 3.1 s | `test_integration_sparlab` |
+| The original small cone: 80 mm blank, 20 x 20 x 1 Hex8, two contours to 4 mm | completes, depth below twice the target's | completes, 270 increments, about 100 s | `test_integration_sparlab` |
+
 ## Limitations
 
-* **The C++ contract is provisional.** `sparlab_form` is being written in
-  parallel; the deck keys of the `forming` object (`tools`, `steps`,
-  `increments.max_tool_travel`, the `--config` / `--output` command line) and
-  the result files follow the design contract, and the loader has been
-  exercised only against synthetic directories and a test double
-  (`python/tests/fake_sparlab_form.py`). `test_integration_sparlab.py` runs the
-  real executable and is skipped until it exists. When `docs/forming.md`
-  lands, `precomp.fea.deck.forming_block` and `precomp.fea.results` are the
-  two places to align.
-* **Force sign.** The tool force columns are taken to be the force on the
-  sheet; `precomp.robot.forces_on_path(sign=...)` states the convention
-  explicitly and must be checked against the solver's documentation.
-* **Materials.** The library values are nominal, not certified; Hill48 and
-  Armstrong-Frederick data are written under keys the current solver does not
-  model; Swift and Hollomon laws are approximated by linear + Voce hardening
+* **The C++ contract.** The deck, the command line and the result files
+  follow `docs/forming.md` (sections 2 and 3) as of this revision; every run
+  uses `--strict-config`, so a key the solver stops reading fails loudly. The
+  test double (`python/tests/fake_sparlab_form.py`) mirrors the contract and
+  `test_integration_sparlab.py` checks it against the real executable, file
+  by file and key by key, when `build/bin/sparlab_form` exists; a change of
+  the C++ contract is a change of `precomp.fea.deck.forming_block`,
+  `precomp.fea.results` and the double.
+* **Forming model.** One spherical tool; the path's final retract is not
+  simulated (the "unload" step removes the tool). The node-to-surface
+  contact resolves a tool poorly on elements not much smaller than it
+  (`docs/forming.md`, section 6), and Hex8 sheets with few layers are stiff
+  in bending: the numbers of a coarse deck are indicative. Where the tool
+  circles inside its own radius (a small floor), the sheet inside the loop
+  can end below the tool tip: one 1 mm contour of a 4 mm tool on a 3.3 mm
+  radius over a 20 mm blank left the sheet 1.31-1.35 mm deep, on 8 x 8 x 2,
+  16 x 16 x 2 and 16 x 16 x 4 Hex8 alike.
+* **Materials.** The library values are nominal, not certified; Hill48 with
+  r < 1 (the aluminium alloys) is known to underestimate the equibiaxial
+  yield stress, which later criteria (Yld2000) correct and SparLab does not
+  have; Swift and Hollomon laws are approximated by linear + Voce hardening
   (errors in the table above).
 * **Geometry.** A pyramid's corner radius must be at least the horizontal run
   of its wall plus the bottom fillet's tangent length (so the corners are C1

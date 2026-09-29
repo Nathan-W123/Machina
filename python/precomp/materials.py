@@ -1,21 +1,23 @@
-"""Sheet materials: elasticity, J2 hardening, and the SparLab material block.
+"""Sheet materials: elasticity, plasticity, and the SparLab material block.
 
-`Material` holds what SparLab's J2 model reads today - E, nu, density, the
-initial yield stress, linear plus Voce isotropic hardening and Prager
-kinematic hardening (`docs/configuration.md`, `material.plasticity`):
+`Material` holds the data of SparLab's rate-independent plasticity
+(`docs/configuration.md`, `material.plasticity`) - E, nu, density, the
+initial yield stress, linear plus Voce isotropic hardening, Prager's linear
+kinematic hardening and, optionally, Hill's 1948 anisotropic yield criterion
+calibrated by r-values and one Armstrong-Frederick backstress:
 
     sigma_y(a) = yield_stress + hardening_modulus a
                  + saturation_stress (1 - exp(-saturation_rate a)),
-    d beta = (2/3) kinematic_hardening_modulus d eps_p,
+    d beta   = (2/3) kinematic_hardening_modulus d eps_p,
+    d beta_1 = (2/3) af_C d eps_p - af_gamma beta_1 d a,
 
-with a the accumulated plastic strain - and optionally data SparLab does not
-model yet: Hill48 r-values and one Armstrong-Frederick back stress. Those are
-emitted by `to_sparlab` only when set, under `plasticity`, as the keys
-`hill48 {r0, r45, r90}` and `armstrong_frederick {C, gamma}` (a proposal of
-this package; the current SparLab reports unknown keys, and refuses them with
-`--strict-config`). The Armstrong-Frederick back stress evolves as
-``d beta_AF = (2/3) C d eps_p - gamma beta_AF d a`` and adds to the Prager
-one.
+with a the accumulated plastic strain. `to_sparlab` writes them under the
+keys SparLab reads: the r-values as ``"yield_criterion": "hill48"`` with an
+``anisotropy {r0, r45, r90, rolling_direction, sheet_normal}`` block (RD
+along the deck's x axis, the sheet normal along z, as `precomp.fea` meshes
+the blank), and the Armstrong-Frederick term as ``backstresses: [{modulus:
+af_C, recovery: af_gamma}]``. With Hill48, `yield_stress` is the uniaxial
+yield stress along the rolling direction (SparLab's convention).
 
 Power laws are converted, not passed through: `Material.from_swift` fits
 the linear + Voce form to a Swift curve ``sigma = K (eps0 + a)^n`` (Hollomon
@@ -40,6 +42,12 @@ from ._util import require_nonnegative, require_positive
 #: reaches equivalent plastic strains of order 0.3-1 in the wall.
 DEFAULT_FIT_RANGE = (0.0, 0.6)
 
+#: The material frame of the Hill48 block: the rolling direction along the
+#: deck's x axis and the sheet normal along z (`precomp.fea` meshes the blank
+#: in the x-y plane, tool side up).
+ROLLING_DIRECTION = (1.0, 0.0, 0.0)
+SHEET_NORMAL = (0.0, 0.0, 1.0)
+
 #: The caveat carried by every library material.
 NOMINAL_SOURCE = ("nominal handbook-order values, not certified data; measure the "
                   "batch before trusting a prediction")
@@ -47,7 +55,7 @@ NOMINAL_SOURCE = ("nominal handbook-order values, not certified data; measure th
 
 @dataclass(frozen=True)
 class Material:
-    """An isotropic elastic, J2-plastic sheet material (SI units).
+    """An isotropic elastic, elastoplastic sheet material (SI units).
 
     name : label carried into the deck.
     youngs_modulus [Pa] > 0; poisson_ratio in (-1, 0.5); density [kg/m^3] >= 0.
@@ -56,10 +64,12 @@ class Material:
     saturation_stress [Pa] >= 0, saturation_rate [-] : Voce term Q, delta
         (delta > 0 required when Q > 0).
     kinematic_hardening_modulus [Pa] >= 0 : Prager's linear kinematic hardening.
-    af_C [Pa], af_gamma [-] : optional Armstrong-Frederick back stress (both
-        or neither).
-    r0, r45, r90 [-] : optional Lankford coefficients for Hill48 (all three
-        or none).
+    af_C [Pa] > 0, af_gamma [-] >= 0 : optional Armstrong-Frederick back
+        stress (both or neither): SparLab's backstress `modulus` and
+        `recovery` (af_gamma = 0 is a second linear, Prager, term).
+    r0, r45, r90 [-] > 0 : optional Lankford coefficients at 0, 45 and 90 deg
+        to the rolling direction, which select Hill's 1948 yield criterion
+        (all three or none; all equal to 1 is von Mises).
     hardening_source : provenance of the hardening parameters (e.g. the
         Swift law they were fitted to and the fit error).
     source : provenance of the whole data set.
@@ -97,7 +107,7 @@ class Material:
         if (self.af_C is None) != (self.af_gamma is None):
             raise ValueError("Armstrong-Frederick needs both af_C and af_gamma, or neither")
         if self.af_C is not None:
-            require_nonnegative("af_C", self.af_C)
+            require_positive("af_C", self.af_C)            # SparLab: modulus > 0
             require_nonnegative("af_gamma", self.af_gamma)
         rs = (self.r0, self.r45, self.r90)
         if any(r is None for r in rs) and not all(r is None for r in rs):
@@ -141,13 +151,15 @@ class Material:
 
     # -- output ------------------------------------------------------------
     def to_sparlab(self) -> Dict[str, Any]:
-        """The SparLab `material` block.
+        """The SparLab `material` block (`docs/configuration.md`).
 
         Always: name, youngs_modulus, poisson_ratio, density and a
         `plasticity` block with yield_stress, hardening_modulus,
         saturation_stress, saturation_rate, kinematic_hardening_modulus.
-        Only when set, under `plasticity`: `hill48 {r0, r45, r90}` and
-        `armstrong_frederick {C, gamma}` (see the module docstring).
+        With r-values: ``"yield_criterion": "hill48"`` and ``"anisotropy":
+        {"r0", "r45", "r90", "rolling_direction": [1, 0, 0], "sheet_normal":
+        [0, 0, 1]}``. With an Armstrong-Frederick term: ``"backstresses":
+        [{"modulus": af_C, "recovery": af_gamma}]``.
         """
         plasticity: Dict[str, Any] = {
             "yield_stress": float(self.yield_stress),
@@ -157,11 +169,14 @@ class Material:
             "kinematic_hardening_modulus": float(self.kinematic_hardening_modulus),
         }
         if self.has_hill48:
-            plasticity["hill48"] = {"r0": float(self.r0), "r45": float(self.r45),
-                                    "r90": float(self.r90)}
+            plasticity["yield_criterion"] = "hill48"
+            plasticity["anisotropy"] = {"r0": float(self.r0), "r45": float(self.r45),
+                                        "r90": float(self.r90),
+                                        "rolling_direction": list(ROLLING_DIRECTION),
+                                        "sheet_normal": list(SHEET_NORMAL)}
         if self.has_armstrong_frederick:
-            plasticity["armstrong_frederick"] = {"C": float(self.af_C),
-                                                 "gamma": float(self.af_gamma)}
+            plasticity["backstresses"] = [{"modulus": float(self.af_C),
+                                           "recovery": float(self.af_gamma)}]
         return {"name": self.name, "youngs_modulus": float(self.youngs_modulus),
                 "poisson_ratio": float(self.poisson_ratio), "density": float(self.density),
                 "plasticity": plasticity}
