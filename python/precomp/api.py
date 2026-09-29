@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ._util import PathLike, to_jsonable, write_json
+from ._util import PathLike, PrecompError, to_jsonable, write_json
 from .compensation import (CompositePredictor, DAResult, FEAPredictor, FieldModel,
                            SurrogatePredictor, displacement_adjustment)
 from .fea.deck import make_toolpath
@@ -194,11 +194,16 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
     if model is not None and method in ("surrogate", "hybrid"):
         if hasattr(model, "predict_interval"):
             # The interval of the learned deviation, placed around the
-            # prediction: predicted + (bound - mean).
-            lo, hi = model.predict_interval(comp, setup, interval_level)
-            mean = np.asarray(model.predict_deviation(comp, setup)[0], float)
-            interval = (da.formed.with_z(da.formed.z + np.asarray(lo, float) - mean),
-                        da.formed.with_z(da.formed.z + np.asarray(hi, float) - mean))
+            # prediction: predicted + (bound - mean). None when the model is
+            # not calibrated or has too few calibration parts for the level.
+            try:
+                lo, hi = model.predict_interval(comp, setup, interval_level)
+            except PrecompError:
+                lo = hi = None
+            if lo is not None:
+                mean = np.asarray(model.predict_deviation(comp, setup)[0], float)
+                interval = (da.formed.with_z(da.formed.z + np.asarray(lo, float) - mean),
+                            da.formed.with_z(da.formed.z + np.asarray(hi, float) - mean))
         if hasattr(model, "assess"):
             ood = dict(model.assess(comp, setup))
     verification = None

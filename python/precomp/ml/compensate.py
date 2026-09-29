@@ -170,7 +170,8 @@ def surrogate_compensate(target: HeightMap, setup: Any, surrogate: Any, *,
                              model_data_source=getattr(surrogate, "data_source", None))
     interval = None
     cal = getattr(surrogate, "calibrator", None)
-    if hasattr(surrogate, "predict_interval") and cal is not None and cal.fitted:
+    if hasattr(surrogate, "predict_interval") and cal is not None and cal.fitted \
+            and cal.supports(level):
         lo, hi = surrogate.predict_interval(comp, setup, level)
         interval = (residual.with_z(comp.z + lo - target.z),
                     residual.with_z(comp.z + hi - target.z))

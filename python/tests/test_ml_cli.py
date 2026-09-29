@@ -90,7 +90,8 @@ def test_the_ml_commands_end_to_end(tmp_path, capsys, ml_threads, fake_solver, c
     doc = json.loads((d / "comp" / "compensation.json").read_text())
     assert doc["method"] == "surrogate" and doc["verification"]["source"] == "fea"
     assert doc["ood"]["model_data_source"] == "proxy - not physics"
-    assert (d / "comp" / "predicted_lower.npz").is_file()
+    # two calibration parts cannot support a 90 % interval
+    assert not (d / "comp" / "predicted_lower.npz").exists()
     report = (d / "comp" / "report" / "report.md").read_text()
     assert "proxy - not physics" in report
 

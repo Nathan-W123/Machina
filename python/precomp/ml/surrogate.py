@@ -361,7 +361,8 @@ def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
               points_per_sample: Optional[int] = None, mondrian: bool = False,
               seed: int = 0) -> ConformalCalibrator:
     """Fit a ConformalCalibrator on held-out samples: every part node (or a
-    uniform subsample of `points_per_sample` per part) of each sample."""
+    uniform subsample of `points_per_sample`) of each sample, grouped by PART
+    id - the variants of one part are one calibration unit."""
     mus, sds, ys, gs, rs = [], [], [], [], []
     rng = np.random.default_rng(seed)
     for s in samples:
@@ -376,9 +377,9 @@ def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
         mus.append(mu.ravel()[sel])
         sds.append(sd.ravel()[sel])
         ys.append(s.dz.ravel()[sel])
-        gs.append(np.full(sel.size, s.sample_id, dtype=object))
+        gs.append(np.full(sel.size, s.part_id, dtype=object))   # the part is the unit
         rs.append(fm.region.ravel()[sel])
-    cal = ConformalCalibrator(mondrian=mondrian, seed=seed)
+    cal = ConformalCalibrator(mondrian=mondrian)
     return cal.fit(np.concatenate(mus), np.concatenate(sds), np.concatenate(ys),
                    np.concatenate(gs), region=np.concatenate(rs),
                    data_source=source_label(s.source for s in samples))

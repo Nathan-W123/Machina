@@ -14,7 +14,8 @@ from precomp.materials import get_material
 from precomp.ml import (GBMEnsemble, ProxySimulator, ResidualModel, build_table,
                         evaluate_surrogate, simulate_samples, train_surrogate, transfer_surrogate)
 from precomp.ml.generate import DesignSpace, design_points
-from precomp.ml.uncertainty import ConformalCalibrator, partition_coverage
+from precomp.ml.surrogate import calibrate
+from precomp.ml.uncertainty import ConformalCalibrator, min_parts, partition_coverage
 
 
 def _held_out_arrays(sur, samples):
@@ -42,22 +43,68 @@ def test_gbm_ensemble_learns_the_proxy_on_held_out_parts(gbm_surrogate, proxy_sp
     assert np.all(pp["std_mean_m"] > 0)
 
 
-def test_conformal_coverage_is_nominal_on_held_out_parts(gbm_surrogate, proxy_split):
-    """Expected coverage of grouped split-conformal intervals, over random
-    calibration/test partitions of held-out parts, within 3 % of nominal.
-    (A single draw of ~12 calibration parts lands several per cent away: the
-    errors of one part are correlated, so parts, not nodes, count.)"""
+def test_conformal_coverage_is_valid_on_held_out_parts(gbm_surrogate, proxy_split):
+    """Split-conformal calibration over whole parts: over random calibration /
+    test partitions of held-out parts, the mean coverage of a test part is at
+    least nominal (the guarantee, minus Monte-Carlo slack) and at most the
+    (k + 1) / k bound of k calibration parts. Validity holds for ANY std -
+    so it cannot show that the std is useful; the constant-width baseline
+    and a randomly permuted std can."""
     mu, sd, y, g = _held_out_arrays(gbm_surrogate, proxy_split["pool"])
+    rng = np.random.default_rng(0)
     for level in (0.8, 0.9):
         pc = partition_coverage(mu, sd, y, g, level=level, n_partitions=60, seed=3)
-        assert abs(pc["mean"] - level) <= 0.03, pc
-        assert pc["n_parts"] >= 20
-    # the finite-sample quantile: the ceil((n + 1) level)-th smallest score
+        k = pc["n_calibration_parts"]
+        assert pc["n_parts"] >= 20 and k >= min_parts(level)
+        assert level - 0.03 <= pc["mean"] <= level * (k + 1) / k + 0.03, pc
+        assert pc["baseline_mean"] >= level - 0.03                  # the baseline is valid too
+    # a std without information: the same values permuted over the nodes
+    real = partition_coverage(mu, sd, y, g, level=0.9, n_partitions=60, seed=3)
+    perm = partition_coverage(mu, rng.permutation(sd), y, g, level=0.9, n_partitions=60, seed=3)
+    const = partition_coverage(mu, np.full_like(sd, sd.mean()), y, g, level=0.9,
+                               n_partitions=60, seed=3)
+    assert const["width_ratio"] == pytest.approx(1.0)
+    assert perm["mean"] >= 0.87 and perm["width_ratio"] > 1.0      # valid, but wider
+    # the ensemble std locates the errors better than chance - but on this
+    # proxy data it does NOT beat a constant width (ratio > 1, reported in
+    # every calibration table): it moves width to the worst parts
+    assert real["mean_width_m"] < 0.95 * perm["mean_width_m"], (real, perm)
+    assert real["worst_part_median"] > const["worst_part_median"], (real, const)
+
+
+def test_the_finite_sample_correction_counts_parts_not_nodes(gbm_surrogate, proxy_split):
+    # one node per part: q is the ceil((k + 1) level)-th smallest score of k
     cal = ConformalCalibrator(eps=1.0).fit(np.zeros(9), np.zeros(9), np.arange(1.0, 10.0),
                                            np.arange(9))
-    assert cal.quantile(0.8) == pytest.approx(8.0 / 1.0)     # k = ceil(10 * 0.8) = 8
-    with pytest.raises(Exception, match="cannot support"):
-        cal.quantile(0.95)                                    # k = 10 > n = 9
+    assert cal.quantile(0.8) == pytest.approx(8.0)           # ceil(10 x 0.8) = 8
+    assert cal.quantile(0.9) == pytest.approx(9.0)           # k = 9 = min_parts(0.9)
+    with pytest.raises(PrecompError, match="cannot support level 0.95"):
+        cal.quantile(0.95)                                    # needs 19 parts
+    # 8 parts of 10 000 nodes each: 80 000 nodes do not make 90 % supportable
+    rng = np.random.default_rng(1)
+    g = np.repeat(np.arange(8), 10_000)
+    big = ConformalCalibrator().fit(np.zeros(g.size), np.ones(g.size), rng.normal(size=g.size),
+                                    g)
+    assert big.n_parts == 8 and big.n_nodes == 80_000 and not big.supports(0.9)
+    with pytest.raises(PrecompError, match="needs at least 9 held-out parts"):
+        big.intervals(np.zeros(3), np.ones(3), 0.9)
+    assert big.summary()["quantiles"]["0.9"] is None and big.summary()["quantiles"]["0.8"]
+    # the shipped path groups by PART: the variants of one part count once
+    c = gbm_surrogate.calibrator
+    assert c.n_parts == len({s.part_id for s in proxy_split["calibration"]}) \
+        == len(proxy_split["calibration"]) // 3
+    one_part = [s for s in proxy_split["calibration"]
+                if s.part_id == proxy_split["calibration"][0].part_id]
+    assert len(one_part) == 3
+    with pytest.raises(ValueError, match="at least two held-out parts"):
+        calibrate(gbm_surrogate, one_part)
+    rep = evaluate_surrogate(gbm_surrogate, proxy_split["test"], level=0.9, assess=False)
+    row = rep.calibration.set_index("level").loc[0.9]
+    assert row["n_parts"] == len({s.part_id for s in proxy_split["test"]}) and row["supported"]
+    assert row["calibration_parts"] == c.n_parts
+    assert 0 <= row["part_coverage_min"] <= row["part_coverage_median"] <= 1
+    assert row["width_ratio"] == pytest.approx(row["mean_width_m"] / row["baseline_width_m"])
+    assert not rep.calibration.set_index("level").loc[0.95, "supported"]
 
 
 def test_the_envelope_flags_new_descriptors_and_setups(gbm_surrogate, proxy_split):

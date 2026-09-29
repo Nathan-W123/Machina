@@ -12,10 +12,18 @@ of dz on the part nodes of the commanded surface (depth > part_eps):
   itself and their ratio, the interval coverage and width at the report level,
   the mean predicted std, and the envelope verdict;
 * per region - the same pooled over every node of a region (rim, wall, base);
-* calibration - empirical coverage against the nominal level, pooled and per
-  part;
-* envelope - the share of parts flagged out of the envelope per split: a
-  held-out family must be flagged more often than in-distribution parts.
+* calibration - per level: the mean over parts of each part's coverage (the
+  quantity the conformal guarantee is about), the pooled node coverage, the
+  worst, 10th-percentile and median part and the share of parts covered at
+  the level or better, the mean width, and the same for the constant-width
+  interval calibrated on the same parts (`width_ratio` < 1: the model's std
+  narrows the intervals; >= 1: it carries no information). Parts are part
+  ids - the variants of one design point are one part. A level the
+  calibration parts cannot support is reported as such (`supported` False);
+* envelope - the share of parts flagged out of the envelope per split and
+  family: in-distribution parts should rarely be flagged; a held-out family
+  is flagged when its descriptors are new to the model (not every family's
+  are: see docs/precomp_ml.md, "The training envelope").
 
 Every frame carries `data_source`, the label of the evaluation samples
 ("SparLab simulation", "proxy - not physics", "scan").
@@ -117,7 +125,10 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
             raise PrecompError(f"{len(leaked)} evaluation sample(s) belong to parts the model "
                                f"was trained, corrected or calibrated on, e.g. {leaked[:3]}")
     label = source_label(s.source for s in samples)
-    has_cal = surrogate.calibrator is not None and surrogate.calibrator.fitted
+    cal = surrogate.calibrator if (surrogate.calibrator is not None
+                                   and surrogate.calibrator.fitted) else None
+    has_cal = cal is not None
+    lvls = [lv for lv in levels if has_cal and cal.supports(lv)]
     rows, pooled = [], []
     for s in samples:
         try:
@@ -141,21 +152,17 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
             "tolerance_m": tolerance, "dz_rms": dz_rms,
             "rel_rms": em["rms"] / dz_rms if dz_rms > 0 else np.nan,
             "std_mean_m": float(sd[sel].mean()), "level": level}
-        block = {"sample_id": s.sample_id, "family": s.family, "y": y, "mu": m,
-                 "sd": sd[sel], "region": fm.region[sel]}
-        if has_cal:
-            for lv in levels:
-                lo, hi = surrogate.calibrator.intervals(mu, sd, lv, fm.region)
-                inside = (y >= lo[sel]) & (y <= hi[sel])
-                block[f"in_{lv:g}"] = inside
-                block[f"width_{lv:g}"] = (hi - lo)[sel]
-            row["coverage"] = float(block[f"in_{level:g}"].mean()) if f"in_{level:g}" in block \
-                else np.nan
-            row["width_mean_m"] = float(block[f"width_{level:g}"].mean()) \
-                if f"width_{level:g}" in block else np.nan
-        else:
-            row["coverage"] = np.nan
-            row["width_mean_m"] = np.nan
+        block = {"sample_id": s.sample_id, "part_id": s.part_id, "family": s.family, "y": y,
+                 "mu": m, "sd": sd[sel], "region": fm.region[sel]}
+        for lv in lvls:
+            lo, hi = cal.intervals(mu, sd, lv, fm.region)
+            block[f"in_{lv:g}"] = (y >= lo[sel]) & (y <= hi[sel])
+            block[f"width_{lv:g}"] = (hi - lo)[sel]
+            block[f"in0_{lv:g}"] = np.abs(y - m) <= cal.baseline_halfwidth(lv)
+        key = f"in_{level:g}"
+        row["coverage"] = float(block[key].mean()) if key in block else np.nan
+        row["width_mean_m"] = float(block[f"width_{level:g}"].mean()) if key in block \
+            else np.nan
         if assess and surrogate.ood is not None:
             a = surrogate.assess(s.commanded, s.setup)
             row.update(ood_in_envelope=bool(a["in_envelope"]), ood_part_score=a["part_score"],
@@ -179,7 +186,7 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
              **{f"err_{k}": v for k, v in em.items() if k not in ("n", "tolerance")},
              "tolerance_m": tolerance,
              "dz_rms": float(np.sqrt(np.mean(y_all[sel] ** 2)))}
-        if has_cal:
+        if f"in_{level:g}" in pooled[0]:
             ins = np.concatenate([b[f"in_{level:g}"] for b in pooled])
             r["coverage"] = float(ins[sel].mean())
             r["level"] = level
@@ -187,19 +194,34 @@ def evaluate_surrogate(surrogate: DeviationSurrogate, samples: Sequence[Sample],
     per_region = pd.DataFrame(reg_rows)
     # calibration table
     cal_rows = []
-    if has_cal:
-        for lv in levels:
+    parts = np.concatenate([np.full(b["y"].size, b["part_id"], dtype=object) for b in pooled])
+    n_nodes = int(parts.size)
+    for lv in (levels if has_cal else []):
+        r: Dict[str, Any] = {"split": split, "level": lv, "supported": lv in lvls,
+                             "n_nodes": n_nodes, "n_parts": int(np.unique(parts).size),
+                             "n_samples": len(pooled),
+                             "calibration_parts": cal.n_parts,
+                             "calibrated_on": cal.data_source, "data_source": label}
+        if lv in lvls:
             ins = np.concatenate([b[f"in_{lv:g}"] for b in pooled])
-            per = np.array([b[f"in_{lv:g}"].mean() for b in pooled])
+            ins0 = np.concatenate([b[f"in0_{lv:g}"] for b in pooled])
             width = np.concatenate([b[f"width_{lv:g}"] for b in pooled])
-            cal_rows.append({"split": split, "level": lv, "coverage": float(ins.mean()),
-                             "coverage_minus_level": float(ins.mean() - lv),
-                             "part_coverage_min": float(per.min()),
-                             "part_coverage_median": float(np.median(per)),
-                             "mean_width_m": float(width.mean()), "n_nodes": int(ins.size),
-                             "n_parts": len(pooled),
-                             "calibrated_on": surrogate.calibrator.data_source,
-                             "data_source": label})
+            per = pd.Series(ins).groupby(parts).mean()
+            per0 = pd.Series(ins0).groupby(parts).mean()
+            w0 = 2.0 * cal.baseline_halfwidth(lv)
+            r.update(coverage_part_mean=float(per.mean()),
+                     coverage_part_mean_minus_level=float(per.mean() - lv),
+                     coverage_nodes=float(ins.mean()),
+                     part_coverage_min=float(per.min()),
+                     part_coverage_p10=float(per.quantile(0.1)),
+                     part_coverage_median=float(per.median()),
+                     share_parts_at_level=float((per >= lv).mean()),
+                     mean_width_m=float(width.mean()),
+                     baseline_coverage_part_mean=float(per0.mean()),
+                     baseline_share_parts_at_level=float((per0 >= lv).mean()),
+                     baseline_width_m=w0,
+                     width_ratio=float(width.mean() / w0) if w0 > 0 else np.nan)
+        cal_rows.append(r)
     calibration = pd.DataFrame(cal_rows)
     # envelope
     ood_rows = []
