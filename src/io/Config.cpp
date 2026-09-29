@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <set>
 #include <sstream>
 
@@ -552,6 +553,41 @@ void parse_buckling_solver(const ConfigNode& node, BucklingOptions& options) {
   options.seed = static_cast<unsigned int>(node.integer_or("seed", static_cast<int>(options.seed)));
 }
 
+/// A displacement constraint: its region, the components it fixes and their
+/// values.
+DisplacementConstraint parse_displacement_constraint(const ConfigNode& bc,
+                                                     const std::string& default_name, int dim) {
+  DisplacementConstraint constraint;
+  constraint.region = parse_region(bc.require("region"), bc.string_or("name", default_name), dim);
+  const std::vector<ConfigNode> fix = bc.array("fix");
+  if (fix.empty()) {
+    throw ConfigError("'" + bc.path() +
+                      ".fix' must list the components to constrain, e.g. "
+                      "[\"x\", \"y\"]");
+  }
+  for (const ConfigNode& component : fix) {
+    const std::string c = component.string();
+    if (c == "x") {
+      constraint.fix_x = true;
+    } else if (c == "y") {
+      constraint.fix_y = true;
+    } else if (c == "z" && dim == 3) {
+      constraint.fix_z = true;
+    } else if (c == "z") {
+      throw ConfigError("'" + component.path() +
+                        "' fixes \"z\" but the mesh is two-dimensional");
+    } else {
+      throw ConfigError("'" + component.path() + "' must be \"x\", \"y\"" +
+                        (dim == 3 ? " or \"z\"" : "") + ", got \"" + c + "\"");
+    }
+  }
+  const Vector3 values = bc.vector3_or("value", Vector3::Zero(), dim);
+  constraint.value_x = values.x();
+  constraint.value_y = values.y();
+  constraint.value_z = values.z();
+  return constraint;
+}
+
 std::vector<std::string> string_list(const ConfigNode& parent, const std::string& key) {
   std::vector<std::string> out;
   for (const ConfigNode& item : parent.array(key)) out.push_back(item.string());
@@ -750,52 +786,31 @@ Configuration parse_configuration(const json::Value& document, const std::string
   // --- boundary conditions ------------------------------------------------
   {
     const std::vector<ConfigNode> bcs = root.array("boundary_conditions");
-    if (bcs.empty()) {
+    // A forming deck may give every step its own constraints instead.
+    if (bcs.empty() && !root.child("forming").exists()) {
       throw ConfigError(
           "'boundary_conditions' is missing or empty; an unconstrained model has a "
           "singular stiffness matrix");
     }
     int index = 0;
     for (const ConfigNode& bc : bcs) {
-      DisplacementConstraint constraint;
-      std::ostringstream default_name;
-      default_name << "bc" << index++;
-      constraint.region = parse_region(bc.require("region"),
-                                       bc.string_or("name", default_name.str()), dim);
-      const std::vector<ConfigNode> fix = bc.array("fix");
-      if (fix.empty()) {
-        throw ConfigError("'" + bc.path() +
-                          ".fix' must list the components to constrain, e.g. "
-                          "[\"x\", \"y\"]");
-      }
-      for (const ConfigNode& component : fix) {
-        const std::string c = component.string();
-        if (c == "x") {
-          constraint.fix_x = true;
-        } else if (c == "y") {
-          constraint.fix_y = true;
-        } else if (c == "z" && dim == 3) {
-          constraint.fix_z = true;
-        } else if (c == "z") {
-          throw ConfigError("'" + component.path() +
-                            "' fixes \"z\" but the mesh is two-dimensional");
-        } else {
-          throw ConfigError("'" + component.path() + "' must be \"x\", \"y\"" +
-                            (dim == 3 ? " or \"z\"" : "") + ", got \"" + c + "\"");
-        }
-      }
-      const Vector3 values = bc.vector3_or("value", Vector3::Zero(), dim);
-      constraint.value_x = values.x();
-      constraint.value_y = values.y();
-      constraint.value_z = values.z();
-      config.constraints.push_back(std::move(constraint));
+      config.constraints.push_back(
+          parse_displacement_constraint(bc, "bc" + std::to_string(index++), dim));
     }
   }
 
   // --- load cases ---------------------------------------------------------
   {
     const std::vector<ConfigNode> cases = root.array("load_cases");
-    if (cases.empty()) {
+    if (cases.empty() && root.child("forming").exists()) {
+      // The forming analysis applies no load case (its tools and prescribed
+      // displacements drive it): a deck for it needs none, and gets one
+      // empty case so that the model is complete.
+      LoadCaseSpec spec;
+      spec.name = "forming";
+      spec.prescribed_displacement_only = true;
+      config.load_cases.push_back(spec);
+    } else if (cases.empty()) {
       throw ConfigError("'load_cases' is missing or empty; define at least one");
     }
     int index = 0;
@@ -1185,6 +1200,200 @@ Configuration parse_configuration(const json::Value& document, const std::string
       if (config.nonlinear.options.method == NonlinearOptions::Method::ArcLength) {
         throw ConfigError("contact is solved under load control; 'nonlinear.method' "
                           "\"arc_length\" is not available with it");
+      }
+    }
+  }
+
+  // --- forming ------------------------------------------------------------
+  {
+    const ConfigNode fm = root.child("forming");
+    FormingConfig& c = config.forming;
+    c.enabled = fm.exists();
+    FormingOptions& o = c.options;
+    if (c.enabled) {
+      o.kinematics = parse_kinematics(fm.string_or("kinematics", "finite"));
+      o.law = parse_hyperelastic_model(fm.string_or("material_model", "saint_venant_kirchhoff"));
+      const ConfigNode md = fm.child("mean_dilatation");
+      if (md.exists()) {
+        o.mean_dilatation = md.raw()->is_bool()
+                                ? (md.boolean() ? MeanDilatation::All : MeanDilatation::None)
+                                : parse_mean_dilatation(md.string());
+      }
+      o.friction_tangent = parse_friction_tangent(fm.string_or("friction_tangent", "exact"));
+      const std::string solver = fm.string_or("solver", "auto");
+      if (solver != "auto" && solver != "eigen") {
+        throw ConfigError("'" + fm.path() + ".solver' must be \"auto\" (SuiteSparse when built "
+                          "in) or \"eigen\", got \"" + solver + "\"");
+      }
+      o.suitesparse = solver == "auto";
+
+      // Tools.
+      std::set<std::string> tool_names;
+      int index = 0;
+      for (const ConfigNode& t : fm.array("tools")) {
+        RigidTool tool;
+        tool.name = t.string_or("name", "tool" + std::to_string(index++));
+        const std::string label = "'" + t.path() + "' (tool '" + tool.name + "')";
+        if (!tool_names.insert(tool.name).second) {
+          throw ConfigError("forming tool name '" + tool.name + "' is used twice");
+        }
+        tool.shape = parse_tool_shape(t.string_or("shape", "sphere"));
+        if (tool.shape != RigidTool::Shape::Plane) {
+          tool.radius = t.require("radius").number();
+          if (!(tool.radius > 0.0)) {
+            throw ConfigError(label + ": 'radius' must be positive");
+          }
+        }
+        if (tool.shape == RigidTool::Shape::Plane) {
+          tool.normal = t.require("normal").vector3(dim);
+        }
+        if (tool.shape == RigidTool::Shape::Cylinder && dim == 3) {
+          tool.axis = t.vector3_or("axis", Vector3::UnitZ(), 3);
+        }
+        tool.surface = parse_region(t.require("surface"), tool.name + "_surface", dim);
+        tool.friction = t.number_or("friction", 0.0);
+        if (!(tool.friction >= 0.0)) throw ConfigError(label + ": 'friction' must be >= 0");
+        tool.penalty = t.number_or("penalty", tool.penalty);
+        tool.tangential_ratio = t.number_or("tangential_penalty", tool.tangential_ratio);
+        const ConfigNode path = t.require("trajectory");
+        const ConfigNode file = path.child("file");
+        if (file.exists() == (path.child("times").exists() || path.child("points").exists())) {
+          throw ConfigError("'" + path.path() + "' needs either a 'file' (CSV with the header "
+                            "t,x,y,z) or 'times' and 'points', not both and not neither");
+        }
+        if (file.exists()) {
+          std::filesystem::path resolved(file.string());
+          if (resolved.is_relative() && !base_directory.empty()) {
+            resolved = std::filesystem::path(base_directory) / resolved;
+          }
+          tool.trajectory = ToolTrajectory::from_csv(resolved.string());
+        } else {
+          tool.trajectory.times = path.require("times").number_list();
+          for (const ConfigNode& point : path.require("points").items()) {
+            tool.trajectory.points.push_back(point.vector3(dim));
+          }
+        }
+        tool.validate(dim);
+        o.tools.push_back(std::move(tool));
+      }
+
+      // Steps.
+      std::set<std::string> step_names;
+      std::set<std::string> previous_tools;
+      Scalar previous_end = -std::numeric_limits<Scalar>::infinity();
+      index = 0;
+      const std::vector<ConfigNode> steps = fm.array("steps");
+      if (steps.empty()) throw ConfigError("'" + fm.path() + ".steps' is missing or empty");
+      for (const ConfigNode& st : steps) {
+        FormingStep step;
+        step.name = st.string_or("name", "step" + std::to_string(index + 1));
+        ++index;
+        const std::string label = "'" + st.path() + "' (step '" + step.name + "')";
+        if (!step_names.insert(step.name).second) {
+          throw ConfigError("forming step name '" + step.name + "' is used twice");
+        }
+        step.type = parse_step_type(st.string_or("type", "form"));
+        const bool release = step.type == FormingStep::Type::Release;
+        std::set<std::string> listed;
+        for (const std::string& name : string_list(st, "tools")) {
+          if (tool_names.count(name) == 0) {
+            throw ConfigError(label + " names tool '" + name + "', which 'forming.tools' does "
+                              "not define");
+          }
+          if (release && previous_tools.count(name) == 0) {
+            throw ConfigError(label + " is a release that keeps tool '" + name + "', which the "
+                              "step before it does not list; a release can only keep tools "
+                              "already in place");
+          }
+          listed.insert(name);
+          step.tools.push_back(name);
+        }
+        const ConfigNode window = st.child("time");
+        if (window.exists()) {
+          const std::vector<Scalar> w = window.number_list();
+          if (w.size() != 2 || !(w[1] > w[0])) {
+            throw ConfigError(label + ": 'time' must be [t_begin, t_end] with t_end > t_begin");
+          }
+          if (w[0] < previous_end) {
+            std::ostringstream os;
+            os << label << ": its time window starts at " << w[0] << " s, before the step "
+               << "before it ended (" << previous_end << " s); the pseudo-time cannot run "
+               << "backwards";
+            throw ConfigError(os.str());
+          }
+          step.t_begin = w[0];
+          step.t_end = w[1];
+          previous_end = w[1];
+        }
+        step.max_tool_travel = st.number_or("max_tool_travel", 0.0);
+        step.increments = st.integer_or("increments", 0);
+        if (!(step.max_tool_travel >= 0.0) || step.increments < 0) {
+          throw ConfigError(label + ": 'max_tool_travel' and 'increments' must not be negative");
+        }
+        int bc_index = 0;
+        for (const ConfigNode& bc : st.array("boundary_conditions")) {
+          StepConstraint sc;
+          sc.constraint = parse_displacement_constraint(
+              bc, step.name + "_bc" + std::to_string(bc_index++), dim);
+          sc.name = sc.constraint.region.name;
+          sc.mode = parse_constraint_mode(bc.string_or("mode", "hold"));
+          // A held constraint keeps its DOFs where the step finds them: a
+          // non-zero value there would be ignored, while the same entry at
+          // the top level prescribes it. (Zero, "fixed", is accepted: decks
+          // write it for clamps and supports that have not moved.)
+          bool moved = false;
+          for (int k = 0; k < dim; ++k) {
+            moved = moved || (sc.constraint.fixes(k) && sc.constraint.value(k) != 0.0);
+          }
+          if (sc.mode == StepConstraint::Mode::Hold && moved) {
+            throw ConfigError("'" + bc.path() + ".value' is not zero, but the constraint's mode "
+                              "is \"hold\" (the default), which keeps its DOFs where the step "
+                              "finds them; give \"mode\": \"absolute\" to move them to the "
+                              "value over the step");
+          }
+          step.constraints.push_back(std::move(sc));
+        }
+        previous_tools = listed;
+        o.steps.push_back(std::move(step));
+      }
+
+      const ConfigNode newton = fm.child("newton");
+      o.max_iterations = newton.integer_or("max_iterations", o.max_iterations);
+      o.residual_tolerance = newton.number_or("residual_tolerance", o.residual_tolerance);
+      o.displacement_tolerance =
+          newton.number_or("displacement_tolerance", o.displacement_tolerance);
+      o.line_search = newton.boolean_or("line_search", o.line_search);
+      o.max_cuts = newton.integer_or("max_cuts", o.max_cuts);
+      o.max_increments = newton.integer_or("max_increments", o.max_increments);
+      if (o.max_iterations < 1 || o.max_cuts < 0 || o.max_increments < 1 ||
+          !(o.residual_tolerance > 0.0) || !(o.displacement_tolerance > 0.0)) {
+        throw ConfigError("'forming.newton' needs max_iterations >= 1, max_cuts >= 0, "
+                          "max_increments >= 1 and positive tolerances");
+      }
+
+      const ConfigNode out = fm.child("output");
+      c.write_vtk = out.boolean_or("vtk", true);
+      const ConfigNode snapshots = out.child("snapshots");
+      if (snapshots.exists()) {
+        if (snapshots.raw()->is_number()) {
+          c.snapshots = FormingConfig::Snapshots::Stride;
+          c.snapshot_stride = snapshots.integer();
+          if (c.snapshot_stride < 1) {
+            throw ConfigError("'" + snapshots.path() + "' must be \"steps\", \"none\" or an "
+                              "increment stride >= 1");
+          }
+          o.snapshot_stride = c.snapshot_stride;
+        } else {
+          const std::string mode = snapshots.string();
+          if (mode == "steps") {
+            c.snapshots = FormingConfig::Snapshots::Steps;
+          } else if (mode == "none") {
+            c.snapshots = FormingConfig::Snapshots::None;
+          } else {
+            throw ConfigError("'" + snapshots.path() + "' must be \"steps\", \"none\" or an "
+                              "increment stride >= 1, got \"" + mode + "\"");
+          }
+        }
       }
     }
   }
