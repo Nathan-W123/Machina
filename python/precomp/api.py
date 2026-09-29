@@ -12,7 +12,9 @@ std)``), optionally extended by
 
 When the model has them, `compensate` reports the interval and the OOD
 assessment; otherwise those fields are None. `precomp.ml` provides such
-models; nothing here imports it.
+models (`DeviationSurrogate`); it is imported only when `model` is given as
+the directory of a saved bundle, which is then loaded with
+`precomp.ml.registry.load_model`.
 """
 
 from __future__ import annotations
@@ -53,6 +55,18 @@ class PredictionResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
+def resolve_model(model: Union[None, FieldModel, PathLike]) -> Optional[FieldModel]:
+    """A model object, or a `precomp.ml` bundle directory loaded with
+    `precomp.ml.registry.load_model` (imported only then)."""
+    if model is None or hasattr(model, "predict_deviation"):
+        return model
+    if isinstance(model, (str, Path)) or hasattr(model, "__fspath__"):
+        from .ml.registry import load_model
+        return load_model(model)
+    raise TypeError("model must implement predict_deviation(commanded, setup) or be a "
+                    "precomp.ml model directory")
+
+
 def _predictor(setup: FormingSetup, model: Optional[FieldModel], method: str,
                work_dir: Optional[PathLike]):
     if method not in METHODS:
@@ -74,8 +88,10 @@ def predict(commanded: HeightMap, setup: FormingSetup, model: Optional[FieldMode
 
     method "fea" simulates with sparlab_form (cached in `work_dir`);
     "surrogate" evaluates `model`; "hybrid" simulates and adds the model's
-    learned residual.
+    learned residual. `model` may be a model object or a `precomp.ml` bundle
+    directory; its training data source is reported in `details`.
     """
+    model = resolve_model(model)
     pred = _predictor(setup, model, method, work_dir)
     std = None
     if isinstance(pred, SurrogatePredictor):
@@ -83,6 +99,8 @@ def predict(commanded: HeightMap, setup: FormingSetup, model: Optional[FieldMode
     else:
         formed = pred(commanded)
     details: Dict[str, Any] = {}
+    if model is not None and method != "fea":
+        details["model_data_source"] = getattr(model, "data_source", "unknown")
     fea = pred if isinstance(pred, FEAPredictor) else getattr(pred, "base", None)
     if isinstance(fea, FEAPredictor) and fea.results:
         details["fea"] = {k: v for k, v in fea.results[-1].provenance.items()
@@ -161,8 +179,10 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
 
     iterations, alpha, smoothing [m], direction, tolerance [m]: as for
     `displacement_adjustment`. interval_level: coverage passed to the model's
-    `predict_interval`.
+    `predict_interval`. `model` may be a model object or a `precomp.ml`
+    bundle directory.
     """
+    model = resolve_model(model)
     pred = _predictor(setup, model, method, work_dir)
     da: DAResult = displacement_adjustment(target, pred, iterations=iterations, alpha=alpha,
                                            direction=direction, smoothing=smoothing,

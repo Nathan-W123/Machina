@@ -27,6 +27,9 @@ Every metric states its data source: "SparLab simulation", "proxy - not
 physics" or "scan". torch is needed only for MLPEnsemble and FieldUNet.
 """
 
+from .active import Candidate, rank_candidates
+from .compensate import (SurrogateCompensation, SurrogatePredictor, surrogate_compensate,
+                         verify_with_fea, verify_with_simulator)
 from .dataset import (SOURCE_LABELS, Dataset, Sample, Table, build_table, family_split,
                       grouped_kfold, grouped_split, source_label)
 from .evaluate import EvaluationReport, cross_validate, evaluate_surrogate, family_holdout
@@ -54,4 +57,6 @@ __all__ = [
     "DeviationSurrogate", "train_surrogate", "transfer_surrogate",
     "save_model", "load_model", "read_manifest",
     "EvaluationReport", "evaluate_surrogate", "cross_validate", "family_holdout",
+    "SurrogatePredictor", "SurrogateCompensation", "surrogate_compensate", "verify_with_fea",
+    "verify_with_simulator", "Candidate", "rank_candidates",
 ]
