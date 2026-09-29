@@ -54,12 +54,15 @@ constexpr double kProgressSeconds = 60.0;
 // ---------------------------------------------------------------------------
 class PartitionedFactor {
  public:
-  explicit PartitionedFactor(bool suitesparse) : suitesparse_(suitesparse && kHaveSuiteSparse) {
+  explicit PartitionedFactor(bool suitesparse) {
 #ifdef SPARLAB_HAVE_CHOLMOD
+    suitesparse_ = suitesparse;
     // A tangent that is not positive definite is expected now and then (it
     // falls back to LDL^T): no CHOLMOD message on stderr.
     llt_.cholmod().print = 0;
     llt_.cholmod().error_handler = nullptr;
+#else
+    (void)suitesparse;  // Eigen's factorisations only
 #endif
   }
 
@@ -231,7 +234,9 @@ class PartitionedFactor {
     kind_ = Kind::None;
   }
 
-  bool suitesparse_ = false;
+#ifdef SPARLAB_HAVE_CHOLMOD
+  bool suitesparse_ = false;  ///< CHOLMOD and UMFPACK, else Eigen's factorisations
+#endif
   std::vector<Index> free_;
   std::vector<Index> map_;  ///< DOF -> free position, -1 if prescribed
   bool built_ = false;
