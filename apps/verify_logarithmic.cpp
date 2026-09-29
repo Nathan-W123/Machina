@@ -310,8 +310,8 @@ StudyOutcome study_logarithmic_uniaxial(const std::string& out_dir, json::Value&
   outcome.metric =
       "largest Kirchhoff-stress error over sigma_y and relative r-value error, to a stretch of 2";
   outcome.value = worst;
-  outcome.tolerance = 1.0e-9;
-  outcome.passed = completed && worst <= 1.0e-9;
+  outcome.tolerance = 1.0e-12;
+  outcome.passed = completed && worst <= 1.0e-12;
   std::ostringstream note;
   note << cases.size() << " runs, " << steps << " steps: stress "
        << app::format(worst_stress, 3) << ", r-value " << app::format(worst_r, 3)

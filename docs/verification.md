@@ -59,7 +59,7 @@ All numbers in this document come from `results/verification/summary.json`,
 | Uniaxial cycle with combined hardening vs exact (distorted Hex8) | verification | largest stress error over `sigma_y` along the cycle | `1.98e-14` | `1e-9` | PASS |
 | Uniaxial cycle with Chaboche backstresses vs exact (distorted Hex8, Q4) | verification | largest stress error over `sigma_y` along the cycle | `3.86e-15` | `1e-9` | PASS |
 | Hill48 directional yield stress and r-value vs exact (distorted Q4, Hex8) | verification | largest relative error of the stress, the r-value and the homogeneous field, 0 to 90 deg | `5.63e-15` | `1e-9` | PASS |
-| Large-strain uniaxial tension and cycle in the logarithmic strain vs exact (distorted Hex8) | verification | largest Kirchhoff-stress error over `sigma_y` and relative r-value error, to a stretch of 2 | `1.15e-13` | `1e-9` | PASS |
+| Large-strain uniaxial tension and cycle in the logarithmic strain vs exact (distorted Hex8) | verification | largest Kirchhoff-stress error over `sigma_y` and relative r-value error, to a stretch of 2 | `1.15e-13` | `1e-12` | PASS |
 | Thick tube to collapse at finite strain, logarithmic strain (Q4, Hex8 with mean dilatation of `ln J`; Tet10) | verification | peak-pressure difference of the averaged Q4 and Hex8 on the finest mesh to the finest Tet10 (order `>= 1.8` also required) | `4.73e-04` | `1e-3` | PASS |
 | HHT-alpha transient vs the exact discrete modal solution (Q4, Hex8; consistent and lumped mass) | verification | largest relative displacement difference over the steps, models, masses and cases (trapezoidal energy balance `<= 1e-10` and positive numerical dissipation also required) | `3.28e-10` | `1e-9` | PASS |
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
@@ -1779,8 +1779,8 @@ were taken:
   matrix logarithm (Eigen's Schur-Pade) to `4.8e-15` (tolerance `1e-14`) and
   `ln J` its trace; `P` and `T : L`, for a stress not coaxial with C, match
   fourth-order central differences of `E_log(E)` and of `S(E) = P^T T` to
-  `4.1e-12` and `4.3e-12` (tolerances `1e-10`, `1e-9` - the differences' own
-  accuracy); `T : L` is symmetric and `S = P^T T` to `1e-15`; two eigenvalues
+  `4.1e-12` and `4.3e-12` (tolerance `1e-11`: the differences' own
+  accuracy, their round-off `eps / h`); `T : L` is symmetric and `S = P^T T` to `1e-15`; two eigenvalues
   `1e-9` apart give the `P` and `T : L` of the equal pair to `2e-9`; `C = I`
   gives `P = I`; at strains of `1e-6` the strain is `E - E^2 + (4/3) E^3` to
   `1e-15` (the `log1p` of the eigenvalues of E); an E that no deformation
@@ -1816,26 +1816,30 @@ were taken:
   a distorted `2 x 2 x 2` patch on symmetry planes, J2 with linear and with
   Voce hardening, 20 steps: the Kirchhoff stress (end force times stretch
   over the reference area) against the 1-D law at `ln(l1)` at every step to
-  `5.0e-14` (tolerance `1e-9`), the two lateral log strains equal and adding
+  `4.3e-14` (tolerance `1e-12`), the two lateral log strains equal and adding
   with the axial one to the elastic volume change `(1 - 2 nu) tau / E`
-  (`7.2e-16`), and every element's Kirchhoff stress, log strain and Cauchy
-  stress `tau / J` those of the exact state; no small-strain warning;
+  (`7.2e-16`), the accumulated plastic strain exact (`6.4e-16`), and every
+  element's Kirchhoff stress, log strain and Cauchy stress `tau / J` those of
+  the exact state (`4.8e-14`; tolerance `1e-12` throughout); no small-strain
+  warning;
 * *a tension-compression cycle to `+-0.3` log strain* with Voce hardening
   and two Armstrong-Frederick backstresses (exponential), through
   `0 -> e^0.3 -> e^-0.3 -> e^0.3`: the Kirchhoff stress follows the exact
-  branch solutions to `5.5e-14 sigma_y`, with reverse yielding;
+  branch solutions to `7.0e-14 sigma_y` and the accumulated plastic strain to
+  `3.6e-15` (tolerance `1e-12`), with reverse yielding;
 * *Hill48 along RD and along TD* to a stretch of 1.6: the Kirchhoff stress
-  follows `E (k sigma_y + k^2 H eps) / (E + k^2 H)` to `1.9e-14` and the
+  follows `E (k sigma_y + k^2 H eps) / (E + k^2 H)` to `2.4e-14` and the
   plastic lateral log strains keep the ratio `r0 = 1.9` and `r90 = 2.3` to
-  `5.7e-15` (tolerance `1e-9`) at every plastic step;
+  `6.3e-15` (tolerance `1e-12`) at every plastic step;
 * *plane stress*: a distorted Q4 strip pulled to a stretch of 1.6 follows the
-  1-D law (`9.8e-15`, tolerance `1e-9`), and its thickness log strain, found
-  by the return, equals the in-plane lateral one (`1e-10`), with
-  `J = l1 l2 exp(E_log,33)`;
+  1-D law (`9.8e-15`), and its thickness log strain, found by the return,
+  equals the in-plane lateral one (`2.1e-15`), with `J = l1 l2
+  exp(E_log,33)` (`1.2e-14`; tolerance `1e-12` throughout);
 * *free heating*: Q4 (plane stress), Hex8 and Tet10 blocks heated by 500 K on
   determinate supports take `u = alpha dT x` (to `1e-13` m), stress-free
-  (`2.8e-6` Pa against `E alpha dT = 1.2 GPa`), with the log strain
-  `ln(1 + alpha dT)` in every direction, the thickness's included;
+  (`2.8e-6` Pa against `E alpha dT = 1.2 GPa`; tolerance `1e-12 E alpha dT`),
+  with the log strain `ln(1 + alpha dT)` in every direction, the thickness's
+  included (`2.2e-15`; tolerance `1e-12`);
 * *the verification decks*: every deck of `configs/verification` with a
   non-linear static or transient analysis, switched to
   `finite_logarithmic` - small-strain decks included - completes (17 runs);
@@ -1855,7 +1859,7 @@ distorted `2 x 2 x 2` Hex8 patch (J2 linear and Voce to a stretch of 2,
 Chaboche to `+-0.3` log strain, Hill48 along RD and TD to 1.6; 122 steps,
 accumulated plastic strain up to 1.48): the Kirchhoff stress against the 1-D
 law in the log strain to `1.15e-13 sigma_y` and the r-values to `6.3e-15`
-(tolerance `1e-9`).
+(tolerance `1e-12`).
 
 *The thick tube at finite strain* (`--study logarithmic-tube`): the tube of
 `plastic-cylinder` with logarithmic kinematics and a follower bore pressure,

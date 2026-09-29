@@ -168,7 +168,8 @@ TEST_CASE("the logarithmic strain and its first and second derivatives are exact
     REQUIRE(relative(log.strain, engineering(reference)) <= 1.0e-14);
     REQUIRE(log.log_jacobian == Approx(0.5 * std::log(cg.determinant())).margin(2.0e-15));
     // P and T : L against fourth-order central differences of E_log(E)
-    // and of S(E) = P(E)^T T, at a step well above any of the gaps.
+    // and of S(E) = P(E)^T T, at a step well above any of the gaps (their
+    // round-off, eps / h, bounds the agreement at about 4e-12).
     const Scalar h = 5.0e-4 * c.lambda.minCoeff();
     const Matrix6 p_fd = derivative(
         [](const Vector6& e) { return logarithmic_strain(e).strain; }, green, h);
@@ -177,8 +178,8 @@ TEST_CASE("the logarithmic strain and its first and second derivatives are exact
     const Matrix6 curvature = logarithmic_curvature(log, t);
     worst_p = std::max(worst_p, relative(log.projection, p_fd));
     worst_l = std::max(worst_l, relative(curvature, l_fd));
-    REQUIRE(relative(log.projection, p_fd) <= 1.0e-10);
-    REQUIRE(relative(curvature, l_fd) <= 1.0e-9);
+    REQUIRE(relative(log.projection, p_fd) <= 1.0e-11);
+    REQUIRE(relative(curvature, l_fd) <= 1.0e-11);
     // T : L is a Hessian: symmetric. S = P^T T.
     REQUIRE(relative(curvature, curvature.transpose()) <= 1.0e-15);
     REQUIRE(relative(logarithmic_stress(log, t), log.projection.transpose() * t) <= 1.0e-15);
@@ -728,21 +729,21 @@ TEST_CASE("uniaxial tension to a stretch of 2 is exact: the Kirchhoff stress aga
         lateral = std::max(lateral, std::abs(eps + e2 + e3 - (1.0 - 2.0 * 0.3) * tau / law.e));
       }
       INFO("Kirchhoff stress error " << worst << ", lateral " << lateral);
-      REQUIRE(worst <= 1.0e-9);
+      REQUIRE(worst <= 1.0e-12);
       REQUIRE(lateral <= 1.0e-12);
-      REQUIRE(r.max_plastic_strain == Approx(law.p_accumulated).epsilon(1e-9));
+      REQUIRE(r.max_plastic_strain == Approx(law.p_accumulated).epsilon(1e-12));
       // Stress recovery: the Kirchhoff stress, the log strain, the Cauchy
       // stress tau / J of every element.
       const Scalar tau = tau_end;
       const Scalar e2 = std::log1p(r.steps.back().monitors[1] / s.width);
       const Scalar e3 = std::log1p(r.steps.back().monitors[2] / s.height);
       for (Index el = 0; el < model.mesh().num_elements(); ++el) {
-        REQUIRE(r.element_kirchhoff(0, el) == Approx(tau).epsilon(1e-9));
-        REQUIRE(std::abs(r.element_kirchhoff(1, el)) <= 1.0e-9 * tau);
+        REQUIRE(r.element_kirchhoff(0, el) == Approx(tau).epsilon(1e-12));
+        REQUIRE(std::abs(r.element_kirchhoff(1, el)) <= 1.0e-12 * tau);
         REQUIRE(r.element_log_strain(0, el) == Approx(std::log(2.0)).epsilon(1e-12));
-        REQUIRE(r.element_log_strain(1, el) == Approx(e2).epsilon(1e-10));
+        REQUIRE(r.element_log_strain(1, el) == Approx(e2).epsilon(1e-12));
         REQUIRE(r.element_cauchy(0, el) ==
-                Approx(tau / std::exp(std::log(2.0) + e2 + e3)).epsilon(1e-9));
+                Approx(tau / std::exp(std::log(2.0) + e2 + e3)).epsilon(1e-12));
       }
       REQUIRE(r.max_green_strain == Approx(std::log(2.0)).epsilon(1e-12));
       REQUIRE(r.warnings.empty());  // no small-strain warning at a log strain of 0.69
@@ -784,9 +785,9 @@ TEST_CASE("a tension-compression cycle to +-0.3 log strain with Chaboche backstr
     }
     INFO("Kirchhoff stress error " << worst << " sigma_y");
     REQUIRE(reversed > 0);  // reverse plastic flow on the way down
-    REQUIRE(worst <= 1.0e-9);
+    REQUIRE(worst <= 1.0e-12);
     REQUIRE(r.load_factor == 1.0);
-    REQUIRE(r.max_plastic_strain == Approx(law.p_accumulated).epsilon(1e-9));
+    REQUIRE(r.max_plastic_strain == Approx(law.p_accumulated).epsilon(1e-12));
   }
 }
 
@@ -837,8 +838,8 @@ TEST_CASE("Hill48 pulled along RD and TD to a stretch of 1.6 keeps the plastic l
     }
     INFO("stress error " << stress_error << ", r error " << ratio_error);
     REQUIRE(plastic >= 10);
-    REQUIRE(stress_error <= 1.0e-9);
-    REQUIRE(ratio_error <= 1.0e-9);
+    REQUIRE(stress_error <= 1.0e-12);
+    REQUIRE(ratio_error <= 1.0e-12);
   }
 }
 
@@ -945,17 +946,17 @@ TEST_CASE("plane stress with logarithmic kinematics: the thickness stretches by 
                      std::abs(step.monitors[0] * l1 / (0.5 * thickness) - tau) / std::abs(tau));
   }
   INFO("Kirchhoff stress error " << worst);
-  REQUIRE(worst <= 1.0e-9);
+  REQUIRE(worst <= 1.0e-12);
   const Scalar lateral = std::log1p(r.steps.back().monitors[1] / 0.5);
   for (Index el = 0; el < model.mesh().num_elements(); ++el) {
     REQUIRE(r.element_log_strain(0, el) == Approx(std::log(1.6)).epsilon(1e-12));
-    REQUIRE(r.element_log_strain(1, el) == Approx(lateral).epsilon(1e-10));
-    REQUIRE(r.element_log_strain(2, el) == Approx(lateral).epsilon(1e-10));  // the thickness
-    REQUIRE(r.element_kirchhoff(0, el) == Approx(tau).epsilon(1e-9));
-    REQUIRE(std::abs(r.element_kirchhoff(2, el)) <= 1.0e-9 * tau);
+    REQUIRE(r.element_log_strain(1, el) == Approx(lateral).epsilon(1e-12));
+    REQUIRE(r.element_log_strain(2, el) == Approx(lateral).epsilon(1e-12));  // the thickness
+    REQUIRE(r.element_kirchhoff(0, el) == Approx(tau).epsilon(1e-12));
+    REQUIRE(std::abs(r.element_kirchhoff(2, el)) <= 1.0e-12 * tau);
     // J = l1 l2 l3 with l3 = exp(E_log,33).
     REQUIRE(r.element_cauchy(0, el) ==
-            Approx(tau / (1.6 * std::exp(2.0 * lateral))).epsilon(1e-9));
+            Approx(tau / (1.6 * std::exp(2.0 * lateral))).epsilon(1e-12));
   }
 }
 
@@ -1029,11 +1030,11 @@ TEST_CASE("heated with logarithmic kinematics a free body expands stress-free by
     REQUIRE(error <= 1.0e-13);
     // Stress-free (to round-off of E alpha dT = 1.2 GPa), the log strain
     // that of the stretch 1 + alpha dT - the thickness's too in plane stress.
-    REQUIRE(r.element_kirchhoff.cwiseAbs().maxCoeff() <= 1.0e-9 * 200.0e9 * alpha * dt);
-    REQUIRE(r.element_cauchy.cwiseAbs().maxCoeff() <= 1.0e-9 * 200.0e9 * alpha * dt);
+    REQUIRE(r.element_kirchhoff.cwiseAbs().maxCoeff() <= 1.0e-12 * 200.0e9 * alpha * dt);
+    REQUIRE(r.element_cauchy.cwiseAbs().maxCoeff() <= 1.0e-12 * 200.0e9 * alpha * dt);
     for (Index el = 0; el < model.mesh().num_elements(); ++el) {
       for (int i = 0; i < 3; ++i) {
-        REQUIRE(r.element_log_strain(i, el) == Approx(std::log1p(alpha * dt)).epsilon(1e-10));
+        REQUIRE(r.element_log_strain(i, el) == Approx(std::log1p(alpha * dt)).epsilon(1e-12));
       }
     }
   }
