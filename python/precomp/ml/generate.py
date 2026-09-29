@@ -150,14 +150,14 @@ class ProxySimulator:
     * rim: under-forming (dz > 0, the part too shallow) near the rim,
       A sin(theta_2.5R) exp(-s / (rim_decay R)) inside and a short bending
       zone exp(-(s / R)^2) outside, A growing with the depth and with
-      (sigma_0.2 / E)^0.75 (t_ref / t)^0.5 (1 + gain (mu - mu_ref));
+      (sigma_f(0.2) / E)^0.75 (t_ref / t)^0.5 (1 + gain (mu - mu_ref));
     * pillow: flat bases bulge up by P (1 - exp(-(e / pillow_length)^2)),
       e the distance inside the flat region from its edge, P growing with
-      (sigma_0.2 / E)^0.5, sqrt(R / R_ref), sqrt(step_down / step_ref);
+      (sigma_f(0.2) / E)^0.5, sqrt(R / R_ref), sqrt(step_down / step_ref);
     * global: after a 3-2-1 release the whole sheet bends,
       dz = (kx (a^2 - x^2) + ky (a^2 - y^2)) / 2 with a the support position
       (zero at the supports), kx + ky = 2 kappa, kappa proportional to depth,
-      sigma_0.2 / E and t_ref / t, split between x and y by the depth field's
+      sigma_f(0.2) / E and t_ref / t, split between x and y by the depth field's
       second moments; with "clamped_only" a quarter of it inside the window.
 
     It has the global + local structure the models must capture, depends on

@@ -20,7 +20,7 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 117 tests (31 for precomp.ml), ~90 s; the integration test skips without the binary
+python3 -m pytest python/tests -q    # 128 tests (42 for precomp.ml), ~105 s; the integration test skips without the binary
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
@@ -444,8 +444,14 @@ The ML layer builds on this API and is imported only when used:
   `api.predict` and `api.compensate` accept it. Optionally
   `predict_interval(commanded, setup, level) -> (lower, upper)` (bounds of dz
   [m]) and `assess(commanded, setup) -> dict` (out-of-distribution report);
-  `compensate` reports both when present. `api.predict` and `api.compensate`
-  also take the directory of a `precomp.ml` bundle as the model (loaded with
+  `compensate` reports both when present, and refuses a target or a
+  compensated shape that `assess` puts outside the model's envelope unless
+  `allow_out_of_envelope=True` (`--allow-out-of-envelope`). A model may
+  declare `target`: "dz" (the total deviation - every `precomp.ml` bundle)
+  or "residual" (a correction of a simulation); method "hybrid" adds the
+  model to a simulation and so refuses a "dz" model, which would count the
+  springback twice. `api.predict` and `api.compensate` also take the
+  directory of a `precomp.ml` bundle as the model (loaded with
   `precomp.ml.registry.load_model`, imported only then).
 * **Command line.** `precomp dataset ...`, `precomp train ...`,
   `precomp evaluate ...` and `precomp active ...` hand their full argument
@@ -453,7 +459,9 @@ The ML layer builds on this API and is imported only when used:
   surrogate --model DIR` loads the model with
   `precomp.ml.registry.load_model(DIR)` and, with `--verify-fea` (the default
   for surrogate and hybrid; needs `--work-dir`), simulates the compensated
-  part once. Without `precomp.ml` those commands exit with status 2 and say so.
+  part once; the report then shows that simulation, not the model's
+  prediction, and states the envelope verdict. Without `precomp.ml` those
+  commands exit with status 2 and say so.
 * **Data.** `Part.sample(rng)` / `to_dict()`, `FormingSetup.to_dict()`,
   `simulate_many` (outcomes with the run hash, cache hit and runtime),
   `FormingResult.formed_surface()` / `forming_forces()` and the `Toolpath`

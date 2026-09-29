@@ -163,7 +163,7 @@ def _require_torch(what: str):
 
 
 #: Default target scale: dz is learned divided by the elastic unloading
-#: curvature 3 sigma_0.2 / (E t) of the sheet, the classical springback scale.
+#: curvature 3 sigma_f(0.2) / (E t) of the sheet, the classical springback scale.
 DEFAULT_TARGET_SCALE = "elastic_curvature"
 
 
@@ -217,7 +217,7 @@ class GBMEnsemble:
 
     `target_scale` names a feature column the target is divided by before
     fitting (and the prediction multiplied by): by default the elastic
-    unloading curvature 3 sigma_0.2 / (E t), which takes the leading
+    unloading curvature 3 sigma_f(0.2) / (E t), which takes the leading
     material and thickness dependence of springback out of what the trees
     must learn from a few dozen parts. None fits dz as it is.
     """
