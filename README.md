@@ -244,9 +244,10 @@ informational.
 `sparlab_form` ([`docs/forming.md`](docs/forming.md)) is verified against
 exact answers: the contact tangent against finite differences to `7.2e-10`,
 a flat punch's force against the penalty-in-series solution to `4.5e-12`
-(at the default penalty), Coulomb sliding at `mu` times the normal load to
-`7e-16`, a release invariant under rigid motions of its supports to
-`1.1e-17 m`, and the springback of an
+(at the default penalty), the Coulomb friction of an obliquely dragged punch
+along its slip, at `mu` times the normal force, to `7e-16`, a release
+invariant under rigid motions of its supports to `1.1e-17 m`, and the
+springback of an
 elastoplastic beam against the exact elastic unloading of its
 moment-curvature relation, converging to `5.6e-4` at 16 Q4 through the depth.
 The single-point forming smoke case (3 969 DOFs, a 100 mm toolpath) runs in

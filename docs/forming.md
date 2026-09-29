@@ -225,9 +225,11 @@ refuses unknown ones).
       "trajectory": { "file": "toolpath.csv" } }   // or { "times": [...], "points": [[x,y,z], ...] }
   ],
   "steps": [
-    { "name": "form", "type": "form", "tools": ["tool"], "max_tool_travel": 5.0e-4,
+    { "name": "form", "type": "form", "tools": ["tool"], "time": [0.0, 3.1],
+      "max_tool_travel": 5.0e-4,
       "boundary_conditions": [ { "name": "clamp", "fix": ["x","y","z"], "region": {...} } ] },
-    { "name": "retract", "type": "form", "tools": ["tool"], "time": [3.1, 3.2] },
+    { "name": "retract", "type": "form", "tools": ["tool"], "time": [3.1, 3.2],
+      "boundary_conditions": [ { "name": "clamp", "fix": ["x","y","z"], "region": {...} } ] },
     { "name": "unclamp", "type": "release", "increments": 10,
       "boundary_conditions": [ { "name": "A", "fix": ["x","y","z"], "mode": "hold", "region": {...} },
                                { "name": "B", "fix": ["y","z"], "region": {...} },
@@ -270,15 +272,22 @@ refuses unknown ones).
 A step's default window: for a `form` step with tools, the union of their
 trajectories' spans, starting no earlier than the previous step ended; for a
 `release` step (or a form step without tools) the unit interval after the
-previous step. The deck is refused - naming the key - for an unknown tool in
-a step, a release keeping a tool the previous step does not list, a tool
-name with other characters than letters, digits, `_`, `-` and `.`, a `value`
-on a held step constraint, a
-non-positive radius, negative friction, a time window that runs backwards,
-a trajectory with fewer than two knots or times that do not increase, and
-(when the analysis is built) a surface that selects no face, constraints
-that leave a rigid-body motion free, or a tool that would jump between two
-steps.
+previous step. So a path that ends with the tool's retraction (here from
+t = 3.1 to 3.2 s) is split by giving the form step the window up to it - left
+to its default, the form step would take the whole path, and the retract
+window would start before it ended. A step without `boundary_conditions`
+takes the deck's top-level ones (in `absolute` mode), not the previous
+step's: a step that keeps a clamp lists it again (as above), and a deck that
+gives every step its own may omit the top-level ones.
+
+The deck is refused - naming the key - for an unknown tool in a step, a
+release keeping a tool the previous step does not list, a tool name with
+other characters than letters, digits, `_`, `-` and `.`, a non-zero `value`
+on a held step constraint, a non-positive radius, negative friction, a time
+window that runs backwards, a trajectory with fewer than two knots or times
+that do not increase, and (when the analysis is built) a surface that
+selects no face, constraints that leave a rigid-body motion free, or a tool
+that would jump between two steps.
 
 ## 3. Output contract
 
@@ -373,7 +382,10 @@ Where the time goes (seconds):
 
 A build without SuiteSparse (`-DSPARLAB_WITH_CHOLMOD=OFF`) runs the Eigen
 path: the smoke case took 170 s, 70 s of it factorisation, under a load
-average of 11.
+average of 11. Re-run after the fixes of the review (the smoke deck's
+supports hold, so the rigid predictor does not act on it), the smoke case
+took the same 137 increments and 1 274 iterations, in 125 s at a load
+average of 3 to 7 (factorisation 57 s, element tangent 50 s).
 
 The full cone was not run to the end: at about 17 s per increment it takes
 about 7 hours. The estimate multiplies the 1 470 increments its path needs
