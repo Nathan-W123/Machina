@@ -880,6 +880,14 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     header.push_back("von_mises[Pa]");
     for (const std::string& p : pairs) header.push_back("pk2_" + p + "[Pa]");
     if (result.plastic) header.push_back("equivalent_plastic_strain[-]");
+    // Logarithmic kinematics: the Kirchhoff stress and the log strain, all
+    // six tensor components (in 2-D too: the thickness strain).
+    const bool logarithmic = result.element_kirchhoff.cols() == ne;
+    const std::vector<std::string> six{"xx", "yy", "zz", "xy", "yz", "zx"};
+    if (logarithmic) {
+      for (const std::string& p : six) header.push_back("kirchhoff_" + p + "[Pa]");
+      for (const std::string& p : six) header.push_back("log_strain_" + p + "[-]");
+    }
     CsvWriter csv(file("nonlinear_stress_" + lc + ".csv"), header);
     for (Index e = 0; e < ne; ++e) {
       const Vector3 c = mesh.element_centroid(e);
@@ -895,6 +903,10 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
         row.push_back(result.element_piola_kirchhoff(i, e));
       }
       if (result.plastic) row.push_back(result.element_plastic_strain(e));
+      if (logarithmic) {
+        for (int i = 0; i < 6; ++i) row.push_back(result.element_kirchhoff(i, e));
+        for (int i = 0; i < 6; ++i) row.push_back(result.element_log_strain(i, e));
+      }
       csv.row(e, row);
     }
     csv.close();
@@ -955,6 +967,16 @@ void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult&
     writer.add_cell_scalars("von_mises", result.element_von_mises);
     if (result.plastic) {
       writer.add_cell_scalars("equivalent_plastic_strain", result.element_plastic_strain);
+    }
+    if (result.element_kirchhoff.cols() == mesh.num_elements()) {
+      const std::vector<std::string> six{"xx", "yy", "zz", "xy", "yz", "zx"};
+      for (int i = 0; i < 6; ++i) {
+        const std::size_t u = static_cast<std::size_t>(i);
+        writer.add_cell_scalars("kirchhoff_" + six[u],
+                                result.element_kirchhoff.row(i).transpose());
+        writer.add_cell_scalars("log_strain_" + six[u],
+                                result.element_log_strain.row(i).transpose());
+      }
     }
     if (!result.contact_nodes.empty()) {
       // -1 marks a node that is not a contact node; 0 open, 1 stick, 2 slip.
@@ -1603,7 +1625,8 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
                            const std::vector<StaticSolution>& linear) {
   const bool arc = options.method == NonlinearOptions::Method::ArcLength;
   const bool small = options.kinematics == Kinematics::SmallStrain;
-  const bool svk = options.law == HyperelasticModel::SaintVenantKirchhoff;
+  const bool logarithmic = options.kinematics == Kinematics::FiniteLogarithmic;
+  const bool svk = options.law == HyperelasticModel::SaintVenantKirchhoff && !logarithmic;
   bool plastic = false;
   for (Index e = 0; e < model.mesh().num_elements(); ++e) {
     if (model.material_of(e).plasticity().enabled()) plastic = true;
@@ -1612,19 +1635,29 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
   std::string formulation =
       small ? "small-strain statics: linear strain on the undeformed geometry, Newton's method "
               "with the consistent tangent"
-            : "geometrically non-linear statics, total Lagrangian: second Piola-Kirchhoff "
-              "stress and Green-Lagrange strain on the reference configuration, consistent "
-              "tangent (material plus initial-stress part), Newton's method";
+      : logarithmic
+          ? "geometrically non-linear statics at large strain, total Lagrangian in the "
+            "logarithmic strain (Miehe, Apel and Lambrecht 2002): E_log = ln(C) / 2 by "
+            "spectral decomposition, its conjugate stress T from the return, S = T : P with "
+            "P = 2 dE_log/dC, consistent tangent P^T C_alg P + T : L plus the initial-stress "
+            "part, Hencky elasticity, Newton's method"
+          : "geometrically non-linear statics, total Lagrangian: second Piola-Kirchhoff "
+            "stress and Green-Lagrange strain on the reference configuration, consistent "
+            "tangent (material plus initial-stress part), Newton's method";
   if (plastic) {
     formulation += small ? "; J2 plasticity by the backward-Euler radial return"
-                         : "; J2 plasticity in the Green-Lagrange strain and second "
-                           "Piola-Kirchhoff stress (small strain, large rotation) by the "
-                           "backward-Euler radial return";
+                   : logarithmic
+                       ? "; plasticity additive in the logarithmic strain (large strain) by "
+                         "the backward-Euler return of the small-strain law"
+                       : "; J2 plasticity in the Green-Lagrange strain and second "
+                         "Piola-Kirchhoff stress (small strain, large rotation) by the "
+                         "backward-Euler radial return";
   }
   out.set("formulation", json::Value::make_string(formulation));
   out.set("kinematics", json::Value::make_string(to_string(options.kinematics)));
-  out.set("material_model", json::Value::make_string(small ? "linear_elastic"
-                                                           : to_string(options.law)));
+  out.set("material_model", json::Value::make_string(small         ? "linear_elastic"
+                                                     : logarithmic ? "hencky"
+                                                                   : to_string(options.law)));
   out.set("method", json::Value::make_string(to_string(options.method)));
   out.set("follower_pressure", json::Value::make_bool(!small && options.follower_pressure));
   out.set("load_scaling",
@@ -1744,6 +1777,9 @@ json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
       c.set("max_strain", json::Value::make_number(r.max_green_strain));
       c.set("max_rotation_rad", json::Value::make_number(r.max_rotation));
       c.set("max_neglected_quadratic_strain", json::Value::make_number(r.max_quadratic_strain));
+    } else if (logarithmic) {
+      c.set("max_logarithmic_strain", json::Value::make_number(r.max_green_strain));
+      c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
     } else {
       c.set("max_green_strain", json::Value::make_number(r.max_green_strain));
       c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
@@ -1933,7 +1969,10 @@ json::Value transient_json(const std::vector<TransientResult>& results,
     json::Value n = json::Value::make_object();
     n.set("kinematics", json::Value::make_string(to_string(nl.kinematics)));
     n.set("material_model",
-          json::Value::make_string(small ? "linear_elastic" : to_string(nl.law)));
+          json::Value::make_string(small ? "linear_elastic"
+                                   : nl.kinematics == Kinematics::FiniteLogarithmic
+                                       ? "hencky"
+                                       : to_string(nl.law)));
     n.set("mean_dilatation", json::Value::make_string(to_string(nl.mean_dilatation)));
     n.set("follower_pressure", json::Value::make_bool(!small && nl.follower_pressure));
     n.set("residual_tolerance", json::Value::make_number(nl.residual_tolerance));

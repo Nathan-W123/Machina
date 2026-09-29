@@ -116,6 +116,10 @@ struct CalculixTransientExport {
 std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
                                         const TransientOptions& options);
 
+/// Why a non-linear or transient case with `finite_logarithmic` kinematics
+/// cannot go out to CalculiX (no counterpart of its laws).
+std::string calculix_logarithmic_obstacle();
+
 /// Why a material's plasticity cannot go out as CalculiX's `*PLASTIC` in a
 /// non-linear or transient deck - Hill48 anisotropy, Armstrong-Frederick
 /// backstresses with recovery, or linear kinematic hardening (Prager's

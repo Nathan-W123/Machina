@@ -593,8 +593,9 @@ load factor, residual and energy share in solid material, and, with
 ```
 
 A non-linear static analysis of each selected load case: large displacement
-and rotation in the total Lagrangian form (`kinematics: finite`) or small
-strain (`small_strain`), with J2 plasticity for the materials that have a
+and rotation in the total Lagrangian form (`kinematics: finite`), large
+strain too in the logarithmic strain (`finite_logarithmic`), or small strain
+(`small_strain`), with plasticity for the materials that have a
 `plasticity` block, the equilibrium solved by Newton's method along a load
 path (`docs/formulation.md`, sections 7c and 7d). One load factor lambda
 scales every load of the case together - forces, pressures, self-weight and
@@ -607,9 +608,9 @@ optimisation is linear).
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `enabled` | bool | `false` | run the non-linear analysis |
-| `kinematics` | string | `finite` | `finite`: the total Lagrangian formulation, large displacement and rotation. `small_strain`: the linear strain on the undeformed geometry - no geometric stiffness, pressures on the undeformed faces, the rotation's load at the undeformed positions; with elastic materials it is the linear analysis, with plastic ones the classical small-strain elastoplastic analysis |
-| `material_model` | string | `saint_venant_kirchhoff` | the elastic law with `finite` kinematics. `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only, elastic materials only. A plastic material takes the Saint Venant-Kirchhoff form (its J2 return in the Green strain) |
-| `mean_dilatation` | string or bool | `auto` | the elements of a plastic material that average their dilatation over the element (B-bar; its Green-strain form with `finite` kinematics), which keeps them from locking under the isochoric plastic flow. `auto`: Q4 and Hex8, which lock without it; `all`: also Tet10; `none`. `true` and `false` stand for `all` and `none`. Plane stress and one-point elements (Tri3, Tet4) have nothing to average |
+| `kinematics` | string | `finite` | `finite`: the total Lagrangian formulation in the Green-Lagrange strain, large displacement and rotation. `finite_logarithmic`: the total Lagrangian formulation in the logarithmic (Hencky) strain `ln(C)/2` - large strain: the plasticity is the small-strain return in the log strain (exact for coaxial stretches of any size), the elasticity Hencky's, for elastic materials too; the thermal strain is `ln(1 + alpha dT)`; mean dilatation averages `ln J`; the summary reports the largest log strain and the stress CSV and VTK add the Kirchhoff stress and the log strain (`docs/formulation.md`, section 7d). `small_strain`: the linear strain on the undeformed geometry - no geometric stiffness, pressures on the undeformed faces, the rotation's load at the undeformed positions; with elastic materials it is the linear analysis, with plastic ones the classical small-strain elastoplastic analysis |
+| `material_model` | string | `saint_venant_kirchhoff` | the elastic law with `finite` kinematics. `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only, elastic materials only. A plastic material takes the Saint Venant-Kirchhoff form (its J2 return in the Green strain). `finite_logarithmic` kinematics has its own law (Hencky) and refuses `neo_hookean` |
+| `mean_dilatation` | string or bool | `auto` | the elements of a plastic material that average their dilatation over the element (B-bar; its Green-strain form with `finite` kinematics, the average of `ln J` with `finite_logarithmic`), which keeps them from locking under the isochoric plastic flow. `auto`: Q4 and Hex8, which lock without it; `all`: also Tet10; `none`. `true` and `false` stand for `all` and `none`. Plane stress and one-point elements (Tri3, Tet4) have nothing to average |
 | `method` | string | `load_control` | `load_control`: Newton at prescribed load factors. `arc_length`: Crisfield's cylindrical arc-length method, which follows the path through limit points |
 | `steps` | integer | `10` | load control: the equal steps to lambda = 1 it starts with (halved on failure, lengthened again after easy steps, never beyond this size). Arc length: the first arc length is that of the first of `steps` equal load increments |
 | `max_steps` | integer | `500` | converged steps before the run stops |
@@ -1087,6 +1088,9 @@ a dead pressure as the nodal forces of the reference faces), increments of
 at most 1/50 of the load (CalculiX lags a centrifugal load at the deformed
 position within an increment) and convergence controls of 1e-6 on residual
 and correction. A neo-Hookean case is not exported: CalculiX's `NEO HOOKE` is
-a different strain energy.
+a different strain energy; nor is a `finite_logarithmic` case (a non-linear
+or transient one): CalculiX's `NLGEOM` elasticity is the Saint
+Venant-Kirchhoff law and its finite-strain plasticity multiplicative, neither
+the Hencky law nor plasticity additive in the log strain.
 
 Run any app with `--help` for its full flag list.

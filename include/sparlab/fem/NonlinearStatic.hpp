@@ -9,11 +9,11 @@
 /// `finite_logarithmic` is the total Lagrangian formulation in the
 /// logarithmic strain (Elastoplastic.hpp): large strain too, every element
 /// through the return of Plasticity.hpp with Hencky elasticity, plasticity
-/// additive in the log strain. `small_strain` keeps the linear strain \f$\varepsilon = Bu\f$ and the
-/// undeformed geometry - no geometric stiffness, pressures on the undeformed
-/// faces, the centrifugal load of the undeformed body - so that with elastic
-/// materials it is the linear analysis and with plastic ones the classical
-/// materially-non-linear-only analysis. The solver reports the rotation and
+/// additive in the log strain. `small_strain` keeps the linear strain
+/// \f$\varepsilon = Bu\f$ and the undeformed geometry - no geometric
+/// stiffness, pressures on the undeformed faces, the centrifugal load of the
+/// undeformed body - so that with elastic materials it is the linear analysis
+/// and with plastic ones the classical materially-non-linear-only analysis. The solver reports the rotation and
 /// the neglected quadratic part of the Green strain, and warns when they are
 /// not small.
 ///

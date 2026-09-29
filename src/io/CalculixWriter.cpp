@@ -535,12 +535,21 @@ std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
     if (nl.kinematics == Kinematics::Finite && nl.law != HyperelasticModel::SaintVenantKirchhoff) {
       return "CalculiX's NEO HOOKE is a different strain energy from SparLab's neo-Hookean law";
     }
+    if (nl.kinematics == Kinematics::FiniteLogarithmic) {
+      return calculix_logarithmic_obstacle();
+    }
     for (const IsotropicMaterial& m : model.materials()) {
       const std::string obstacle = calculix_plasticity_obstacle(m);
       if (!obstacle.empty()) return obstacle;
     }
   }
   return "";
+}
+
+std::string calculix_logarithmic_obstacle() {
+  return "the logarithmic-strain kinematics (Hencky elasticity, plasticity additive in the log "
+         "strain) has no counterpart in CalculiX, whose NLGEOM elasticity is the Saint "
+         "Venant-Kirchhoff law and whose finite-strain plasticity is multiplicative";
 }
 
 std::string calculix_plasticity_obstacle(const IsotropicMaterial& material) {

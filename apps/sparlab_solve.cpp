@@ -237,6 +237,9 @@ int main(int argc, char** argv) {
           if (o.contact.enabled) {
             log::warn("the non-linear cases are not exported to CalculiX: the export does not "
                       "write contact, and without it the deck would be a different problem");
+          } else if (o.kinematics == Kinematics::FiniteLogarithmic) {
+            log::warn("the non-linear cases are not exported to CalculiX: " +
+                      calculix_logarithmic_obstacle());
           } else if (o.kinematics == Kinematics::Finite &&
                      o.law != HyperelasticModel::SaintVenantKirchhoff) {
             log::warn("the non-linear cases are not exported to CalculiX: its NEO HOOKE is a "

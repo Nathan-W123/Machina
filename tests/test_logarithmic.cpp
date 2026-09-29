@@ -1032,3 +1032,61 @@ TEST_CASE("the non-linear verification decks run with logarithmic kinematics, an
   REQUIRE(std::abs(lg.max_plastic_strain - gl.max_plastic_strain) <=
           strain * gl.max_plastic_strain);
 }
+
+TEST_CASE("the logarithmic kinematics key of a deck parses, runs and is reported",
+          "[logarithmic][config]") {
+  const auto deck = [](const std::string& nonlinear) {
+    return json::parse(R"({
+      "mesh": { "type": "structured_hex", "nx": 4, "ny": 1, "nz": 1, "lx": 1.0, "ly": 0.1,
+                "lz": 0.1 },
+      "material": { "youngs_modulus": 200e9, "poisson_ratio": 0.3,
+                    "plasticity": { "yield_stress": 250e6, "hardening_modulus": 1e9 } },
+      "boundary_conditions": [ { "fix": ["x", "y", "z"], "region": { "box": { "xmax": 0.0 } } },
+                               { "fix": ["x"], "value": [0.05, 0, 0],
+                                 "region": { "box": { "xmin": 1.0 } } } ],
+      "load_cases": [ { "name": "pull", "prescribed_displacement_only": true } ],
+      "nonlinear": )" + nonlinear + " }");
+  };
+  const Configuration config = parse_configuration(
+      deck(R"({ "enabled": true, "kinematics": "finite_logarithmic", "steps": 4 })"), "inline",
+      true);
+  REQUIRE(config.nonlinear.options.kinematics == Kinematics::FiniteLogarithmic);
+  REQUIRE(parse_kinematics("finite_logarithmic") == Kinematics::FiniteLogarithmic);
+  REQUIRE(to_string(Kinematics::FiniteLogarithmic) == "finite_logarithmic");
+  FemModel model = build_model(config);
+  Assembler assembler(model);
+  const NonlinearResult r =
+      NonlinearStaticAnalysis(model, assembler, config.nonlinear.options).solve(0);
+  REQUIRE(r.completed);
+  REQUIRE(r.law == "hencky");
+  REQUIRE(r.element_kirchhoff.rows() == 6);
+  REQUIRE(r.element_log_strain.cols() == model.mesh().num_elements());
+  const json::Value summary = nonlinear_json({r}, config.nonlinear.options, model, {});
+  REQUIRE(summary.find("kinematics")->string_value() == "finite_logarithmic");
+  REQUIRE(summary.find("material_model")->string_value() == "hencky");
+  const json::Value& run = summary.find("load_cases")->array_items()[0];
+  REQUIRE(run.find("max_logarithmic_strain")->number_value() >= std::log(1.05));
+  // The CSV and VTK carry the Kirchhoff stress and the log strain.
+  const std::string directory = "results/_test_tmp/logarithmic";
+  ResultWriter(directory, config).write_nonlinear(model, r);
+  std::ifstream csv(directory + "/nonlinear_stress_pull.csv");
+  std::string header;
+  std::getline(csv, header);
+  REQUIRE(header.find("kirchhoff_xx[Pa]") != std::string::npos);
+  REQUIRE(header.find("log_strain_zz[-]") != std::string::npos);
+  std::ifstream vtk(directory + "/nonlinear_pull.vtk");
+  const std::string text((std::istreambuf_iterator<char>(vtk)), std::istreambuf_iterator<char>());
+  REQUIRE(text.find("kirchhoff_xy") != std::string::npos);
+  REQUIRE(text.find("log_strain_xx") != std::string::npos);
+  // No CalculiX counterpart; the neo-Hookean law is refused with it.
+  REQUIRE(calculix_logarithmic_obstacle().find("logarithmic") != std::string::npos);
+  REQUIRE_THROWS_AS(
+      parse_configuration(deck(R"({ "enabled": true, "kinematics": "finite_logarithmic",
+                                    "material_model": "neo_hookean" })"),
+                          "inline", true),
+      ConfigError);
+  REQUIRE_THROWS_AS(
+      parse_configuration(deck(R"({ "enabled": true, "kinematics": "logarithmic" })"), "inline",
+                          true),
+      ConfigError);
+}
