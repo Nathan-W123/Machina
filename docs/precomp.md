@@ -4,7 +4,8 @@
 single-point incremental forming (SPIF). It turns a target part into a tool
 path, a forming deck and a simulated formed shape; measures real parts from
 scans; and closes the loop by displacement adjustment - with the finite-element
-model, a learned surrogate (`precomp.ml`, built separately on the API below),
+model, a learned surrogate (`precomp.ml`, built on the API below and documented
+in [precomp_ml.md](precomp_ml.md)),
 or the measured part itself.
 
 It adds no physics of its own. Every number it reports is either read from a
@@ -19,7 +20,7 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 85 tests, ~35 s; the integration test skips without the binary
+python3 -m pytest python/tests -q    # 117 tests (31 for precomp.ml), ~90 s; the integration test skips without the binary
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
@@ -105,6 +106,7 @@ nothing below `api` knows about machine learning.
 | `precomp.api` | `predict`, `compensate` -> `CompensationResult`, `compare_scan` -> `ScanComparison` |
 | `precomp.report` | deviation and height maps, histograms, sections, convergence plots, `write_report` (Markdown) |
 | `precomp.cli` | the `precomp` command |
+| `precomp.ml` | learned deviation models, conformal intervals, the training envelope, surrogate compensation - [precomp_ml.md](precomp_ml.md) |
 
 ## Geometry
 
@@ -424,6 +426,8 @@ precomp scan compare --scan part.ply --scale 0.001 --target cone.npz --fixture f
 precomp scan update --scan part.ply --scale 0.001 --commanded comp/compensated.npz \
                     --target cone.npz --out next.npz
 precomp report --target cone.npz --formed formed.npz --tolerance 2e-4 --out report
+precomp compensate --target cone.npz --setup setup.json --method surrogate --model models/gbm \
+                   --verify-fea --work-dir runs --out comp     # see precomp_ml.md
 ```
 
 Exit status 0 on success, 2 for a usage or input error (the message names
@@ -440,12 +444,16 @@ The ML layer builds on this API and is imported only when used:
   `api.predict` and `api.compensate` accept it. Optionally
   `predict_interval(commanded, setup, level) -> (lower, upper)` (bounds of dz
   [m]) and `assess(commanded, setup) -> dict` (out-of-distribution report);
-  `compensate` reports both when present.
-* **Command line.** `precomp dataset ...`, `precomp train ...` and
-  `precomp evaluate ...` hand their full argument list to
-  `precomp.ml.cli.main(argv) -> int`; `precomp compensate --method surrogate
-  --model DIR` loads the model with `precomp.ml.registry.load_model(DIR)`.
-  Without `precomp.ml` those commands exit with status 2 and say so.
+  `compensate` reports both when present. `api.predict` and `api.compensate`
+  also take the directory of a `precomp.ml` bundle as the model (loaded with
+  `precomp.ml.registry.load_model`, imported only then).
+* **Command line.** `precomp dataset ...`, `precomp train ...`,
+  `precomp evaluate ...` and `precomp active ...` hand their full argument
+  list to `precomp.ml.cli.main(argv) -> int`; `precomp compensate --method
+  surrogate --model DIR` loads the model with
+  `precomp.ml.registry.load_model(DIR)` and, with `--verify-fea` (the default
+  for surrogate and hybrid; needs `--work-dir`), simulates the compensated
+  part once. Without `precomp.ml` those commands exit with status 2 and say so.
 * **Data.** `Part.sample(rng)` / `to_dict()`, `FormingSetup.to_dict()`,
   `simulate_many` (outcomes with the run hash, cache hit and runtime),
   `FormingResult.formed_surface()` / `forming_forces()` and the `Toolpath`
