@@ -15,10 +15,11 @@ pre-deflected against the load:
   converging when ||C df/dp|| < 1.
 
 Forces from a simulation: `forces_on_path` interpolates the tool force
-history of a sparlab_form result at the path's pseudo-time. It takes
-tool_forces.csv's fx, fy, fz to be the force the tool exerts on the sheet
-(fz < 0 while pushing down), so the force on the robot is their negative;
-`sign` states the convention explicitly if the solver's differs.
+history of a sparlab_form result at the path's pseudo-time. sparlab_form's
+tool_forces.csv holds the force the sheet exerts on the tool (fz > 0 while
+the tool pushes down; docs/forming.md, section 3) - the load on the robot -
+which is taken as it is; `sign="on_sheet"` negates a history that holds the
+force on the sheet instead (another solver's convention).
 
 A single constant C is a first-order model: the compliance of a serial robot
 changes with its pose. `CartesianCompliance.from_joint_stiffness` computes C
@@ -129,15 +130,16 @@ class CartesianCompliance:
 
 
 def forces_on_path(path: Toolpath, tool_forces: pd.DataFrame, *, tool: Optional[str] = None,
-                   step: Optional[int] = None, sign: str = "on_sheet") -> np.ndarray:
+                   step: Optional[int] = None, sign: str = "on_tool") -> np.ndarray:
     """Forces on the tool (n, 3) [N] at the points of `path`, from a force history.
 
     `tool_forces` is a FormingResult's tool force table (columns t, tool,
     step, fx, fy, fz); rows are filtered by `tool` and `step` (default: the
     first step, the forming one) and interpolated linearly in the pseudo-time
-    t at the path's `t`. `sign`: "on_sheet" when fx, fy, fz are the force the
-    tool exerts on the sheet (the result is their negative, the load on the
-    robot), "on_tool" when they already are the force on the tool.
+    t at the path's `t`. `sign`: "on_tool" (default, sparlab_form's
+    convention) when fx, fy, fz are the force the sheet exerts on the tool,
+    "on_sheet" when they are the force the tool exerts on the sheet (the
+    result is then their negative, the load on the robot).
     """
     frame = tool_forces
     if tool is not None:

@@ -58,12 +58,13 @@ def test_compliance_from_joint_stiffness():
 def test_forces_on_path_interpolate_the_history_with_the_stated_sign():
     pts = _path()
     path = Toolpath(pts, np.ones(len(pts), int), 0.005)
-    hist = pd.DataFrame({"step": 0, "increment": range(3), "t": [0.0, 0.5, 1.0], "tool": "tool",
-                         "fx": [0.0, 10.0, 20.0], "fy": 0.0, "fz": [-100.0, -300.0, -500.0]})
+    # sparlab_form's convention: the force the sheet exerts on the tool, fz > 0
+    hist = pd.DataFrame({"step": 1, "increment": range(3), "t": [0.0, 0.5, 1.0], "tool": "tool",
+                         "fx": [0.0, -10.0, -20.0], "fy": 0.0, "fz": [100.0, 300.0, 500.0]})
     f = forces_on_path(path, hist, tool="tool")
-    assert np.allclose(f[:, 2], 100.0 + 400.0 * path.t)       # on the tool: minus on-sheet
-    g = forces_on_path(path, hist, sign="on_tool")
-    assert np.allclose(g, -f)
+    assert np.allclose(f[:, 2], 100.0 + 400.0 * path.t)       # taken as it is
+    g = forces_on_path(path, hist.assign(fx=-hist["fx"], fz=-hist["fz"]), sign="on_sheet")
+    assert np.allclose(g, f)                                  # a force on the sheet, negated
     comp = compensate_toolpath(path, CartesianCompliance.diagonal(1e-6, 1e-6, 1e-6), f)
     assert comp.metadata["robot_compensation"]["max_correction_m"] == pytest.approx(
         1e-6 * np.linalg.norm([20.0, 0.0, 500.0]))

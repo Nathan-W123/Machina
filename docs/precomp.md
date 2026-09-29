@@ -59,9 +59,9 @@ height as a fill value, so derivatives stay defined.
 **Signs.** Normals point +z, towards the tool. A signed deviation is positive
 when the formed surface lies on the tool side of the target (the part came
 out too shallow). The wall angle is arctan |grad z|, 0 on a flat region. The
-tool force columns of the solver are taken to be the force the tool exerts on
-the sheet (fz < 0 while pushing down); the robot carries their negative
-([Limitations](#limitations)).
+tool force columns of the solver are the force the sheet exerts on the tool
+(fz > 0 while it pushes down; `docs/forming.md`, section 3), which is the
+load the robot carries.
 
 ## Architecture
 
