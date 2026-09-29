@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from conftest import ML_CREATED_AT
+from precomp._util import PrecompError
 from precomp.materials import get_material
 from precomp.ml import (GBMEnsemble, ProxySimulator, ResidualModel, build_table,
                         evaluate_surrogate, simulate_samples, train_surrogate, transfer_surrogate)
@@ -103,7 +104,11 @@ def shifted_samples(ml_threads):
     return simulate_samples(pts, real, created_at=ML_CREATED_AT, kinds=("uncompensated",))
 
 
-def test_transfer_model_equals_its_base_without_real_data_and_improves_with_some(
+def _err(model, table):
+    return float(np.sqrt(np.mean((model.predict(table.X)[0] - table.y) ** 2)))
+
+
+def test_transfer_model_equals_its_base_until_a_correction_is_validated(
         gbm_surrogate, shifted_samples, ml_features):
     base = gbm_surrogate
     t0 = transfer_surrogate(base, [])
@@ -111,18 +116,43 @@ def test_transfer_model_equals_its_base_without_real_data_and_improves_with_some
     a, b = base.predict_deviation(s.commanded, s.setup), t0.predict_deviation(s.commanded,
                                                                               s.setup)
     assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
-    assert t0.model.n_real == 0
+    assert t0.model.n_real == 0 and not t0.model.accepted
+    # one real part: nothing to validate a correction on, so none is applied
+    t1 = transfer_surrogate(base, shifted_samples[:1], points_per_sample=400)
+    assert t1.model.n_real == 1 and not t1.model.accepted
+    assert "at least 2" in t1.training["transfer"]["validation"]["reason"]
+    assert np.array_equal(t1.predict_deviation(s.commanded, s.setup)[0], a[0])
+    # a real process 30-40 % stronger than the simulated one, four real parts
     real, test = shifted_samples[:4], shifted_samples[4:]
     t4 = transfer_surrogate(base, real, points_per_sample=400, seed=0)
-    assert t4.model.n_real == 4 and t4.training["transfer"]["n_real"] == 4
+    tr = t4.training["transfer"]
+    assert t4.model.n_real == 4 and tr["n_real"] == 4 and tr["n_real_parts"] == 4
+    assert t4.model.accepted and tr["validation"]["lopo_corrected_rms_m"] < \
+        tr["validation"]["lopo_base_rms_m"]
     tb = build_table(test, ml_features, points_per_sample=None)
-    err_base = np.sqrt(np.mean((base.model.predict(tb.X)[0] - tb.y) ** 2))
-    mu, sd = t4.model.predict(tb.X)
-    err_tr = np.sqrt(np.mean((mu - tb.y) ** 2))
+    err_base, err_tr = _err(base.model, tb), _err(t4.model, tb)
     assert err_tr < 0.7 * err_base, (err_tr, err_base)
-    assert np.all(sd >= base.model.predict(tb.X)[1] - 1e-15)  # uncertainty only grows
+    assert np.all(t4.model.predict(tb.X)[1] >= base.model.predict(tb.X)[1] - 1e-15)
     with pytest.raises(Exception, match="no conformal"):
         t4.predict_interval(s.commanded, s.setup, 0.9)        # not calibrated on real data
+    # the provenance names the real data: evaluation refuses it, --family knows it
+    assert set(t4.training["part_ids"]) >= {x.part_id for x in real}
+    assert set(t4.training["families"]) >= {x.family for x in real}
+    with pytest.raises(PrecompError, match="trained, corrected or calibrated"):
+        evaluate_surrogate(t4, real[:1], assess=False)
+
+
+def test_transfer_does_not_make_the_base_worse_when_real_equals_simulation(
+        gbm_surrogate, proxy_split, ml_features):
+    """No shift: the "real" parts are more proxy parts. (The former default,
+    a Bayesian ridge on every feature, made the base 2-5 times worse here.)"""
+    base = gbm_surrogate
+    real = [s for s in proxy_split["test"] if s.kind == "uncompensated"]
+    held = [s for s in proxy_split["test"] if s.part_id not in {r.part_id for r in real[:3]}]
+    tb = build_table(held, ml_features, points_per_sample=500, rng=2)
+    for n in (2, 3):
+        t = transfer_surrogate(base, real[:n], points_per_sample=400, seed=0)
+        assert _err(t.model, tb) <= 1.05 * _err(base.model, tb), t.training["transfer"]
 
 
 def test_residual_model_learns_what_its_prior_misses(proxy_split, shifted_samples, ml_features):

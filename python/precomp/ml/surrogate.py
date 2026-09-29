@@ -474,42 +474,98 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
 
 def transfer_surrogate(base: DeviationSurrogate, real: Sequence[Sample], *,
                        calibration: Optional[Sequence[Sample]] = None,
-                       correction: str = "bayesian_ridge",
+                       correction: str = "linear",
                        points_per_sample: Optional[int] = 2000, seed: int = 0,
-                       mondrian: bool = False) -> DeviationSurrogate:
+                       mondrian: bool = False, **correction_kwargs: Any) -> DeviationSurrogate:
     """A `TransferModel` surrogate: `base`'s model frozen, corrected on the few
-    `real` samples (scans, or a higher-fidelity simulation).
+    `real` samples (scans, or a higher-fidelity simulation), grouped by part.
 
-    The envelope stays the base's (the correction does not widen what the
-    base has seen). Intervals are calibrated only on `calibration` - held-out
-    real parts; without them the transfer surrogate has no intervals rather
-    than intervals calibrated on another data source. With no real samples
-    the model equals the base.
+    The correction is kept only when it beats the base on held-out real parts
+    (leave one real part out; see `TransferModel`) - with fewer than two real
+    parts the surrogate predicts as the base, and says so in
+    `training["transfer"]["validation"]`. The feature envelope stays the
+    base's (the correction does not widen what the base has seen); the setup
+    fields it accepts are the base's and the real parts'. Intervals are
+    calibrated only on `calibration` - held-out real parts; without them the
+    transfer surrogate has no intervals rather than intervals calibrated on
+    another data source. The training record lists the base's and the real
+    samples, parts and families (so evaluation refuses both), and the real
+    calibration ids.
     """
     if base.kind != "point":
         raise TypeError("transfer learning is implemented for point models")
     real = list(real)
-    model = TransferModel(base.model, correction, seed=seed)
-    info = dict(base.training)
-    info.update(transfer={"n_real": 0, "real_sample_ids": [], "correction": correction})
+    cal = list(calibration or [])
+    overlap = {s.part_id for s in real} & {s.part_id for s in cal}
+    if overlap:
+        raise PrecompError(f"calibration parts {sorted(overlap)[:3]} were used for the "
+                           "correction")
+    base_seen_s, base_seen_p = seen_ids(base.training)
+    reused = sorted({s.part_id for s in cal if s.part_id in base_seen_p or
+                     s.sample_id in base_seen_s})
+    if reused:
+        raise PrecompError(f"calibration parts {reused[:3]} were used to train or calibrate "
+                           "the base model")
+    model = TransferModel(base.model, correction, seed=seed, **correction_kwargs)
     if real:
         table = build_table(real, base.features, points_per_sample=points_per_sample,
                             mask=base.domain, rng=seed, prior=model_prior(base.model))
-        model.fit(table.X, table.y, table.groups, feature_names=table.feature_names)
-        info["transfer"].update(n_real=model.n_real,
-                                real_sample_ids=sorted(s.sample_id for s in real),
-                                real_sources=sorted({s.source for s in real}))
-    sources = set(base.training.get("sources", [])) | {s.source for s in real}
-    sur = DeviationSurrogate(model, base.features, data_source=source_label(sources),
+        model.fit(table.X, table.y, table.part_id, feature_names=table.feature_names)
+    info = dict(base.training)
+    info["base"] = {k: base.training.get(k) for k in ("sample_ids_sha256", "n_samples",
+                                                       "n_parts", "families", "data_source")}
+    real_s = sorted(s.sample_id for s in real)
+    real_p = sorted({s.part_id for s in real})
+    info["sample_ids"] = sorted(set(base.training.get("sample_ids", [])) | set(real_s))
+    info["sample_ids_sha256"] = _ids_hash(info["sample_ids"])
+    info["part_ids"] = sorted(set(base.training.get("part_ids", [])) | set(real_p))
+    info["families"] = sorted(set(base.training.get("families", []))
+                              | {s.family for s in real})
+    info["sources"] = sorted(set(base.training.get("sources", [])) | {s.source for s in real})
+    info["calibration_sample_ids"] = sorted(set(base.training.get("calibration_sample_ids", []))
+                                            | {s.sample_id for s in cal})
+    info["calibration_part_ids"] = sorted(set(base.training.get("calibration_part_ids", []))
+                                          | {s.part_id for s in cal})
+    if real:
+        env = dict(base.training.get("setup") or {})
+        if env:
+            info["setup"] = setup_envelope_union(env, setup_envelope([s.setup for s in real]))
+    info["transfer"] = {"correction": correction, "n_real": len(real_s),
+                        "n_real_parts": len(real_p), "real_sample_ids": real_s,
+                        "real_part_ids": real_p,
+                        "real_families": sorted({s.family for s in real}),
+                        "real_sources": sorted({s.source for s in real}),
+                        "calibration_sample_ids": sorted(s.sample_id for s in cal),
+                        "calibration_part_ids": sorted({s.part_id for s in cal}),
+                        "accepted": model.accepted, "validation": model.validation}
+    sur = DeviationSurrogate(model, base.features, data_source=source_label(info["sources"]),
                              training=info, ood=base.ood, domain=base.domain)
-    cal = list(calibration or [])
     if cal:
-        overlap = {s.part_id for s in real} & {s.part_id for s in cal}
-        if overlap:
-            raise PrecompError(f"calibration parts {sorted(overlap)[:3]} were used for the "
-                               "correction")
         sur.calibrator = calibrate(sur, cal, mondrian=mondrian, seed=seed)
     return sur
+
+
+def setup_envelope_union(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str, Any]:
+    """The setup envelope covering both `a` and `b` (see `setup_envelope`)."""
+    fields: Dict[str, Any] = {}
+    for key in set(a.get("fields", {})) | set(b.get("fields", {})):
+        ra, rb = a.get("fields", {}).get(key), b.get("fields", {}).get(key)
+        if ra is None or rb is None:
+            fields[key] = ra or rb
+        elif "values" in ra or "values" in rb:
+            vals = {canonical_json(v): v for v in ra.get("values", []) + rb.get("values", [])}
+            fields[key] = {"values": [vals[k] for k in sorted(vals)]}
+        else:
+            fields[key] = {"min": min(ra["min"], rb["min"]), "max": max(ra["max"], rb["max"])}
+    process = {}
+    for key in set(a.get("process", {})) | set(b.get("process", {})):
+        ra, rb = a.get("process", {}).get(key), b.get("process", {}).get(key)
+        if ra is None or rb is None:
+            process[key] = ra or rb
+        else:
+            process[key] = {"min": min(ra["min"], rb["min"]), "max": max(ra["max"], rb["max"])}
+    return {"fields": fields, "process": process,
+            "materials": sorted(set(a.get("materials", [])) | set(b.get("materials", [])))}
 
 
 __all__ = ["DeviationSurrogate", "train_surrogate", "transfer_surrogate", "calibrate",

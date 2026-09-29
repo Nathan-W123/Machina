@@ -905,103 +905,202 @@ class ResidualModel:
 
 
 class TransferModel:
-    """A frozen simulation-trained base plus a correction fitted on few real samples.
+    """A frozen simulation-trained base plus a correction fitted on a few real parts.
 
-    correction "bayesian_ridge" (default): Bayesian ridge regression of the
-    residual y - base mean on the standardised [features, base mean, base
-    std] (columns constant over the real data are dropped - with a handful of
-    parts the process and material columns carry no information); its
-    predictive std (which includes the fitted noise) combines with the base
-    std in quadrature. "gbm": a small, heavily regularised gradient-boosting
-    correction on the same inputs, whose uncertainty is its in-sample residual
-    std (optimistic; calibrate conformally on held-out real parts).
+    A handful of real parts supports only a low-dimensional correction. (An
+    earlier default regressed the residual on the ~60 standardised features:
+    from one to three real parts it made the base two to five times worse on
+    proxy data, also when the "real" data equalled the simulation.)
 
-    `n_real` is the number of real samples (groups) seen. With zero real
-    samples the model IS the base model: identical mean and std.
+    correction :
+      "linear" (default) - y = a + (1 + b) mu, mu the base mean: a relative
+          change of the springback magnitude, b ~ N(0, prior_gain^2), and an
+          offset a ~ N(0, (prior_offset s)^2), s the RMS base prediction over
+          the real parts;
+      "gain" - y = (1 + b) mu, the gain alone;
+      "gbm" - a small, heavily regularised gradient-boosting correction of
+          y - mu on [features, base mean, base std], whose std is its
+          in-sample residual std (optimistic).
+    The linear corrections are Bayesian regressions with a FIXED prior in
+    which every real part weighs one observation (its nodes are not
+    independent: they share weight 1), the noise variance estimated from the
+    part-weighted residuals; the predictive std combines the base std and
+    the parameter uncertainty in quadrature.
+
+    Validation: a correction is kept only if its leave-one-real-part-out
+    error - fitted without a part, scored on it, for every part - is below
+    the base's on the same parts. Otherwise, and always with fewer than two
+    real parts (nothing to validate on), the model predicts exactly as the
+    base; `accepted` and `validation` say which and why. `n_real` is the
+    number of real parts (groups) seen; with none the model IS the base.
+
+    On proxy data (a GBM base, ten held-out parts, 1-4 "real" parts in three
+    draws each): with no shift, or 50 um noise, the validated "linear"
+    correction was never accepted (error = the base's), while "gain" was
+    accepted - wrongly - in 2 of 12 cases (+21-38 % error); with the rim and
+    curvature 30-40 % stronger (base 0.18 mm) it cut the error to
+    0.09-0.15 mm from two parts on; with one part nothing changes.
     """
 
     kind = "point"
+    CORRECTIONS = ("gain", "linear", "gbm")
 
-    def __init__(self, base: DeviationModel, correction: str = "bayesian_ridge", *,
-                 seed: int = 0):
-        if correction not in ("bayesian_ridge", "gbm"):
-            raise ValueError("correction must be 'bayesian_ridge' or 'gbm'")
+    def __init__(self, base: DeviationModel, correction: str = "linear", *, seed: int = 0,
+                 prior_gain: float = 0.5, prior_offset: float = 0.5, min_parts: int = 2):
+        if correction not in self.CORRECTIONS:
+            raise ValueError(f"correction must be one of {self.CORRECTIONS}, got {correction!r} "
+                             "(the former 'bayesian_ridge' on every feature extrapolated "
+                             "wildly from a few parts and was removed)")
+        if not (prior_gain > 0 and prior_offset > 0):
+            raise ValueError("prior_gain and prior_offset must be > 0")
+        if int(min_parts) < 2:
+            raise ValueError("min_parts must be >= 2 (one part cannot be validated)")
         self.base = base
         self.correction = correction
         self.seed = int(seed)
+        self.prior_gain = float(prior_gain)
+        self.prior_offset = float(prior_offset)
+        self.min_parts = int(min_parts)
         self.n_real = 0
         self.real_groups: List[str] = []
+        self.accepted = False
+        self.validation: Dict[str, Any] = {"reason": "no real parts"}
+        self.theta: Optional[np.ndarray] = None
+        self.cov: Optional[np.ndarray] = None
         self.estimator: Any = None
-        self.z_mean = self.z_std = None
-        self.keep: Optional[np.ndarray] = None
         self.resid_std = 0.0
 
     @property
     def feature_names(self) -> List[str]:
         return list(getattr(self.base, "feature_names", []))
 
-    def _inputs(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        mu, sd = self.base.predict(X)
-        Z = np.column_stack([X, mu, sd])
-        return Z, mu, sd
+    # -- the corrections ------------------------------------------------------
+    def _design(self, mu: np.ndarray) -> np.ndarray:
+        return mu[:, None] if self.correction == "gain" else np.column_stack(
+            [np.ones_like(mu), mu])
 
+    def _fit_linear(self, mu: np.ndarray, y: np.ndarray, groups: np.ndarray
+                    ) -> Tuple[np.ndarray, np.ndarray]:
+        uniq, inv = np.unique(groups, return_inverse=True)
+        k = uniq.size
+        w = 1.0 / np.bincount(inv)[inv]                      # each part weighs 1
+        r = y - mu
+        s = float(np.sqrt(np.sum(w * mu * mu) / k)) or 1.0
+        Phi = self._design(mu)
+        prec = np.array([1.0 / self.prior_gain ** 2]) if self.correction == "gain" else \
+            np.array([1.0 / (self.prior_offset * s) ** 2, 1.0 / self.prior_gain ** 2])
+        Lam = np.diag(prec)
+        PtW = (Phi * w[:, None]).T
+        s2 = max(float(np.sum(w * r * r)) / k, (1e-3 * s) ** 2)
+        for _ in range(5):                                   # noise variance and theta
+            A = PtW @ Phi / s2 + Lam
+            theta = np.linalg.solve(A, PtW @ r / s2)
+            s2 = max(float(np.sum(w * (r - Phi @ theta) ** 2)) / k, (1e-3 * s) ** 2)
+        A = PtW @ Phi / s2 + Lam
+        theta = np.linalg.solve(A, PtW @ r / s2)
+        return theta, np.linalg.inv(A)
+
+    def _fit_gbm(self, X: np.ndarray, mu: np.ndarray, sd: np.ndarray, y: np.ndarray):
+        est = HistGradientBoostingRegressor(max_iter=60, learning_rate=0.05, max_depth=3,
+                                            min_samples_leaf=200, l2_regularization=10.0,
+                                            early_stopping=False, random_state=self.seed)
+        Z = np.column_stack([X, mu, sd])
+        est.fit(Z, y - mu)
+        return est, float(np.std(y - mu - est.predict(Z)))
+
+    def _fit_correction(self, X: np.ndarray, mu: np.ndarray, sd: np.ndarray, y: np.ndarray,
+                        groups: np.ndarray) -> Any:
+        if self.correction == "gbm":
+            return self._fit_gbm(X, mu, sd, y)
+        return self._fit_linear(mu, y, groups)
+
+    def _apply(self, fitted: Any, X: np.ndarray, mu: np.ndarray, sd: np.ndarray
+               ) -> Tuple[np.ndarray, np.ndarray]:
+        if self.correction == "gbm":
+            est, rs = fitted
+            c = est.predict(np.column_stack([X, mu, sd]))
+            return mu + c, np.sqrt(sd * sd + rs * rs)
+        theta, cov = fitted
+        Phi = self._design(mu)
+        var = np.einsum("ij,jk,ik->i", Phi, cov, Phi)
+        return mu + Phi @ theta, np.sqrt(sd * sd + np.maximum(var, 0.0))
+
+    # -- protocol -------------------------------------------------------------
     def fit(self, X: np.ndarray, y: np.ndarray, groups: np.ndarray, *,
             feature_names: Optional[Sequence[str]] = None) -> "TransferModel":
+        """`groups`: the real PART of every row (the unit of validation)."""
         y = np.asarray(y, dtype=float).ravel()
+        self.theta = self.cov = self.estimator = None
+        self.accepted = False
         if len(y) == 0:
-            self.n_real, self.real_groups, self.estimator = 0, [], None
+            self.n_real, self.real_groups = 0, []
+            self.validation = {"reason": "no real parts"}
             return self
         X, y, groups = _check_table(X, y, groups)
         _check_names(self.base, X)
-        self.real_groups = sorted(str(g) for g in np.unique(groups))
+        groups = np.asarray(groups).astype(str)
+        self.real_groups = sorted(np.unique(groups).tolist())
         self.n_real = len(self.real_groups)
-        Z, mu, _ = self._inputs(X)
-        r = y - mu
-        zm, zs = _standardiser(Z)
-        sd = Z.std(axis=0)
-        self.keep = sd > 1e-12 * np.maximum(np.abs(zm), 1.0)
-        self.z_mean, self.z_std = zm, zs
-        Zs = ((Z - zm) / zs)[:, self.keep]
-        if self.correction == "bayesian_ridge":
-            from sklearn.linear_model import BayesianRidge
-            est = BayesianRidge()
-            est.fit(Zs, r)
-        else:
-            est = HistGradientBoostingRegressor(max_iter=60, learning_rate=0.05, max_depth=3,
-                                                min_samples_leaf=200, l2_regularization=10.0,
-                                                early_stopping=False, random_state=self.seed)
-            est.fit(Zs, r)
-            self.resid_std = float(np.std(r - est.predict(Zs)))
-        self.estimator = est
+        mu, sd = self.base.predict(X)
+        rms = lambda a, b: float(np.sqrt(np.mean((a - b) ** 2)))  # noqa: E731
+        if self.n_real < self.min_parts:
+            self.validation = {"reason": f"{self.n_real} real part(s): at least "
+                               f"{self.min_parts} are needed to validate a correction, so "
+                               "the model is the base", "n_parts": self.n_real}
+            return self
+        per = []
+        for g in self.real_groups:
+            out = groups == g
+            fitted = self._fit_correction(X[~out], mu[~out], sd[~out], y[~out], groups[~out])
+            c, _ = self._apply(fitted, X[out], mu[out], sd[out])
+            per.append({"part": g, "base_rms_m": rms(mu[out], y[out]),
+                        "corrected_rms_m": rms(c, y[out])})
+        b = float(np.mean([p["base_rms_m"] for p in per]))
+        c = float(np.mean([p["corrected_rms_m"] for p in per]))
+        self.accepted = c < b
+        self.validation = {"reason": "leave-one-real-part-out error "
+                           + ("below" if self.accepted else "not below") + " the base's",
+                           "n_parts": self.n_real, "lopo_base_rms_m": b,
+                           "lopo_corrected_rms_m": c, "per_part": per}
+        if self.accepted:
+            fitted = self._fit_correction(X, mu, sd, y, groups)
+            if self.correction == "gbm":
+                self.estimator, self.resid_std = fitted
+            else:
+                self.theta, self.cov = fitted
+                self.validation["theta"] = [float(t) for t in self.theta]
         return self
 
     def predict(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        if self.n_real == 0 or self.estimator is None:
+        if not self.accepted:
             return self.base.predict(X)
         (X,) = _check_table(X)
-        Z, mu, sd = self._inputs(X)
-        Zs = ((Z - self.z_mean) / self.z_std)[:, self.keep]
-        if self.correction == "bayesian_ridge":
-            c, cs = self.estimator.predict(Zs, return_std=True)
-        else:
-            c = self.estimator.predict(Zs)
-            cs = np.full_like(c, self.resid_std)
-        return mu + c, np.sqrt(sd * sd + cs * cs)
+        mu, sd = self.base.predict(X)
+        fitted = (self.estimator, self.resid_std) if self.correction == "gbm" else \
+            (self.theta, self.cov)
+        return self._apply(fitted, X, mu, sd)
 
     def to_state(self) -> Dict[str, Any]:
         return {"class": "TransferModel", "base": self.base.to_state(),
-                "correction": self.correction, "seed": self.seed, "n_real": self.n_real,
-                "real_groups": list(self.real_groups), "estimator": self.estimator,
-                "z_mean": self.z_mean, "z_std": self.z_std, "keep": self.keep,
-                "resid_std": self.resid_std}
+                "correction": self.correction, "seed": self.seed,
+                "prior_gain": self.prior_gain, "prior_offset": self.prior_offset,
+                "min_parts": self.min_parts, "n_real": self.n_real,
+                "real_groups": list(self.real_groups), "accepted": self.accepted,
+                "validation": self.validation, "theta": self.theta, "cov": self.cov,
+                "estimator": self.estimator, "resid_std": self.resid_std}
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> "TransferModel":
-        m = cls(model_from_state(state["base"]), state["correction"], seed=state["seed"])
+        m = cls(model_from_state(state["base"]), state["correction"], seed=state["seed"],
+                prior_gain=state["prior_gain"], prior_offset=state["prior_offset"],
+                min_parts=state["min_parts"])
         m.n_real = int(state["n_real"])
         m.real_groups = list(state["real_groups"])
+        m.accepted = bool(state["accepted"])
+        m.validation = dict(state["validation"])
+        m.theta = None if state["theta"] is None else np.asarray(state["theta"])
+        m.cov = None if state["cov"] is None else np.asarray(state["cov"])
         m.estimator = state["estimator"]
-        m.z_mean, m.z_std, m.keep = state["z_mean"], state["z_std"], state["keep"]
         m.resid_std = float(state["resid_std"])
         return m
 

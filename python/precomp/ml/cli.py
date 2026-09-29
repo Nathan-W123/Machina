@@ -173,9 +173,11 @@ def cmd_train(args: argparse.Namespace) -> int:
             raise ValueError("--model transfer needs --base MODEL_DIR (the simulation-trained "
                              "bundle)")
         base = load_model(args.base)
+        extra = {k: v for k, v in params.items() if k != "correction"}
         sur = transfer_surrogate(base, ds.samples(train_ids), calibration=ds.samples(cal_ids),
-                                 correction=params.get("correction", "bayesian_ridge"),
-                                 points_per_sample=args.points_per_sample, seed=args.seed)
+                                 correction=params.get("correction", "linear"),
+                                 points_per_sample=args.points_per_sample, seed=args.seed,
+                                 **extra)
     else:
         model = _make_model(args.model, params, args)
         sur = train_surrogate(model, ds.samples(train_ids), calibration=ds.samples(cal_ids),
