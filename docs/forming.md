@@ -116,7 +116,7 @@ kappa_T A (P - e e^T)` in slip (`P = I - n n^T`, `e = F_tr / |F_tr|`) -
 without the transport and curvature terms and the slip force's dependence
 on the gap, `mu kappa A e n^T`. The tangent then takes a Cholesky
 factorisation, but Newton converges only linearly where nodes slip: ironing
-an elastic block with a flat punch took 47 iterations instead of 31, an
+an elastic block with a flat punch took 48 iterations instead of 31, an
 elastoplastic block with a sphere 3 063 instead of 392. (The symmetric part
 of the exact tangent is no substitute: in the plane of `n` and `e` a
 slipping node's block is `kappa A [[1, mu/2], [mu/2, 0]]`, indefinite, and
@@ -321,8 +321,8 @@ build, with `-dirty` for uncommitted changes.
 | Trajectory: interpolation, clamping, velocity, monotone and random lookups, CSV parsing and its errors (line numbers) | exact |
 | Contact tangent vs central differences (step 1e-9 m) of the contact residual at fixed history (sphere, plane, cylinder; frictionless, stick, slip, new contact; 13 to 215 nodes in contact; a 2-D circle in slip) | largest error relative to the largest tangent entry `7.2e-10` (sphere `7.0e-10`, plane `5.4e-10`, cylinder `7.2e-10`, 2-D `1.7e-10`; tolerance `1e-6`) |
 | Flat punch on an elastic column (one Hex8 in section): force vs `E A delta / H / (1 + E/(kappa H))`, the penalty in series | `4.5e-12`, `1.9e-11`, `3.6e-10` at `s` = 10, 100, 1000 (tolerance `1e-9`); against rigid contact `1.96e-2`, `2.0e-3`, `2.0e-4` - exactly `1/s` |
-| Ironing, `mu = 0.2`: sphere (R = 20 mm) and flat punch pressed into an elastic block and dragged 10 mm | in steady sliding every contact node slips (9 and 231 nodes); friction load / normal load = `mu` to `7e-16`; flat punch `-F_x / F_z = 0.2` (tested to `1e-6`); sphere `0.19986`, its contact normals tilted |
-| The symmetric friction tangent (`friction_tangent: "symmetric"`), at the tangent test's states and on the flat-punch ironing | the same forces; symmetric node blocks, positive semi-definite for the plane in stick and slip; the ironing completes without a cut (47 iterations, the exact tangent 31) at the same tool force to `1e-8` |
+| Ironing, `mu = 0.2`: a flat punch pressed into an elastic block and dragged 10 mm at 30 degrees to x, a sphere (R = 20 mm) dragged along x | in steady sliding every contact node slips (231 and 9 nodes); flat punch: the friction resultant lies along the drag to `7e-16` and `\|F_T\| = mu F_z` to `2e-16`, every node's friction force along the drag to `3e-15` (tested to `1e-6`: x and y in the drag's proportion, which a friction force not following the slip would miss); sphere: `-F_x / F_z = 0.19986`, `mu` to `6.9e-4` (tested to `3e-3`), its contact normals tilted. (The friction load being `mu` times the normal load is an identity of the return map once every node slips, not a check.) |
+| The symmetric friction tangent (`friction_tangent: "symmetric"`), at the tangent test's states and on the flat-punch ironing | the same forces; symmetric node blocks, positive semi-definite for the plane in stick and slip; the ironing completes without a cut (48 iterations, the exact tangent 31) at the same tool force to `1e-8` |
 | Double-sided pinch: two spheres on the two faces of a clamped sheet, paths mirrored about its mid-plane, pressed and moved together with friction | equal and opposite normal forces and equal friction forces to `1e-6`; the reactions' resultant equals the total force on the tools to `1e-6` |
 | Step windows with a gap: a sphere active in both steps, its path moving in between (and a restart from the first step's state) | refused, naming the steps and the 2.4 mm jump; held over the gap, or taken away by a release in between: accepted; a tool that becomes active in contact is warned about |
 | Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12, one iteration per increment |

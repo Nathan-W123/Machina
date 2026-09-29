@@ -530,15 +530,22 @@ TEST_CASE("a tool that grazes the surface from the reference state converges wit
 TEST_CASE("a tool dragged along a block with friction slides at mu times its normal force",
           "[forming]") {
   // An elastic block, its base clamped, pressed by a tool that is then
-  // dragged along x. Once every node in contact slips, each carries the
-  // Coulomb force mu p_N: the tool's friction load is mu times its normal
-  // load. For a flat punch every node's normal is the same and its slip
-  // lies along the drag, so the resultants obey F_x = mu F_z too; a sphere's
-  // resultants differ from that by its contact normals' tilt (ploughing).
+  // dragged. Once every node in contact slips, each carries the Coulomb
+  // force mu p_N along its slip (that the tool's friction load is then mu
+  // times its normal load is an identity of the return map, not a check).
+  // A flat punch is dragged obliquely, at 30 degrees to x: every node's
+  // normal is the same and, in steady sliding, its slip is the drag, so
+  // each node's friction force and the resultant must point along the drag
+  // - x and y in its proportion, which a friction force that did not follow
+  // the slip would miss - with |F_T| = mu F_z. A sphere is dragged along x:
+  // its resultants differ from F_x = mu F_z by its contact normals' tilt
+  // (ploughing), 7e-4 on this mesh.
   const IsotropicMaterial m = default_material();
   const Scalar mu = 0.2;
+  const Scalar pi = std::acos(-1.0);
   for (const RigidTool::Shape shape : {RigidTool::Shape::Sphere, RigidTool::Shape::Plane}) {
     INFO(to_string(shape));
+    const bool plane = shape == RigidTool::Shape::Plane;
     std::vector<DisplacementConstraint> bcs;
     DisplacementConstraint base;
     base.region = box(-kInf, kInf, -kInf, kInf, -kInf, -0.004, "base");
@@ -556,11 +563,13 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
     tool.normal = Vector3(0, 0, -1);
     tool.friction = mu;
     tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
-    const Scalar depth = shape == RigidTool::Shape::Sphere ? 1.0e-4 : 2.0e-6;
-    const Scalar lift = shape == RigidTool::Shape::Sphere ? tool.radius : 0.0;
-    tool.trajectory = path({0.0, 1.0, 2.0}, {Vector3(0.005, 0.005, lift + 1.0e-4),
-                                             Vector3(0.005, 0.005, lift - depth),
-                                             Vector3(0.015, 0.005, lift - depth)});
+    const Scalar depth = plane ? 2.0e-6 : 1.0e-4;
+    const Scalar lift = plane ? 0.0 : tool.radius;
+    const Vector3 drag = plane ? Vector3(std::cos(pi / 6.0), std::sin(pi / 6.0), 0.0)
+                               : Vector3(1.0, 0.0, 0.0);
+    const Vector3 pressed(0.005, 0.005, lift - depth);
+    tool.trajectory = path({0.0, 1.0, 2.0}, {Vector3(0.005, 0.005, lift + 1.0e-4), pressed,
+                                             pressed + 0.01 * drag});
     FormingOptions o;
     o.residual_tolerance = 1.0e-10;
     o.displacement_tolerance = 1.0e-10;
@@ -574,22 +583,32 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
     REQUIRE(r.completed);
     const FormingIncrement& last = r.steps.back().increments.back();
     const ToolRecord& t = last.tools.at(0);
+    const Vector3 ft(t.force.x(), t.force.y(), 0.0);  // the friction resultant on the tool
+    // Each node's friction force (on the node) against the drag direction.
+    Scalar direction = 0.0;
+    const std::map<Index, ToolNodeHistory>& history = r.final_state.friction.at(0);
+    for (const auto& [node, h] : history) {
+      direction = std::max(direction, (h.force.normalized() - drag).norm());
+    }
     INFO("F = " << t.force.transpose() << " N, " << t.active_nodes << " node(s), "
                 << t.slipping_nodes << " slipping");
     log::info("ironing, ", to_string(shape), ": ", t.active_nodes, " node(s) in contact, ",
-              t.slipping_nodes, " slipping; friction load / (mu normal load) - 1 = ",
-              t.friction_load / (mu * t.normal_load) - 1.0, "; -F_x / F_z = ",
-              -t.force.x() / t.force.z());
+              t.slipping_nodes, " slipping; |F_T| / (mu F_z) - 1 = ",
+              ft.norm() / (mu * t.force.z()) - 1.0, ", F_T off the drag by ",
+              (ft.normalized() + drag).norm(), ", the nodes' friction forces by up to ",
+              direction);
     CHECK(t.active_nodes >= 4);
     CHECK(t.slipping_nodes == t.active_nodes);
-    CHECK(t.friction_load == Approx(mu * t.normal_load).epsilon(1.0e-6));
-    CHECK(t.force.z() > 0.0);  // the block pushes the tool up
-    CHECK(t.force.x() < 0.0);  // and resists the drag
-    if (shape == RigidTool::Shape::Plane) {
-      CHECK(-t.force.x() == Approx(mu * t.force.z()).epsilon(1.0e-6));
-      CHECK(std::abs(t.force.y()) < 1.0e-6 * t.force.z());
+    CHECK(static_cast<int>(history.size()) == t.active_nodes);
+    CHECK(t.force.z() > 0.0);    // the block pushes the tool up
+    CHECK(ft.dot(drag) < 0.0);   // and resists the drag
+    if (plane) {
+      CHECK(ft.norm() == Approx(mu * t.force.z()).epsilon(1.0e-6));
+      CHECK((ft.normalized() + drag).norm() < 1.0e-6);
+      CHECK(direction < 1.0e-6);
     } else {
-      CHECK(-t.force.x() / t.force.z() == Approx(mu).epsilon(0.1));
+      CHECK(-t.force.x() / t.force.z() == Approx(mu).epsilon(3.0e-3));
+      CHECK(std::abs(t.force.y()) < 1.0e-6 * t.force.z());
     }
     // The symmetric friction tangent reaches the same state (Newton's
     // method converges more slowly with it, from contact on).
