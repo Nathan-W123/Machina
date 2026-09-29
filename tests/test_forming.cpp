@@ -833,6 +833,9 @@ TEST_CASE("a release onto 3-2-1 supports is invariant under a rigid motion of th
     const FormingResult moved = FormingAnalysis(model, assembler, o).run();
     REQUIRE(moved.completed);
     CHECK((moved.final_state.displacement - target).cwiseAbs().maxCoeff() < 1.0e-12);
+    // The body follows its determinate supports from the first iterate
+    // (the rigid predictor): one iteration per increment.
+    CHECK(moved.total_iterations == moved.total_increments);
   }
 
   // A plastically bent strip (finite kinematics), released from its clamp
@@ -896,6 +899,16 @@ TEST_CASE("a release onto 3-2-1 supports is invariant under a rigid motion of th
     CHECK(err < 1.0e-14);
     CHECK(moved.steps[0].max_plastic_strain ==
           Approx(held.steps[0].max_plastic_strain).epsilon(1e-12));
+    // Moved rigidly with its supports at every increment, the body springs
+    // back as the held one does, without a cut (moving the three support
+    // nodes alone distorted the elements around them: 40 increments, 765
+    // iterations and 2 cuts for the translation, 175 iterations with the
+    // rotation, against 41 held).
+    log::info("release with the supports moved rigidly (rotation ", angle, " rad): ",
+              moved.steps[0].iterations, " iterations, ", moved.steps[0].cuts,
+              " cuts (held: ", held.steps[0].iterations, ")");
+    CHECK(moved.steps[0].cuts == 0);
+    CHECK(moved.steps[0].iterations <= 2 * held.steps[0].iterations);
   }
 }
 

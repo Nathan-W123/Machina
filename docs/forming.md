@@ -145,7 +145,14 @@ so no corner of a path is cut. A `release` step runs `s` from 0 to 1 in
 the next grow by 1.5, up to the step's cap.
 
 Newton's method starts each increment from the converged state with the
-prescribed DOFs at their new values and the tools at their new positions,
+prescribed DOFs at their new values and the tools at their new positions -
+and, when the prescribed DOFs move as a rigid motion of the body (always so
+for statically determinate supports, which cannot deform it), with the free
+DOFs moved by that motion too, linearised about the current configuration:
+moving the three nodes of 3-2-1 supports alone distorts the elements around
+them, and on a plastic part the first iterates yield spuriously (a released
+strip whose supports were translated by 3.7 mm took 40 increments, 765
+iterations and 2 cuts without it, 10 and 41 with it, as held in place) -
 with the consistent tangent and the energy line search of the non-linear
 static analysis (full step when `|g(1)| <= 0.8 |g(0)|`, else regula falsi;
 an inverted element or a node through a tool halves the step). The
@@ -312,8 +319,8 @@ build, with `-dirty` for uncommitted changes.
 | The symmetric friction tangent (`friction_tangent: "symmetric"`), at the tangent test's states and on the flat-punch ironing | the same forces; symmetric node blocks, positive semi-definite for the plane in stick and slip; the ironing completes without a cut (47 iterations, the exact tangent 31) at the same tool force to `1e-8` |
 | Double-sided pinch: two spheres on the two faces of a clamped sheet, paths mirrored about its mid-plane, pressed and moved together with friction | equal and opposite normal forces and equal friction forces to `1e-6`; the reactions' resultant equals the total force on the tools to `1e-6` |
 | Step windows with a gap: a sphere active in both steps, its path moving in between (and a restart from the first step's state) | refused, naming the steps and the 2.4 mm jump; held over the gap, or taken away by a release in between: accepted; a tool that becomes active in contact is warned about |
-| Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12 |
-| Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `5.2e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged |
+| Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12, one iteration per increment |
+| Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `6.3e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged; 41 iterations and no cut, as held (without the rigid predictor 765 iterations and 2 cuts, and 175) |
 | Springback of an elastic-perfectly plastic beam (L = 8 h) bent by end displacements to `3 k_y` (plane stress Q4, small strain), released onto 3-2-1: curvature change of the central half vs the exact elastic unloading `M(3 k_y)/(EI) = 1.4444 k_y` | `1.4565`, `1.4482`, `1.4453 k_y` with 4, 8, 16 Q4 through the depth: errors `8.4e-3`, `2.6e-3`, `5.6e-4` (order 1.7 then 2.2); support reactions below `1e-6` of the reference force |
 | A sphere grazing the surface exactly at the end of the first increment, from the reference state (a round-off reference force) | converges without a cut, the first increment in at most 3 iterations |
 | SPIF smoke case (section 5) | completes; the centre sinks 1.65 mm (tool tip at 2 mm), the release moves the part by up to 0.18 mm; tool force positive in z at every increment in contact |

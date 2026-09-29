@@ -426,6 +426,58 @@ Scalar max_nodal(const Vector& u, int dim) {
   return top;
 }
 
+/// The predictor of an increment whose prescribed DOFs move by `dp` from
+/// the converged state `u`: when `dp` is a rigid motion of the body -
+/// always so for statically determinate supports, which cannot deform it -
+/// the free DOFs of `trial` follow that motion (linearised about the
+/// current configuration) instead of staying where they were, which would
+/// distort the elements around each moved support node. False (and
+/// `trial` untouched) when `dp` vanishes or deforms the body.
+bool predict_rigid_motion(const Mesh& mesh, const Vector& u, const Partition& p, const Vector& dp,
+                          Vector& trial) {
+  const Scalar size = dp.norm();
+  if (!(size > 0.0)) return false;
+  const int dim = mesh.dim();
+  const int modes = dim == 3 ? 6 : 3;
+  const BoundingBox box = mesh.bounding_box();
+  const Vector3 centre = 0.5 * (box.lower + box.upper);
+  const Scalar extent = std::max(box.extent().norm(), 1.0e-300);
+  const auto position = [&](Index node) {
+    Vector3 x = mesh.node(node);
+    for (int k = 0; k < dim; ++k) x(k) += u(node * dim + k);
+    return Vector3((x - centre) / extent);
+  };
+  // dp_d = (t + w x r_node)_comp, the rotation scaled by the extent.
+  const auto row = [&](Index dof, Eigen::Ref<Vector> out) {
+    const Index node = dof / dim;
+    const auto comp = static_cast<int>(dof % dim);
+    const Vector3 r = position(node);
+    out.setZero();
+    out(comp) = 1.0;
+    if (dim == 2) {
+      out(2) = comp == 0 ? -r.y() : r.x();
+    } else {
+      for (int j = 0; j < 3; ++j) out(3 + j) = Vector3::Unit(j).cross(r)(comp);
+    }
+  };
+  Matrix m(static_cast<Eigen::Index>(p.fixed.size()), modes);
+  for (std::size_t i = 0; i < p.fixed.size(); ++i) {
+    Vector r(modes);
+    row(p.fixed[i], r);
+    m.row(static_cast<Eigen::Index>(i)) = r.transpose();
+  }
+  const Eigen::ColPivHouseholderQR<Matrix> qr(m);
+  if (qr.rank() < modes) return false;
+  const Vector motion = qr.solve(dp);
+  if (!motion.allFinite() || (m * motion - dp).norm() > 1.0e-8 * size) return false;
+  Vector r(modes);
+  for (Index dof : p.free) {
+    row(dof, r);
+    trial(dof) += r.dot(motion);
+  }
+  return true;
+}
+
 }  // namespace
 
 bool forming_suitesparse_available() { return kHaveSuiteSparse; }
@@ -860,9 +912,13 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
                             Vector& state) -> bool {
       const Scalar ramp = 1.0 - s1;
       Vector trial = u;
+      Vector dp(nfix);
       for (Eigen::Index i = 0; i < nfix; ++i) {
-        trial(part.fixed[static_cast<std::size_t>(i)]) = p_start(i) + s1 * (p_end(i) - p_start(i));
+        const Index d = part.fixed[static_cast<std::size_t>(i)];
+        trial(d) = p_start(i) + s1 * (p_end(i) - p_start(i));
+        dp(i) = trial(d) - u(d);
       }
+      predict_rigid_motion(mesh, u, part, dp, trial);
       Scalar tool_travel = 0.0;
       for (std::size_t k = 0; k < active.size(); ++k) {
         if (!active[k]) continue;

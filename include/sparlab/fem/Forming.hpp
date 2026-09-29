@@ -58,8 +58,12 @@
 ///
 /// **Newton's method** in each increment starts from the converged state
 /// with the prescribed DOFs at their new values and the tools at their new
-/// positions, and takes the consistent tangent (elements, contact and, with
-/// friction, its non-symmetric part) with a line search on the energy - the
+/// positions - when the prescribed DOFs move as a rigid motion of the body
+/// (always so for statically determinate supports), the free DOFs move by
+/// it too, linearised about the current configuration, rather than leave
+/// the elements around the moved support nodes distorted - and takes the
+/// consistent tangent (elements, contact and, with friction, its
+/// non-symmetric part) with a line search on the energy - the
 /// non-linear static analysis's: full step when \f$|g(1)| \le 0.8|g(0)|\f$,
 /// else regula falsi, an element inversion or a node through a tool halving
 /// the step; the full step's evaluation, tangent included, is kept as the
