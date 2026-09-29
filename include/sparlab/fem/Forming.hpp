@@ -40,6 +40,11 @@
 /// converged residual, within tolerance of zero; after a change it holds
 /// the reactions of released constraints and the forces of removed tools,
 /// which the step thereby ramps out linearly - the springback of a release.
+/// A tool active in two consecutive steps must start the second where it
+/// ended the first (refused otherwise: a gap between their windows over
+/// which its path moves would make it jump, and the ramp would hide the
+/// penetration). A tool that becomes active in contact has the force of its
+/// penetration ramped in over the step, which is warned about.
 ///
 /// **Increments.** A `form` step advances the pseudo-time over its window
 /// (by default the union of its active tools' trajectories, starting no
@@ -137,7 +142,10 @@ struct FormingStep {
   /// The pseudo-time window [t_begin, t_end] [s]. Unset (both NaN): a form
   /// step takes the union of its tools' trajectory spans, starting no
   /// earlier than the previous step ended; a release step (or a form step
-  /// without tools) the unit interval after the previous step.
+  /// without tools) the unit interval after the previous step. A window may
+  /// start after the previous step ended, but a tool active in both steps
+  /// must then be where it was (its trajectory constant over the gap):
+  /// otherwise it would jump over the part of its path between.
   Scalar t_begin = std::numeric_limits<Scalar>::quiet_NaN();
   Scalar t_end = std::numeric_limits<Scalar>::quiet_NaN();
   /// The longest travel of an active tool in one increment [m]; 0: half the
@@ -188,6 +196,10 @@ struct AnalysisState {
   /// The running largest reference force of the analysis [N] (0 at the
   /// start of an analysis).
   Scalar reference_force = 0.0;
+  /// Per tool, 1 when it was active in the step that produced this state
+  /// (empty: none was). A restart checks against it that a tool active in
+  /// its first step does not jump (FormingStep::t_begin).
+  std::vector<char> tools_active;
 };
 
 /// One active tool at a converged increment.
@@ -286,14 +298,17 @@ class FormingAnalysis {
   /// \throws ConfigError for invalid options: no step, an unknown tool name,
   ///         a release step keeping a tool the step before it did not have
   ///         active, a time window that is empty or starts before the
-  ///         previous step ended, constraints that leave a rigid-body motion
-  ///         free, or a tool whose surface selects no face.
+  ///         previous step ended, a tool active in two consecutive steps
+  ///         that would jump between them, constraints that leave a
+  ///         rigid-body motion free, or a tool whose surface selects no face.
   FormingAnalysis(const FemModel& model, const Assembler& assembler, FormingOptions options);
 
   /// Run every step from the reference state (u = 0, virgin history).
   FormingResult run();
   /// Run every step from `start` (a restart).
-  /// \throws ConfigError when `start` does not match the model.
+  /// \throws ConfigError when `start` does not match the model, or a tool
+  ///         active in the step that produced it and in the first step
+  ///         would jump between them.
   FormingResult run(const AnalysisState& start);
 
   const FormingOptions& options() const { return options_; }
@@ -305,6 +320,13 @@ class FormingAnalysis {
   /// The steps' windows when the step before the first ended at
   /// `previous_end` (-inf: nothing before it).
   std::vector<std::pair<Scalar, Scalar>> resolve_windows(Scalar previous_end) const;
+  /// Refuse a tool active in two consecutive steps whose position at the
+  /// start of the second differs from its position at the end of the first
+  /// by more than `tolerance` [m]; `previous` are the tools active before
+  /// the first step, which ended at `previous_end`.
+  void check_tool_continuity(const std::vector<std::pair<Scalar, Scalar>>& windows,
+                             std::vector<char> previous, Scalar previous_end,
+                             Scalar tolerance) const;
 
   const FemModel& model_;
   const Assembler& assembler_;

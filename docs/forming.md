@@ -56,6 +56,19 @@ of the released constraints and the forces of the removed tools, which the
 step ramps out linearly - the springback of a release. The ramped imbalance
 is a dead load: fixed in space while the part moves.
 
+A tool active in two consecutive steps must start the second where it ended
+the first. A window that starts later than the previous step ended is
+refused (before the run, naming the steps, the tool and the distance) if the
+tool's path moves in between: the tool would jump over that part of its
+path, and the penetration where it lands would enter `R_0f` and be ramped
+out as if it were a load, loosening the tolerance of every later step
+through the reference force. A tool held still over the gap, or taken away
+by a step in between, is accepted. A restart checks the same against the
+tools its state had active (`AnalysisState::tools_active`). A tool that
+becomes active already in contact has the force of its penetration ramped
+in over the step at its positions rather than reached by travel; the step
+warns about it.
+
 ### 1.3 Penalty contact in the current configuration
 
 For slave node `j` (the nodes of the boundary faces a tool's `surface`
@@ -238,7 +251,7 @@ refuses unknown ones).
 | `steps[].name` | `"step<k>"` | unique; part of the result file names |
 | `steps[].type` | `"form"` | `"form"` or `"release"` |
 | `steps[].tools` | `[]` | active tools; a release may keep only tools the step before it lists |
-| `steps[].time` | see below | `[t_begin, t_end]` [s], not before the previous step's end |
+| `steps[].time` | see below | `[t_begin, t_end]` [s], not before the previous step's end; later only if the tools active in both steps do not move in between |
 | `steps[].max_tool_travel` | half the smallest slave-node size | largest travel of an active tool in one increment [m] |
 | `steps[].increments` | 1 (form), 10 (release) | the window in this many equal increments at the start (and at most) |
 | `steps[].boundary_conditions` | the model's, `absolute` | as the deck's, plus `"mode"`: `"hold"` (default) or `"absolute"` (`value` the absolute end value) |
@@ -253,8 +266,9 @@ previous step. The deck is refused - naming the key - for an unknown tool in
 a step, a release keeping a tool the previous step does not list, a
 non-positive radius, negative friction, a time window that runs backwards,
 a trajectory with fewer than two knots or times that do not increase, and
-(when the analysis is built) a surface that selects no face or constraints
-that leave a rigid-body motion free.
+(when the analysis is built) a surface that selects no face, constraints
+that leave a rigid-body motion free, or a tool that would jump between two
+steps.
 
 ## 3. Output contract
 
@@ -294,6 +308,7 @@ build, with `-dirty` for uncommitted changes.
 | Ironing, `mu = 0.2`: sphere (R = 20 mm) and flat punch pressed into an elastic block and dragged 10 mm | in steady sliding every contact node slips (9 and 231 nodes); friction load / normal load = `mu` to `7e-16`; flat punch `-F_x / F_z = 0.2` (tested to `1e-6`); sphere `0.19986`, its contact normals tilted |
 | The symmetric friction tangent (`friction_tangent: "symmetric"`), at the tangent test's states and on the flat-punch ironing | the same forces; symmetric node blocks, positive semi-definite for the plane in stick and slip; the ironing completes without a cut (47 iterations, the exact tangent 31) at the same tool force to `1e-8` |
 | Double-sided pinch: two spheres on the two faces of a clamped sheet, paths mirrored about its mid-plane, pressed and moved together with friction | equal and opposite normal forces and equal friction forces to `1e-6`; the reactions' resultant equals the total force on the tools to `1e-6` |
+| Step windows with a gap: a sphere active in both steps, its path moving in between (and a restart from the first step's state) | refused, naming the steps and the 2.4 mm jump; held over the gap, or taken away by a release in between: accepted; a tool that becomes active in contact is warned about |
 | Release of a stress-free block onto 3-2-1 supports | displacement exactly 0; supports moved by a translation: the body follows it to 1e-12 |
 | Release of a plastically bent strip (finite kinematics, restarted from the formed state) with the 3-2-1 values moved by a translation, and by a 0.03 rad rotation with it | the result is the held one moved rigidly: largest deviation `5.2e-18` and `1.1e-17 m` (tested to `1e-14 m`); plastic history unchanged |
 | Springback of an elastic-perfectly plastic beam (L = 8 h) bent by end displacements to `3 k_y` (plane stress Q4, small strain), released onto 3-2-1: curvature change of the central half vs the exact elastic unloading `M(3 k_y)/(EI) = 1.4444 k_y` | `1.4565`, `1.4482`, `1.4453 k_y` with 4, 8, 16 Q4 through the depth: errors `8.4e-3`, `2.6e-3`, `5.6e-4` (order 1.7 then 2.2); support reactions below `1e-6` of the reference force |

@@ -47,6 +47,11 @@ constexpr Scalar kStrainWarning = 0.05;
 /// A step reports its progress at most this often [s] (a forming path of
 /// hundreds of millimetres over a fine sheet runs for hours).
 constexpr double kProgressSeconds = 60.0;
+/// A tool active in two consecutive steps may be this fraction of the
+/// smallest slave-node size away from where it was (rounding of the
+/// windows); farther, it would jump. A tool that becomes active is warned
+/// about when it penetrates deeper than this fraction.
+constexpr Scalar kJumpTolerance = 1.0e-6;
 
 // ---------------------------------------------------------------------------
 // The free-free tangent of one Dirichlet partition: pattern analysed once,
@@ -382,6 +387,15 @@ std::vector<std::string> free_rigid_motions(const Mesh& mesh, const std::vector<
   return out;
 }
 
+/// "(x, y[, z])" [m].
+std::string point_text(const Vector3& p, int dim) {
+  std::ostringstream os;
+  os << "(";
+  for (int k = 0; k < dim; ++k) os << (k ? ", " : "") << p(k);
+  os << ")";
+  return os.str();
+}
+
 Scalar max_nodal(const Vector& u, int dim) {
   Scalar top = 0.0;
   for (Eigen::Index node = 0; node < u.size() / dim; ++node) {
@@ -505,6 +519,38 @@ FormingAnalysis::FormingAnalysis(const FemModel& model, const Assembler& assembl
     previous_active = active;
   }
   windows_ = resolve_windows(-std::numeric_limits<Scalar>::infinity());
+  check_tool_continuity(windows_, std::vector<char>(nt, 0),
+                        -std::numeric_limits<Scalar>::infinity(),
+                        kJumpTolerance * probe.min_node_size());
+}
+
+void FormingAnalysis::check_tool_continuity(const std::vector<std::pair<Scalar, Scalar>>& windows,
+                                            std::vector<char> previous, Scalar previous_end,
+                                            Scalar tolerance) const {
+  const std::size_t nt = options_.tools.size();
+  for (std::size_t s = 0; s < options_.steps.size(); ++s) {
+    const Scalar tb = windows[s].first;
+    for (std::size_t k = 0; k < nt; ++k) {
+      if (!active_[s][k] || !previous[k] || !std::isfinite(previous_end)) continue;
+      const ToolTrajectory& path = options_.tools[k].trajectory;
+      const Vector3 from = path.position(previous_end);
+      const Vector3 to = path.position(tb);
+      const Scalar jump = (to - from).norm();
+      if (!(jump > tolerance)) continue;
+      std::ostringstream os;
+      os << "forming step '" << options_.steps[s].name << "' starts at t = " << tb << " s, but "
+         << (s == 0 ? std::string("the start state is at")
+                    : "step '" + options_.steps[s - 1].name + "' ended at")
+         << " t = " << previous_end << " s: tool '" << options_.tools[k].name
+         << "', active in both, would jump " << jump << " m, from "
+         << point_text(from, model_.dim()) << " to " << point_text(to, model_.dim())
+         << ", without travelling the path between - start the step where the one before "
+         << "it ended, or hold the tool there over the gap";
+      throw ConfigError(os.str());
+    }
+    previous = active_[s];
+    previous_end = windows[s].second;
+  }
 }
 
 std::vector<std::pair<Scalar, Scalar>> FormingAnalysis::resolve_windows(Scalar previous_end) const {
@@ -594,6 +640,18 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   if (!start.plastic.empty()) system.set_committed(start.plastic);
   ToolContact contact(model_, options_.tools, options_.friction_tangent);
   if (!start.friction.empty()) contact.set_history(start.friction);
+  // The tools in place in the state (active in the step that produced it).
+  const std::size_t nt = options_.tools.size();
+  std::vector<char> placed(nt, 0);
+  if (!start.tools_active.empty()) {
+    if (start.tools_active.size() != nt) {
+      throw ConfigError("the start state names " + std::to_string(start.tools_active.size()) +
+                        " tool(s) active; the analysis has " + std::to_string(nt));
+    }
+    placed = start.tools_active;
+  }
+  check_tool_continuity(windows, placed, start.time,
+                        kJumpTolerance * contact.min_node_size());
   PartitionedFactor factor(options_.suitesparse);
   const bool small = options_.kinematics == Kinematics::SmallStrain;
 
@@ -730,6 +788,24 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
         os << "its start state (t = " << tb << " s) cannot be evaluated: " << ex.what();
         sr.termination = os.str();
         started = false;
+      }
+      // A tool that becomes active already in contact: the force of its
+      // penetration is part of R_0, ramped in over the step at the tools'
+      // positions rather than reached by travel.
+      for (std::size_t k = 0; started && k < nt; ++k) {
+        const ToolResultant& tr = cev.tools[k];
+        if (!active[k] || placed[k] || tr.active_nodes == 0 ||
+            !(tr.max_penetration > kJumpTolerance * contact.min_node_size())) {
+          continue;
+        }
+        std::ostringstream os;
+        os << "tool '" << options_.tools[k].name << "' becomes active in contact: "
+           << tr.active_nodes << " node(s) up to " << tr.max_penetration
+           << " m inside it at t = " << tb << " s; the force of that penetration, "
+           << tr.force.norm() << " N, is ramped in over the step at the tool's positions "
+           << "instead of being reached by travel - start its path clear of the surface";
+        sr.warnings.push_back(os.str());
+        log::warn(label, ": ", os.str());
       }
     }
     if (started) {
@@ -1061,6 +1137,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
       last_du = du_max;
       system.commit(accepted);
       contact.commit(accepted_contact);
+      placed = active;
       u = std::move(state);
       last_residual = accepted.residual + accepted_contact.residual;
       t = t1;
@@ -1207,6 +1284,7 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
   result.final_state.time = time;
   result.final_state.residual = last_residual;
   result.final_state.reference_force = reference;
+  result.final_state.tools_active = placed;
   result.linear_solver = factor.names();
   timing.add("total", wall.elapsed_seconds());
   if (!result.completed) log::warn("forming analysis stopped: ", result.termination);

@@ -598,6 +598,93 @@ TEST_CASE("a tool dragged along a block with friction slides at mu times its nor
   }
 }
 
+TEST_CASE("a tool active in consecutive steps cannot jump between them", "[forming]") {
+  // A sphere pressed into a clamped block and moved along it; a second step
+  // whose window starts later than the first ended would take the tool from
+  // where it was to further along its path without travelling between -
+  // with the penetration there ramped in as if it were a load.
+  std::vector<DisplacementConstraint> bcs;
+  DisplacementConstraint base;
+  base.region = box(-kInf, kInf, -kInf, kInf, -kInf, -0.002, "base");
+  for (int k = 0; k < 3; ++k) base.set(k, true);
+  bcs.push_back(base);
+  FemModel model = finalised(hex_block(10, 10, 1, 0.01, 0.01, 0.002, 0.0, 0.0, -0.002),
+                             default_material(), 1.0, StressState::ThreeDimensional, bcs);
+  Assembler assembler(model);
+  RigidTool tool;
+  tool.name = "ball";
+  tool.radius = 0.004;
+  tool.friction = 0.2;
+  tool.surface = box(-kInf, kInf, -kInf, kInf, 0.0, kInf, "top");
+  const Scalar low = tool.radius - 5.0e-5;  // a contact radius of 0.63 mm, 1 mm elements
+  tool.trajectory = path({0.0, 1.0, 2.0}, {Vector3(0.003, 0.005, tool.radius + 1.0e-4),
+                                           Vector3(0.003, 0.005, low),
+                                           Vector3(0.007, 0.005, low)});
+  FormingOptions o;
+  o.tools.push_back(tool);
+  FormingStep a;
+  a.name = "a";
+  a.tools = {"ball"};
+  a.t_begin = 0.0;
+  a.t_end = 1.2;
+  a.max_tool_travel = 5.0e-4;
+  FormingStep b = a;
+  b.name = "b";
+  b.t_begin = 1.8;
+  b.t_end = 2.0;
+  o.steps = {a, b};
+  CHECK_THROWS_WITH(FormingAnalysis(model, assembler, o),
+                    ContainsSubstring("step 'b' starts at t = 1.8 s") &&
+                        ContainsSubstring("step 'a' ended at t = 1.2 s") &&
+                        ContainsSubstring("tool 'ball', active in both, would jump 0.0024 m"));
+  // Held where it was over the gap, the tool does not jump.
+  {
+    FormingOptions held = o;
+    held.tools[0].trajectory =
+        path({0.0, 1.0, 1.2, 1.8, 2.0},
+             {Vector3(0.003, 0.005, tool.radius + 1.0e-4), Vector3(0.003, 0.005, low),
+              Vector3(0.0038, 0.005, low), Vector3(0.0038, 0.005, low),
+              Vector3(0.0046, 0.005, low)});
+    CHECK_NOTHROW(FormingAnalysis(model, assembler, held));
+  }
+  // Nor does one taken away in between (a release), which comes back.
+  {
+    FormingOptions away = o;
+    FormingStep release;
+    release.name = "release";
+    release.type = FormingStep::Type::Release;
+    away.steps = {a, release, b};
+    away.steps[2].t_begin = 2.5;
+    away.steps[2].t_end = 3.0;
+    CHECK_NOTHROW(FormingAnalysis(model, assembler, away));
+  }
+
+  // A restart knows which tools its state had active.
+  FormingOptions first = o;
+  first.steps = {a};
+  const FormingResult ra = FormingAnalysis(model, assembler, first).run();
+  REQUIRE(ra.completed);
+  CHECK(ra.final_state.tools_active == std::vector<char>{1});
+  FormingOptions second = o;
+  second.steps = {b};
+  FormingAnalysis restart(model, assembler, second);
+  CHECK_THROWS_WITH(restart.run(ra.final_state),
+                    ContainsSubstring("the start state is at t = 1.2 s") &&
+                        ContainsSubstring("would jump"));
+  // Without that record the tool becomes active in contact at t = 1.8 s:
+  // the run warns that the force of its penetration is ramped in.
+  AnalysisState unknown = ra.final_state;
+  unknown.tools_active.clear();
+  const FormingResult rb = restart.run(unknown);
+  REQUIRE(rb.completed);
+  REQUIRE(rb.steps[0].warnings.size() == 1);
+  CHECK_THAT(rb.steps[0].warnings[0],
+             ContainsSubstring("tool 'ball' becomes active in contact") &&
+                 ContainsSubstring("ramped in over the step"));
+  // A tool whose path starts clear of the surface is not warned about.
+  CHECK(ra.steps[0].warnings.empty());
+}
+
 TEST_CASE("two opposed tools pinch a sheet with equal and opposite forces", "[forming]") {
   // Double-sided forming: a sphere on each face of a clamped elastic sheet,
   // their paths mirror images about its mid-plane, pressed in and moved
