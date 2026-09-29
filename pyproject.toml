@@ -10,10 +10,10 @@ readme = "docs/precomp.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.23",
+    "numpy>=1.25",
     "scipy>=1.9",
     "pandas>=1.5",
-    "scikit-learn>=1.2",
+    "scikit-learn>=1.4",
     "joblib>=1.2",
     "contourpy>=1.0",
     "matplotlib>=3.6",
