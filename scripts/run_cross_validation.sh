@@ -19,16 +19,21 @@
 # cantilever loaded past yield and unloaded on Hex8, a plane-strain strip on
 # Q4, a punch on Tet10, cycles with combined hardening, a plate heated past
 # yield, a large-deflection cantilever, a clamped beam driven into membrane
-# action and back on Hex8 and in plane strain and plane stress on Q4) - with
-# sparlab_solve (exporting CalculiX decks), then
+# action and back on Hex8 and in plane strain and plane stress on Q4) - and the
+# dynamics decks (linear transients on Hex8 with HHT-alpha and Rayleigh
+# damping, on Tet10 under a harmonic force and on a plane-strain Q4 strip
+# shaken at its root with lumped mass; harmonic responses of a Q4 plate and of
+# a Hex8 block on a shaken base; an elastoplastic and a large-deflection
+# transient on Hex8) - with sparlab_solve (exporting CalculiX decks), then
 # compares the nodal displacements node by node, the conducted
-# temperatures, the buckling load factors mode by mode and the final
-# non-linear states, with CalculiX (ccx: static, *BUCKLE, *HEAT TRANSFER,
-# *STEP, NLGEOM and *PLASTIC, each load in CalculiX's own form) and
-# scikit-fem (with SparLab's load vector, with the loads integrated by
-# scikit-fem, an independent total Lagrangian solve and an independent J2
-# solve, small strain or finite). Exits non-zero if any comparison exceeds
-# its documented tolerance.
+# temperatures, the buckling load factors mode by mode, the final non-linear
+# states and the transient histories and harmonic responses, with CalculiX
+# (ccx: static, *BUCKLE, *HEAT TRANSFER, *STEP, NLGEOM, *PLASTIC and
+# *DYNAMIC, each load in CalculiX's own form) and scikit-fem (with SparLab's
+# load vector, with the loads integrated by scikit-fem, an independent total
+# Lagrangian solve, an independent J2 solve, small strain or finite, an
+# independent HHT-alpha integration and a direct complex harmonic solve).
+# Exits non-zero if any comparison exceeds its documented tolerance.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -47,12 +52,17 @@ PLASTIC_CASES="plastic_beam_hex_small_strain plastic_strip_q4_small_strain \
 plastic_punch_tet10_small_strain plastic_beam_hex_cyclic plastic_strip_q4_plane_stress_cyclic \
 plastic_plate_thermal_tet10 plastic_beam_tet10_nlgeom plastic_clamped_beam_hex_nlgeom \
 plastic_clamped_strip_q4_nlgeom plastic_clamped_strip_q4_plane_stress_nlgeom"
+# The dynamics decks.
+DYNAMIC_CASES="transient_cantilever_hex transient_column_tet10 transient_strip_q4_base \
+frequency_response_plate_q4 frequency_response_block_hex transient_plastic_beam_hex \
+transient_beam_hex_nlgeom"
 
 banner "cross-validation: solving the reference decks"
 for case in cantilever_analysis block_3d_analysis cantilever_tri_analysis \
             block_tet_analysis lug_bracket_nu0_analysis engine_mount_tet10_analysis \
             column_hex_buckling_analysis column_tet4_buckling_analysis \
-            column_tet10_buckling_analysis $LOAD_CASES $NONLINEAR_CASES $PLASTIC_CASES; do
+            column_tet10_buckling_analysis $LOAD_CASES $NONLINEAR_CASES $PLASTIC_CASES \
+            $DYNAMIC_CASES; do
   "$BIN_DIR/sparlab_solve" --config "$SPARLAB_ROOT/configs/verification/$case.json" \
                            --output "$RESULTS/$case" --export-calculix
 done
@@ -69,7 +79,8 @@ for case in cantilever_analysis block_3d_analysis cantilever_tri_analysis \
             block_tet_analysis lug_bracket_nu0_analysis lug_bracket_2d_analysis \
             engine_mount_3d_analysis engine_mount_tet10_analysis \
             column_hex_buckling_analysis column_tet4_buckling_analysis \
-            column_tet10_buckling_analysis $LOAD_CASES $NONLINEAR_CASES $PLASTIC_CASES; do
+            column_tet10_buckling_analysis $LOAD_CASES $NONLINEAR_CASES $PLASTIC_CASES \
+            $DYNAMIC_CASES; do
   CASES+=(--case "$RESULTS/$case")
 done
 "$PYTHON" python/scripts/cross_validate.py "${CASES[@]}" --output "$RESULTS/cross_validation"

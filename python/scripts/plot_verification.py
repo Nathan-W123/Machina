@@ -116,6 +116,12 @@ def main(argv=None) -> int:
         ("a uniaxial cycle with combined hardening",
          lambda: studies.plot_plastic_cycle(
              args.verification, figure("verify_plastic_cycle.png"))),
+        ("dynamics of a fixed-free rod",
+         lambda: studies.plot_rod_dynamics(
+             args.verification, figure("verify_rod_dynamics.png"))),
+        ("non-linear oscillators",
+         lambda: studies.plot_nonlinear_oscillator(
+             args.verification, figure("verify_nonlinear_oscillator.png"))),
     ]
 
     for label, task in tasks:

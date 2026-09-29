@@ -1001,6 +1001,44 @@ void ResultWriter::write_frequency_response(const FemModel& model,
     }
     csv.close();
   }
+  if (config_.output.write_csv) {
+    // The complex nodal amplitudes at every snapshot frequency, one file
+    // each (numbered as the VTK series), with the frequency in the name of
+    // the first column's header.
+    const int dim = mesh.dim();
+    const int width = series_width(result.snapshots.size());
+    for (std::size_t k = 0; k < result.snapshots.size(); ++k) {
+      const FrequencySnapshot& snap = result.snapshots[k];
+      const Vector re = translations(mesh, Vector(snap.displacement.real()));
+      const Vector im = translations(mesh, Vector(snap.displacement.imag()));
+      const Vector peak = harmonic_peak_displacements(model, snap.displacement);
+      std::ostringstream first;
+      first << "node@" << std::setprecision(17) << snap.frequency << "Hz";
+      std::vector<std::string> header{first.str()};
+      header = concat(header, coordinate_headers(dim, ""));
+      for (int c = 0; c < dim; ++c) {
+        header.push_back(std::string("u") + component_name(c) + "_re[m]");
+        header.push_back(std::string("u") + component_name(c) + "_im[m]");
+      }
+      header.push_back("peak[m]");
+      std::ostringstream name;
+      name << "frequency_response_field_" << lc << "_" << std::setw(width) << std::setfill('0')
+           << k << ".csv";
+      CsvWriter field(file(name.str()), header);
+      for (Index n = 0; n < mesh.num_nodes(); ++n) {
+        const Vector3 x = mesh.node(n);
+        std::vector<Scalar> row;
+        for (int c = 0; c < dim; ++c) row.push_back(x(c));
+        for (int c = 0; c < dim; ++c) {
+          row.push_back(re(n * dim + c));
+          row.push_back(im(n * dim + c));
+        }
+        row.push_back(peak(n));
+        field.row(n, row);
+      }
+      field.close();
+    }
+  }
   if (config_.output.write_vtk && !result.snapshots.empty()) {
     // One file per snapshot frequency, with a file-series index whose "time"
     // is the frequency in Hz (so ParaView steps through the frequencies).
@@ -1757,6 +1795,11 @@ json::Value transient_json(const std::vector<TransientResult>& results,
         json::Value m = json::Value::make_object();
         m.set("name", json::Value::make_string(r.monitor_names[i]));
         m.set("unit", json::Value::make_string(r.monitor_units[i]));
+        if (i < options.monitors.size()) {
+          m.set("quantity", json::Value::make_string(to_string(options.monitors[i].quantity)));
+          m.set("component", json::Value::make_number(options.monitors[i].component));
+        }
+        if (i < r.monitor_nodes.size()) m.set("nodes", json::array_of(r.monitor_nodes[i]));
         m.set("max", json::Value::make_number(r.steps[hi].monitors[i]));
         m.set("max_time_s", json::Value::make_number(r.steps[hi].time));
         m.set("min", json::Value::make_number(r.steps[lo].monitors[i]));
@@ -1778,6 +1821,7 @@ json::Value transient_json(const std::vector<TransientResult>& results,
       c.set("step_halvings", json::Value::make_number(cuts));
       if (r.plastic) {
         json::Value pl = json::Value::make_object();
+        pl.set("mean_dilatation_applied", json::Value::make_bool(r.mean_dilatation));
         pl.set("max_equivalent_plastic_strain", json::Value::make_number(r.max_plastic_strain));
         int first_yield_step = -1;
         for (const TransientStep& s : r.steps) {
@@ -1819,6 +1863,7 @@ json::Value frequency_response_json(const std::vector<FrequencyResponseResult>& 
               "g cos(omega t), the response is Re(U e^{i omega t}) and a phase is arg U (the "
               "lag behind the load is -arg U)"));
   out.set("frequencies", json::Value::make_number(static_cast<Scalar>(options.frequencies.size())));
+  out.set("frequencies_Hz", json::array_of(options.frequencies));
   if (!options.frequencies.empty()) {
     const auto range = std::minmax_element(options.frequencies.begin(), options.frequencies.end());
     out.set("min_frequency_Hz", json::Value::make_number(*range.first));
@@ -1851,6 +1896,11 @@ json::Value frequency_response_json(const std::vector<FrequencyResponseResult>& 
         json::Value m = json::Value::make_object();
         m.set("name", json::Value::make_string(r.monitor_names[i]));
         m.set("unit", json::Value::make_string(r.monitor_units[i]));
+        if (i < options.monitors.size()) {
+          m.set("quantity", json::Value::make_string(to_string(options.monitors[i].quantity)));
+          m.set("component", json::Value::make_number(options.monitors[i].component));
+        }
+        if (i < r.monitor_nodes.size()) m.set("nodes", json::array_of(r.monitor_nodes[i]));
         m.set("peak_amplitude", json::Value::make_number(std::abs(z)));
         m.set("peak_frequency_Hz", json::Value::make_number(r.points[top].frequency));
         m.set("phase_at_peak_deg", json::Value::make_number(std::arg(z) * kDegrees));

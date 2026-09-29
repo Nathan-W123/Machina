@@ -75,6 +75,10 @@ shows on curved geometry only: CalculiX integrates a pressure on the six-node
 face of a C3D10 with a three-point rule, exact on a flat face but not for the
 degree-4 integrand of a curved one, whose load SparLab integrates exactly.
 
+A run with a `transient` or `frequency_response` block is also integrated
+again in time, or solved at every frequency, by scikit-fem and (transients on
+solid elements) by CalculiX's *DYNAMIC: see dynamics_xval.py.
+
 Nothing here recomputes SparLab's numbers: they are read from the run.
 """
 
@@ -89,11 +93,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 import _bootstrap  # noqa: F401
 
 import numpy as np
+
+import dynamics_xval
 
 from sparlab_viz.loaders import Mesh, ResultError, load_case
 
@@ -605,35 +612,16 @@ class SkfemProblem:
                 raise ResultError(f"scikit-fem's Newton did not converge at load factor {factor}")
         return u
 
-    def plastic(self, materials: List[Dict], element_materials: Optional[np.ndarray],
-                load_factors: List[float], mean_dilatation: bool,
-                temperature: Optional[np.ndarray] = None, f: Optional[np.ndarray] = None,
-                tolerance: float = 1e-11, max_iterations: int = 80,
-                kinematics: str = "small_strain") -> np.ndarray:
-        """The elastoplastic solution along SparLab's load factors, by an
-        independent J2 implementation: the backward-Euler radial return
-        written here in 3 x 3 tensor form (Newton on the plastic multiplier for
-        Voce hardening, on the thickness strain in plane stress), a material
-        tangent by central differences of that return - so no tangent formula
-        is shared with SparLab - and scikit-fem's shape-function gradients on
-        SparLab's quadrature. `kinematics` is "small_strain" (the linear strain
-        of the undeformed body) or "finite" (large rotation, small strain: the
-        return in the Green-Lagrange strain E = (F^T F - I) / 2, its stress the
-        second Piola-Kirchhoff one, the internal force int dE(du) : S dV_0,
-        the tangent with the geometric stiffness). `materials` are the
-        summary's material entries (with their "plasticity" blocks),
-        `element_materials` their index per element (None for one material).
-        With `mean_dilatation` every point's dilatation - the trace of the
-        strain and of its variation - is replaced by its element's volume
-        average (B-bar; E-bar with finite kinematics). `temperature` is the
-        nodal temperature field of the case in SparLab's node order (its
-        change scales with the load factor; small strain only). Every load
-        factor is converged to a residual of `tolerance` relative to the load
-        (or the reactions), and the internal variables are committed only
-        there. `f` replaces the load vector of mesh.json. Returns the solution
-        at the last factor in scikit-fem's numbering."""
+    def j2_system(self, materials: List[Dict], element_materials: Optional[np.ndarray],
+                  mean_dilatation: bool, temperature: Optional[np.ndarray] = None,
+                  kinematics: str = "small_strain"):
+        """The elastoplastic (or, without a yield stress, elastic) system of
+        plastic() - its basis, the evaluation evaluate(u, state, dtheta,
+        want_tangent) -> (internal force, trial state, tangent), the virgin
+        state and the per-unit temperature change - for a driver of its own:
+        plastic() follows a load path, the transient comparison of
+        dynamics_xval integrates it in time. The formulation is plastic()'s."""
         import scipy.sparse
-        import scipy.sparse.linalg as sla
         from skfem import Basis
 
         dim = self.dim
@@ -878,6 +866,42 @@ class SkfemProblem:
             return f, new, k.tocsr()
 
         state = (np.zeros((3, 3, ne, nq)), np.zeros((3, 3, ne, nq)), np.zeros((ne, nq)))
+        return SimpleNamespace(basis=basis, evaluate=evaluate, state=state, dtemp=dtemp,
+                               gross=gross, finite=finite)
+
+    def plastic(self, materials: List[Dict], element_materials: Optional[np.ndarray],
+                load_factors: List[float], mean_dilatation: bool,
+                temperature: Optional[np.ndarray] = None, f: Optional[np.ndarray] = None,
+                tolerance: float = 1e-11, max_iterations: int = 80,
+                kinematics: str = "small_strain") -> np.ndarray:
+        """The elastoplastic solution along SparLab's load factors, by an
+        independent J2 implementation: the backward-Euler radial return
+        written here in 3 x 3 tensor form (Newton on the plastic multiplier for
+        Voce hardening, on the thickness strain in plane stress), a material
+        tangent by central differences of that return - so no tangent formula
+        is shared with SparLab - and scikit-fem's shape-function gradients on
+        SparLab's quadrature. `kinematics` is "small_strain" (the linear strain
+        of the undeformed body) or "finite" (large rotation, small strain: the
+        return in the Green-Lagrange strain E = (F^T F - I) / 2, its stress the
+        second Piola-Kirchhoff one, the internal force int dE(du) : S dV_0,
+        the tangent with the geometric stiffness). `materials` are the
+        summary's material entries (with their "plasticity" blocks),
+        `element_materials` their index per element (None for one material).
+        With `mean_dilatation` every point's dilatation - the trace of the
+        strain and of its variation - is replaced by its element's volume
+        average (B-bar; E-bar with finite kinematics). `temperature` is the
+        nodal temperature field of the case in SparLab's node order (its
+        change scales with the load factor; small strain only). Every load
+        factor is converged to a residual of `tolerance` relative to the load
+        (or the reactions), and the internal variables are committed only
+        there. `f` replaces the load vector of mesh.json. Returns the solution
+        at the last factor in scikit-fem's numbering."""
+        import scipy.sparse.linalg as sla
+
+        system = self.j2_system(materials, element_materials, mean_dilatation, temperature,
+                                kinematics)
+        basis, evaluate, gross, dtemp = system.basis, system.evaluate, system.gross, system.dtemp
+        state = system.state
         load = self.f if f is None else f
         free, fixed = self.free, self.fixed
         u = np.zeros(basis.N)
@@ -1260,6 +1284,11 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
                 for entry in (summary.get("buckling") or {}).get("load_cases", [])}
     nonlinear_cases = {entry["load_case"]: entry
                        for entry in (summary.get("nonlinear") or {}).get("load_cases", [])}
+    transient_cases = {entry["load_case"]: entry
+                       for entry in (summary.get("transient") or {}).get("load_cases", [])}
+    frequency_cases = {entry["load_case"]: entry
+                       for entry in (summary.get("frequency_response") or {}).get("load_cases",
+                                                                                 [])}
     for name in mesh.load_case_names:
         ours = sparlab_displacement(case, name)
         entry = {"load_case": name, "codes": {}}
@@ -1516,6 +1545,23 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
                     "an independent implementation rather than the same discrete problem")
                 stats["element"] = f"{ccx_type} *BUCKLE"
                 entry["codes"]["calculix buckling"] = stats
+
+        # --- the transient and the harmonic response, when the run has them ---
+        tr_case = transient_cases.get(name)
+        if tr_case is not None:
+            dynamic = dynamics_xval.transient_comparisons(
+                case, summary, name, tr_case, problem, ccx_type, skfem_element, tolerances,
+                skip_calculix, run_calculix)
+            entry["codes"].update(dynamic["codes"])
+            if dynamic["notes"]:
+                entry["transient_notes"] = dynamic["notes"]
+        fr_case = frequency_cases.get(name)
+        if fr_case is not None:
+            harmonic = dynamics_xval.frequency_comparisons(
+                case, summary, name, fr_case, problem, skfem_element, tolerances)
+            entry["codes"].update(harmonic["codes"])
+            if harmonic["notes"]:
+                entry["frequency_response_notes"] = harmonic["notes"]
         report["load_cases"].append(entry)
     return report
 
@@ -1693,6 +1739,13 @@ def main(argv=None) -> int:
     parser.add_argument("--tol-calculix-conduction", type=float, default=1e-4,
                         help="max nodal temperature difference over the temperature range "
                              "(the .frd rounding of a temperature near 300 K is 5e-4 K)")
+    parser.add_argument("--tol-skfem-transient", type=float, default=1e-7,
+                        help="scikit-fem's HHT-alpha integration vs SparLab's transient")
+    parser.add_argument("--tol-skfem-harmonic", type=float, default=1e-7,
+                        help="scikit-fem's complex solve vs SparLab's harmonic response")
+    parser.add_argument("--tol-calculix-transient", type=float, default=1e-5,
+                        help="CalculiX *DYNAMIC vs SparLab's transient (the .frd rounding "
+                             "is 5e-6)")
     parser.add_argument("--skfem-buckling-max-dofs", type=int, default=6000,
                         help="largest free-DOF count for the dense buckling eigensolve")
     args = parser.parse_args(argv)
@@ -1712,6 +1765,9 @@ def main(argv=None) -> int:
                   "calculix_nlgeom": args.tol_calculix_nlgeom,
                   "skfem_plastic": args.tol_skfem_plastic,
                   "calculix_plastic": args.tol_calculix_plastic,
+                  "skfem_transient": args.tol_skfem_transient,
+                  "skfem_harmonic": args.tol_skfem_harmonic,
+                  "calculix_transient": args.tol_calculix_transient,
                   "skfem_buckling_max_dofs": args.skfem_buckling_max_dofs}
     import skfem
     summary = {

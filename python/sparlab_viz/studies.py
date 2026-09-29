@@ -2303,3 +2303,206 @@ def plot_plastic_cycle(directory: str, path: str) -> str:
         "mesh, so the error is round-off.",
     )
     return st.save_figure(fig, path)
+
+
+def _order_two_guide(ax, xs, ys, anchor: float = 0.4, label_offset=(4, -14)) -> None:
+    """A dotted order-2 slope beneath the curves, labelled below its middle."""
+    xs = np.asarray(sorted(xs), dtype=float)
+    guide = anchor * float(np.min(ys)) * (xs / xs[-1]) ** -2 if xs[0] > 1.0 else None
+    if guide is None:
+        return
+    ax.plot(xs, guide, ":", color=st.INK_MUTED, linewidth=1.0)
+    middle = len(xs) // 2
+    ax.annotate("order 2", (xs[middle], guide[middle]), xytext=label_offset,
+                textcoords="offset points", fontsize=7.5, color=st.INK_MUTED)
+
+
+def plot_rod_dynamics(directory: str, path: str) -> str:
+    """The fixed-free rod: its harmonic response against the exact damped
+    continuum solution, the convergence of the harmonic and the transient
+    response, and the end displacement under a ramped force."""
+    sweep = load_csv(os.path.join(directory, "rod_harmonic_sweep.csv"))
+    harmonic = load_csv(os.path.join(directory, "rod_harmonic.csv"))
+    history = load_csv(os.path.join(directory, "rod_transient_history.csv"))
+    transient = load_csv(os.path.join(directory, "rod_transient.csv"))
+    # The rod of the study: steel, 1 m long, f1 = c / (4 L).
+    f1 = np.sqrt(200.0e9 / 7850.0) / 4.0
+    fig, axes = st.figure(11.0, 8.2, nrows=2, ncols=2)
+
+    ax = axes[0, 0]
+    ax.plot(sweep["f_over_f1"], sweep["exact_abs[m]"] * 1e6, "-", color=st.INK_MUTED,
+            linewidth=1.6, label="exact continuum")
+    ax.plot(sweep["f_over_f1"], sweep["q4_n40_abs[m]"] * 1e6, "-", color=st.series_color(0),
+            linewidth=1.0, label="40 Q4 elements")
+    ax.plot(sweep["f_over_f1"], sweep["q4_n10_abs[m]"] * 1e6, "--", color=st.series_color(1),
+            linewidth=1.0, label="10 Q4 elements")
+    ax.set_yscale("log")
+    ax.set_xlabel("frequency / f1 [-]")
+    ax.set_ylabel("end displacement amplitude [um]")
+    st.title(ax, "Harmonic response of a fixed-free rod",
+             f"end force 1 kN, structural damping eta = 0.02; f1 = c / (4 L) = {f1:.1f} Hz",
+             wrap=48)
+    st.legend(ax, loc="upper right", fontsize=7.5)
+
+    ax = axes[0, 1]
+    picks = [("end force undamped", 0.5), ("end force undamped", 2.5),
+             ("end force eta 0.02 at resonance", 1.0), ("base motion undamped", 1.5)]
+    q4 = harmonic[(harmonic["element"] == "Q4") & (harmonic["mass"] == "consistent")]
+    lowest = []
+    for slot, (case, ratio) in enumerate(picks):
+        sub = q4[(q4["case"] == case) & (np.isclose(q4["f_over_f1"], ratio))].sort_values("n")
+        if sub.empty:
+            continue
+        ax.plot(sub["n"], sub["continuum_error[-]"], "-o", color=st.series_color(slot),
+                markersize=4.5, label=f"{case}, f = {ratio:g} f1")
+        lowest.append(float(sub["continuum_error[-]"].min()))
+    ns = sorted(q4["n"].unique())
+    if lowest:
+        _order_two_guide(ax, ns, [min(lowest)])
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xticks(ns)
+    ax.set_xticklabels([f"{int(n)}" for n in ns])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("elements along the rod")
+    ax.set_ylabel("|U(L) - U_exact(L)| / |U_exact(L)| [-]")
+    worst = float(harmonic["discrete_difference[-]"].max())
+    st.title(ax, "Convergence to the continuum",
+             f"Q4, consistent mass; against the exact discrete solution {worst:.1e}", wrap=48)
+    st.legend(ax, loc="lower left", fontsize=7.0)
+
+    ax = axes[1, 0]
+    t = history["t[s]"].to_numpy() * 1e3
+    ax.plot(t, history["exact[m]"] * 1e6, "-", color=st.INK_MUTED, linewidth=1.6,
+            label="exact (modal series)")
+    ax.plot(t, history["q4_n160[m]"] * 1e6, "-", color=st.series_color(0), linewidth=1.0,
+            label="160 Q4, dt = h / c")
+    coarse = history.dropna(subset=["q4_n20[m]"])
+    ax.plot(coarse["t[s]"] * 1e3, coarse["q4_n20[m]"] * 1e6, "o", color=st.series_color(1),
+            markersize=2.5, label="20 Q4, dt = h / c")
+    ax.set_xlabel("time [ms]")
+    ax.set_ylabel("end displacement [um]")
+    st.title(ax, "End displacement under a ramped force",
+             "1 kN ramped as sin^2 over 0.6 T1, trapezoidal rule", wrap=48)
+    st.legend(ax, loc="lower right", fontsize=7.5)
+
+    ax = axes[1, 1]
+    lowest = []
+    for slot, mass in enumerate(["consistent", "lumped"]):
+        sub = transient[(transient["element"] == "Q4") & (transient["mass"] == mass)]
+        sub = sub.sort_values("n")
+        ax.plot(sub["n"], sub["max_error[-]"], "-o", color=st.series_color(slot),
+                markersize=4.5, label=f"Q4, {mass} mass")
+        lowest.append(float(sub["max_error[-]"].min()))
+    ns = sorted(transient["n"].unique())
+    _order_two_guide(ax, ns, [min(lowest)], anchor=0.2)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xticks(ns)
+    ax.set_xticklabels([f"{int(n)}" for n in ns])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("elements along the rod (the step halved with the element)")
+    ax.set_ylabel("max |u(L) - u_exact(L)| / max |u_exact(L)| [-]")
+    st.title(ax, "Transient convergence", "Courant number 1, 2.5 T1", wrap=48)
+    st.legend(ax, loc="lower left", fontsize=7.5)
+
+    st.annotate_note(
+        fig,
+        "A steel rod 1 m long, 0.05 m square, nu = 0, its lateral displacements held: an "
+        "exactly one-dimensional model (Hex8 gives the same numbers). Harmonic: every node "
+        "equals the exact solution of the discrete equations (their dispersion relation) to "
+        "round-off, and the end amplitude converges at second order to u = F sin(kx) / (E* A "
+        "k cos(kL)) with the complex modulus of the damping. Transient: the end displacement "
+        "converges at second order, the element length and the time step halved together, to "
+        "the modal series of the continuum (4000 modes, the static part summed exactly).",
+    )
+    return st.save_figure(fig, path)
+
+
+def plot_nonlinear_oscillator(directory: str, path: str) -> str:
+    """One element in uniaxial strain under a sudden load: the motion of the
+    finite-strain elastic and of the elastoplastic oscillator against the
+    exact one, and the convergence of the motion and of the plastic
+    dissipation with the step."""
+    history = load_csv(os.path.join(directory, "nonlinear_oscillator_history.csv"))
+    table = load_csv(os.path.join(directory, "nonlinear_oscillator.csv"))
+    fig, axes = st.figure(11.0, 8.2, nrows=2, ncols=2)
+    laws = ["Saint Venant-Kirchhoff finite strain", "J2 linear hardening small strain"]
+    titles = ["Saint Venant-Kirchhoff, finite strain", "J2 with linear hardening"]
+    subtitles = ["a sudden pull, 9 % peak strain; exact: Runge-Kutta at 1/64 step",
+                 "a sudden load of 0.8 N_y yields on the first swing; exact: closed form"]
+    for panel, (law, name, sub) in enumerate(zip(laws, titles, subtitles)):
+        ax = axes[0, panel]
+        rows = history[history["law"] == law]
+        t = rows["t[s]"].to_numpy() * 1e6
+        # The exact motion as a wide halo: the fine run lies on it.
+        ax.plot(t, rows["exact[m]"] * 1e3, "-", color=st.INK_MUTED, linewidth=4.0, alpha=0.45,
+                label="exact")
+        ax.plot(t, rows["fine[m]"] * 1e3, "-", color=st.series_color(0), linewidth=1.0,
+                label="320 steps per period")
+        coarse = rows.dropna(subset=["coarse[m]"])
+        ax.plot(coarse["t[s]"] * 1e6, coarse["coarse[m]"] * 1e3, "o", color=st.series_color(1),
+                markersize=3.5, label="20 steps per period")
+        ax.set_xlabel("time [us]")
+        ax.set_ylabel("end displacement [mm]")
+        st.title(ax, name, sub, wrap=48)
+        st.legend(ax, loc="lower right", fontsize=7.5)
+
+    ax = axes[1, 0]
+    q4 = table[(table["element"] == "Q4") & (table["mass"] == "lumped")]
+    slot = 0
+    lowest = []
+    for law, name in zip(laws, ["SVK", "J2"]):
+        for alpha in sorted(q4["alpha"].unique(), reverse=True):
+            sub = q4[(q4["law"] == law) & (q4["alpha"] == alpha)].sort_values("steps_per_period")
+            ax.plot(sub["steps_per_period"], sub["error[-]"], "-o", color=st.series_color(slot),
+                    markersize=4.5, label=f"{name}, alpha = {alpha:g}")
+            lowest.append(float(sub["error[-]"].min()))
+            slot += 1
+    steps = sorted(q4["steps_per_period"].unique())
+    _order_two_guide(ax, steps, [min(lowest)])
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xticks(steps)
+    ax.set_xticklabels([f"{int(s)}" for s in steps])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("steps per elastic period")
+    ax.set_ylabel("max |u - u_exact| / max |u| [-]")
+    worst = float(table["discrete_difference[-]"].max())
+    st.title(ax, "Convergence of the motion",
+             f"against the scalar HHT-alpha recursion of the same equation: {worst:.1e}",
+             wrap=48)
+    st.legend(ax, loc="lower left", fontsize=7.5)
+
+    ax = axes[1, 1]
+    plastic = q4[q4["law"] == laws[1]]
+    for slot, alpha in enumerate(sorted(plastic["alpha"].unique(), reverse=True)):
+        sub = plastic[plastic["alpha"] == alpha].sort_values("steps_per_period")
+        gap = np.abs(sub["final_balance[J]"] - sub["exact_dissipation[J]"]) / \
+            sub["exact_dissipation[J]"]
+        ax.plot(sub["steps_per_period"], gap, "-o", color=st.series_color(slot),
+                markersize=4.5, label=f"alpha = {alpha:g}")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xticks(steps)
+    ax.set_xticklabels([f"{int(s)}" for s in steps])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("steps per elastic period")
+    ax.set_ylabel("|energy balance - D_p| / D_p [-]")
+    exact = float(plastic["exact_dissipation[J]"].iloc[0]) if not plastic.empty else np.nan
+    st.title(ax, "The energy balance holds the plastic dissipation",
+             f"E_0 + W - T - U against D_p = sigma_y alpha_p V = {exact:.2f} J; the gap closes "
+             "irregularly as the yield point moves within a step", wrap=48)
+    st.legend(ax, loc="lower left", fontsize=7.5)
+
+    st.annotate_note(
+        fig,
+        "One element 0.1 m, steel (E = 200 GPa, nu = 0.3), its lateral displacements held: "
+        "uniaxial strain, a single degree of freedom (Q4 and Hex8, lumped and consistent mass "
+        "give the same relative errors). The trapezoidal rule and HHT-alpha converge at second "
+        "order in the step for both laws; the elastoplastic motion's order wanders about 2 as "
+        "the yield point falls at a different place within a step. The final energy balance "
+        "of the plastic run tends to the plastic dissipation, the plastic work less the stored "
+        "hardening energy.",
+    )
+    return st.save_figure(fig, path)

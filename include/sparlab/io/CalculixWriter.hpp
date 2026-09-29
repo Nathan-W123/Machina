@@ -56,6 +56,20 @@
 /// `NEO HOOKE` splits the energy into an isochoric part and (J - 1)^2), so
 /// such a run is not exported.
 ///
+/// A transient run of a case also gets `<stem>_<case>_dynamic.inp`: the model
+/// with `*DENSITY` and, for Rayleigh damping, `*DAMPING, ALPHA=a, BETA=b` in
+/// every material (CalculiX's C = a M + b K of a direct integration), the
+/// amplitude sampled at every step time as an `*AMPLITUDE` table (the method
+/// reads the loads at the step times only, so the table is exact there),
+/// and one `*STEP` (with `NLGEOM` for finite kinematics) of `*DYNAMIC, DIRECT,
+/// ALPHA=alpha` - CalculiX's HHT-alpha method, whose sign convention and
+/// Newmark parameters are SparLab's (measured: the two agree to the output
+/// rounding with and without damping at alpha = 0 and -0.1) - with every
+/// load and prescribed displacement on that amplitude and `*NODE FILE` at the
+/// snapshot increments. CalculiX's implicit dynamics uses the consistent
+/// mass and starts at rest, so a lumped-mass or preloaded run is not
+/// exported; nor is a thermal or rotating load case.
+///
 /// The exported problem is the *same discrete problem* SparLab solves
 /// (identical mesh, element type, integration order and materials), so
 /// agreement is expected to solver precision for the solid elements, up to
@@ -67,6 +81,7 @@
 #pragma once
 
 #include "sparlab/core/Types.hpp"
+#include "sparlab/fem/Dynamics.hpp"
 #include "sparlab/fem/FemModel.hpp"
 
 #include <string>
@@ -88,17 +103,32 @@ struct CalculixNonlinearExport {
   std::vector<Scalar> load_path;
 };
 
+/// The transient decks to write beside the linear ones (`*DYNAMIC, DIRECT`).
+struct CalculixTransientExport {
+  std::vector<std::size_t> load_cases;  ///< indices of the cases to export
+  TransientOptions options;             ///< the run's options (step, alpha, damping, ...)
+};
+
+/// Why the transient options cannot go out as a CalculiX `*DYNAMIC` deck of
+/// load case `l` (lumped mass, a preloaded start, a thermal or rotating
+/// load), or an empty string when they can.
+std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
+                                        const TransientOptions& options);
+
 /// Write `<stem>_<load case>.inp` for every load case of `model`, followed by
 /// `<stem>_<load case>_conduction.inp` for a case whose temperature is
-/// conducted and `<stem>_<load case>_nlgeom.inp` for each case `nonlinear`
+/// conducted, `<stem>_<load case>_nlgeom.inp` for each case `nonlinear`
+/// names and `<stem>_<load case>_dynamic.inp` for each case `transient`
 /// names.
 /// \return the paths written, in load-case order.
-/// \throws IoError when a file cannot be written, or for a thermal case whose
+/// \throws IoError when a file cannot be written, for a thermal case whose
 ///         materials have different reference temperatures (CalculiX measures
-///         thermal strain from the initial nodal temperature).
+///         thermal strain from the initial nodal temperature), or for a
+///         transient that calculix_transient_obstacle refuses.
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
                                               const std::string& case_name,
-                                              const CalculixNonlinearExport* nonlinear = nullptr);
+                                              const CalculixNonlinearExport* nonlinear = nullptr,
+                                              const CalculixTransientExport* transient = nullptr);
 
 /// CalculiX element keyword for the model's element type and stress state.
 std::string calculix_element_type(const FemModel& model);

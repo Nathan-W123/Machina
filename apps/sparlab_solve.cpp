@@ -50,9 +50,10 @@ int main(int argc, char** argv) {
            {"--no-vtk", "skip VTK output"},
            {"--no-csv", "skip per-node/per-element CSV output"},
            {"--export-calculix", "also write one CalculiX .inp per load case, a "
-                                 "heat-transfer .inp for a conducted temperature and an "
-                                 "NLGEOM .inp for a non-linear case, into the output "
-                                 "directory (cross-validation)"},
+                                 "heat-transfer .inp for a conducted temperature, an "
+                                 "NLGEOM .inp for a non-linear case and a *DYNAMIC .inp "
+                                 "for a transient one, into the output directory "
+                                 "(cross-validation)"},
            {"--strict-config", "treat unknown configuration keys as errors"},
            {"--verbosity <lvl>", "trace|debug|info|warn|error|silent"},
            {"--help", "show this message"}});
@@ -244,8 +245,26 @@ int main(int argc, char** argv) {
             nonlinear_export = &nlgeom;
           }
         }
+        // The transient cases go out as *DYNAMIC decks, those CalculiX can
+        // integrate as the same problem.
+        CalculixTransientExport dynamic;
+        const CalculixTransientExport* transient_export = nullptr;
+        if (config.transient.enabled) {
+          dynamic.options = config.transient.options;
+          for (std::size_t l : config.transient_load_cases()) {
+            const std::string obstacle =
+                calculix_transient_obstacle(model, l, config.transient.options);
+            if (obstacle.empty()) {
+              dynamic.load_cases.push_back(l);
+            } else {
+              log::warn("the transient of load case '", model.load_case_specs()[l].name,
+                        "' is not exported to CalculiX: ", obstacle);
+            }
+          }
+          if (!dynamic.load_cases.empty()) transient_export = &dynamic;
+        }
         const std::vector<std::string> decks = write_calculix_decks(
-            model, writer.file("calculix"), config.name, nonlinear_export);
+            model, writer.file("calculix"), config.name, nonlinear_export, transient_export);
         for (const std::string& deck : decks) log::info("wrote CalculiX deck ", deck);
       }
     }

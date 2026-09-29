@@ -170,6 +170,21 @@ jobs:
                                       --output results/$case --export-calculix
           done
 
+      - name: Transient dynamics and harmonic response (Hex8, Tet10, Q4)
+        run: |
+          # Linear transients (HHT-alpha with Rayleigh damping on Hex8, the
+          # trapezoidal rule on Tet10, a plane-strain strip shaken at its root
+          # with lumped mass), harmonic responses (a Q4 plate through four
+          # resonances, a Hex8 block on a shaken base), and an elastoplastic
+          # and a large-deflection transient on Hex8.
+          for case in transient_cantilever_hex transient_column_tet10 \
+                      transient_strip_q4_base frequency_response_plate_q4 \
+                      frequency_response_block_hex transient_plastic_beam_hex \
+                      transient_beam_hex_nlgeom; do
+            ./build/bin/sparlab_solve --config configs/verification/$case.json \
+                                      --output results/$case --export-calculix
+          done
+
       - name: Cross-validation against scikit-fem
         # CalculiX is not installed on the runner, so only the scikit-fem
         # comparisons run: with SparLab's load vector, and - for the decks of
@@ -177,11 +192,14 @@ jobs:
         # by scikit-fem from the exported CalculiX decks; for the non-linear
         # decks with dead loads, an independent total Lagrangian solve; for
         # the elastoplastic decks, an independent J2 solve (small strain or
-        # finite kinematics). It
+        # finite kinematics); for the dynamics decks, an independent HHT-alpha
+        # integration (linear, elastoplastic, large deflection) and a direct
+        # complex harmonic solve. It
         # exits non-zero if a displacement field, a buckling load factor of
-        # the three columns, a large-deflection or an elastoplastic state
-        # differs beyond the documented tolerance, or if a non-linear run
-        # stopped short of its full load.
+        # the three columns, a large-deflection or an elastoplastic state, a
+        # transient history or a harmonic response differs beyond the
+        # documented tolerance, or if a non-linear run stopped short of its
+        # full load.
         run: |
           CASES=()
           for case in cantilever_analysis block_3d_analysis cantilever_tri_analysis \
@@ -199,7 +217,11 @@ jobs:
                       plastic_strip_q4_plane_stress_cyclic plastic_plate_thermal_tet10 \
                       plastic_beam_tet10_nlgeom plastic_clamped_beam_hex_nlgeom \
                       plastic_clamped_strip_q4_nlgeom \
-                      plastic_clamped_strip_q4_plane_stress_nlgeom; do
+                      plastic_clamped_strip_q4_plane_stress_nlgeom \
+                      transient_cantilever_hex transient_column_tet10 \
+                      transient_strip_q4_base frequency_response_plate_q4 \
+                      frequency_response_block_hex transient_plastic_beam_hex \
+                      transient_beam_hex_nlgeom; do
             CASES+=(--case results/$case)
           done
           python3 python/scripts/cross_validate.py --skip-calculix "${CASES[@]}" \

@@ -193,7 +193,8 @@ std::vector<std::pair<Scalar, Scalar>> hardening_table(const PlasticityParameter
 void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
                        const std::string& case_name,
                        const std::vector<Mesh::BoundaryFace>& boundary,
-                       const CalculixNonlinearExport* nonlinear = nullptr) {
+                       const CalculixNonlinearExport* nonlinear = nullptr,
+                       const CalculixTransientExport* transient = nullptr) {
   const Mesh& mesh = model.mesh();
   const int dim = mesh.dim();
   // CalculiX numbers the DOFs of a node 1-3 (translations) and 4-6
@@ -203,11 +204,18 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
   const LoadCaseSpec& spec = model.load_case_specs()[l];
   const LoadCaseData& data = model.load_case_data(l);
   const bool thermal = data.temperature.size() > 0;
-  const bool needs_density = spec.gravity.squaredNorm() > 0.0 || spec.centrifugal.enabled;
+  const bool dynamic = transient != nullptr;
+  const bool needs_density =
+      dynamic || spec.gravity.squaredNorm() > 0.0 || spec.centrifugal.enabled;
   bool plastic = false;
-  if (nonlinear != nullptr) {
+  if (nonlinear != nullptr || (dynamic && transient->options.nonlinear)) {
     for (const IsotropicMaterial& m : model.materials()) plastic = plastic || m.plasticity().enabled();
   }
+  const bool damped = dynamic && (transient->options.mass_damping > 0.0 ||
+                                  transient->options.stiffness_damping > 0.0);
+  const int steps = dynamic ? static_cast<int>(std::lround(transient->options.end_time /
+                                                           transient->options.time_step))
+                            : 0;
 
   out << "*HEADING\n";
   out << "SparLab cross-validation export: " << case_name << " / " << spec.name << " ("
@@ -226,6 +234,11 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
       }
     }
     if (needs_density) out << "*DENSITY\n" << field(mat.density()) << "\n";
+    if (damped) {
+      // Rayleigh damping of a direct integration, C = a M + b K.
+      out << "*DAMPING, ALPHA=" << field(transient->options.mass_damping)
+          << ", BETA=" << field(transient->options.stiffness_damping) << "\n";
+    }
     if (thermal) {
       out << "*EXPANSION, ZERO=" << field(mat.reference_temperature()) << "\n"
           << field(mat.thermal_expansion()) << "\n";
@@ -256,9 +269,13 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
   // dead pressure under NLGEOM, where CalculiX's face load would follow the
   // face: it stays among the nodal forces of the undeformed faces. (Without
   // NLGEOM a face load acts on the undeformed face.)
-  const bool pressure_faces =
-      !spec.pressures.empty() &&
-      (nonlinear == nullptr || !nonlinear->nlgeom || nonlinear->follower_pressure);
+  bool finite_step = nonlinear != nullptr && nonlinear->nlgeom;
+  bool follower = nonlinear != nullptr && nonlinear->follower_pressure;
+  if (dynamic && transient->options.nonlinear) {
+    finite_step = transient->options.nonlinear_options.kinematics == Kinematics::Finite;
+    follower = transient->options.nonlinear_options.follower_pressure;
+  }
+  const bool pressure_faces = !spec.pressures.empty() && (!finite_step || follower);
   Vector concentrated = data.mechanical;
   if (pressure_faces) {
     LoadCaseSpec pressures_only;
@@ -268,12 +285,37 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
                                          model.thickness(), model.integration());
   }
 
+  // A transient's amplitude at every step time: the method reads the loads
+  // at those times only, so the table is exact where it is used.
+  const std::string on_amplitude = dynamic ? ", AMPLITUDE=A1" : "";
+  if (dynamic) {
+    const TransientOptions& o = transient->options;
+    out << "*AMPLITUDE, NAME=A1\n";
+    for (int k = 0; k <= steps; ++k) {
+      const Scalar t = k * o.time_step;
+      out << field(t) << ", " << field(o.amplitude.value(t)) << "\n";
+    }
+  }
+
   // One step per leg of the load path, each ramping every load from the last
   // leg's level to its own.
   std::vector<Scalar> levels{1.0};
   if (nonlinear != nullptr && !nonlinear->load_path.empty()) levels = nonlinear->load_path;
   for (const Scalar level : levels) {
-    if (nonlinear == nullptr) {
+    if (dynamic) {
+      // CalculiX's HHT-alpha method with fixed steps; a non-linear run
+      // converged tightly (1e-6 of the residual and the correction, as the
+      // static decks).
+      const TransientOptions& o = transient->options;
+      const bool finite = o.nonlinear && o.nonlinear_options.kinematics == Kinematics::Finite;
+      out << "*STEP" << (finite ? ", NLGEOM" : "") << ", INC=" << 10 * steps << "\n";
+      if (o.nonlinear) {
+        out << "*CONTROLS, PARAMETERS=FIELD\n1.e-6, 1.e-6\n"
+            << "*CONTROLS, PARAMETERS=TIME INCREMENTATION\n20, 30, 200, 200\n";
+      }
+      out << "*DYNAMIC, DIRECT, ALPHA=" << field(o.alpha) << "\n"
+          << field(o.time_step) << ", " << field(steps * o.time_step) << "\n";
+    } else if (nonlinear == nullptr) {
       out << "*STEP\n*STATIC\n";
     } else if (plastic || !nonlinear->nlgeom) {
       // The increments of SparLab's run: the return depends on them.
@@ -304,25 +346,34 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
           << "*STATIC\n"
           << field(dt) << ", 1., " << field(1.0e-6 * dt) << ", " << field(dt) << "\n";
     }
-    out << "*BOUNDARY\n";
-    for (Index d : model.dofs().constrained_dofs()) {
-      const Index node = d / ndpn;
-      const int component = static_cast<int>(d % ndpn) + 1;
-      out << node + 1 << ", " << component << ", " << component << ", "
-          << field(level * model.dofs().prescribed_value(d)) << "\n";
+    // Held DOFs on one card; in a transient the prescribed motions follow
+    // the amplitude on a second.
+    for (const bool moving : {false, true}) {
+      bool header = false;
+      for (Index d : model.dofs().constrained_dofs()) {
+        const Scalar value = model.dofs().prescribed_value(d);
+        if (dynamic && moving != (value != 0.0)) continue;
+        if (!dynamic && moving) continue;
+        if (!header) out << "*BOUNDARY" << (dynamic && moving ? on_amplitude : "") << "\n";
+        header = true;
+        const Index node = d / ndpn;
+        const int component = static_cast<int>(d % ndpn) + 1;
+        out << node + 1 << ", " << component << ", " << component << ", "
+            << field(level * value) << "\n";
+      }
     }
     bool any = false;
     for (Index n = 0; n < mesh.num_nodes(); ++n) {
       for (int k = 0; k < ndpn; ++k) {
         const Scalar f = concentrated(n * ndpn + k);
         if (f == 0.0) continue;
-        if (!any) out << "*CLOAD\n";
+        if (!any) out << "*CLOAD" << on_amplitude << "\n";
         any = true;
         out << n + 1 << ", " << k + 1 << ", " << field(level * f) << "\n";
       }
     }
     const bool distributed = pressure_faces || spec.has_body_loads();
-    if (distributed) out << "*DLOAD\n";
+    if (distributed) out << "*DLOAD" << on_amplitude << "\n";
     for (const PressureLoadSpec& p : spec.pressures) {
       if (!pressure_faces) break;
       for (const auto& face : calculix_faces_of(mesh, boundary, p.region)) {
@@ -360,7 +411,16 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
         out << n + 1 << ", " << field(t_ref + level * (data.temperature(n) - t_ref)) << "\n";
       }
     }
-    out << "*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n";
+    if (dynamic) {
+      // The displacements at the snapshot increments (only the last without
+      // snapshots).
+      const int every = transient->options.snapshot_every > 0
+                            ? transient->options.snapshot_every
+                            : steps;
+      out << "*NODE FILE, FREQUENCY=" << every << "\nU\n*END STEP\n";
+    } else {
+      out << "*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n";
+    }
   }
 }
 
@@ -453,9 +513,42 @@ std::string calculix_element_type(const FemModel& model) {
   throw IoError("no CalculiX element type for this mesh");
 }
 
+std::string calculix_transient_obstacle(const FemModel& model, std::size_t l,
+                                        const TransientOptions& options) {
+  if (options.mass_type == MassType::Lumped) {
+    return "CalculiX's implicit dynamics uses the consistent mass, and the run's is lumped";
+  }
+  if (options.start == TransientOptions::Start::Static) {
+    return "CalculiX's dynamic step starts at rest, and the run starts from the static state";
+  }
+  if (options.amplitude.value(0.0) != 0.0) {
+    return "CalculiX does not start a dynamic step in equilibrium with a load already acting "
+           "at t = 0 as SparLab does (measured: 2.6 % apart in the first step of a sudden "
+           "load); ramp the amplitude up from zero";
+  }
+  if (l >= model.load_case_specs().size()) return "no such load case";
+  const LoadCaseSpec& spec = model.load_case_specs()[l];
+  if (model.load_case_data(l).temperature.size() > 0) return "the load case is thermal";
+  if (spec.centrifugal.enabled) return "the load case rotates";
+  if (options.nonlinear) {
+    const NonlinearOptions& nl = options.nonlinear_options;
+    if (nl.kinematics == Kinematics::Finite && nl.law != HyperelasticModel::SaintVenantKirchhoff) {
+      return "CalculiX's NEO HOOKE is a different strain energy from SparLab's neo-Hookean law";
+    }
+    for (const IsotropicMaterial& m : model.materials()) {
+      if (m.plasticity().kinematic_hardening_modulus > 0.0) {
+        return "CalculiX's HARDENING=KINEMATIC does not reproduce Prager's linear kinematic "
+               "hardening";
+      }
+    }
+  }
+  return "";
+}
+
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
                                               const std::string& case_name,
-                                              const CalculixNonlinearExport* nonlinear) {
+                                              const CalculixNonlinearExport* nonlinear,
+                                              const CalculixTransientExport* transient) {
   if (!model.finalized()) throw IoError("the model must be finalised before export");
   const std::vector<LoadCaseSpec>& specs = model.load_case_specs();
   bool faces_needed = false;
@@ -491,6 +584,18 @@ std::vector<std::string> write_calculix_decks(const FemModel& model, const std::
             [&](std::ostream& out) {
               write_static_deck(out, model, l, case_name, boundary, nonlinear);
             });
+    }
+    if (transient != nullptr && std::find(transient->load_cases.begin(),
+                                          transient->load_cases.end(),
+                                          l) != transient->load_cases.end()) {
+      const std::string obstacle = calculix_transient_obstacle(model, l, transient->options);
+      if (!obstacle.empty()) {
+        throw IoError("the transient of load case '" + specs[l].name +
+                      "' cannot be exported to CalculiX: " + obstacle);
+      }
+      write(base + "_dynamic.inp", [&](std::ostream& out) {
+        write_static_deck(out, model, l, case_name, boundary, nullptr, transient);
+      });
     }
   }
   return paths;

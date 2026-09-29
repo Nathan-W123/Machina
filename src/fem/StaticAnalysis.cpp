@@ -233,8 +233,20 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
   // sums: the resultant of a self-equilibrated load - a thermal strain, or a
   // self-weight carried by a traction - is itself round-off. A case driven by
   // prescribed displacements alone applies no load: its reactions balance
-  // among themselves, measured against their own gross size.
+  // among themselves, measured against the gross force |K| |u| they are
+  // formed from at their DOFs, which bounds their rounding - a prescribed
+  // rigid motion (a shaken base) strains nothing, and its reactions are that
+  // rounding alone.
   EquilibriumCheck& eq = sol.equilibrium;
+  Vector gross = Vector::Zero(k_full_.rows());
+  for (Eigen::Index col = 0; col < k_full_.outerSize(); ++col) {
+    const Scalar uc = std::abs(sol.displacement(col));
+    for (SparseMatrix::InnerIterator it(k_full_, col); it; ++it) {
+      gross(it.row()) += std::abs(it.value()) * uc;
+    }
+  }
+  Vector gross_reactions = Vector::Zero(k_full_.rows());
+  for (Index d : model_.dofs().constrained_dofs()) gross_reactions(d) = gross(d);
   Scalar force_scale = 0.0;
   Scalar applied_moment_scale = 0.0;
   Scalar reaction_scale = 0.0;
@@ -243,14 +255,15 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
     const Vector3 x = model_.mesh().node(n);
     const Vector3 fa = nodal_vector(applied_force, n, dim, ndpn);
     const Vector3 fr = nodal_vector(sol.reactions, n, dim, ndpn);
+    const Scalar gr = std::max(fr.norm(), nodal_vector(gross_reactions, n, dim, ndpn).norm());
     eq.applied_force += fa;
     eq.reaction_force += fr;
     eq.applied_moment += moment_about_origin(x, fa, dim);
     eq.reaction_moment += moment_about_origin(x, fr, dim);
     force_scale += fa.norm();
     applied_moment_scale += x.norm() * fa.norm();
-    reaction_scale += fr.norm();
-    reaction_moment_scale += x.norm() * fr.norm();
+    reaction_scale += gr;
+    reaction_moment_scale += x.norm() * gr;
     if (ndpn == kMaxDofsPerNode) {
       const Vector3 ma = nodal_rotation_part(applied_force, n, ndpn);
       const Vector3 mr = nodal_rotation_part(sol.reactions, n, ndpn);

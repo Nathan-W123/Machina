@@ -151,6 +151,9 @@ TransientResult nonlinear_transient(const FemModel& model, const Assembler& asse
   detail::NonlinearSystem system(model, assembler, load_case, nl);
   result.nonlinear = true;
   result.plastic = system.plastic();
+  for (Index e = 0; e < model.mesh().num_elements(); ++e) {
+    if (system.averaged(e)) result.mean_dilatation = true;
+  }
 
   const DofManager& dofs = model.dofs();
   const std::vector<Index>& free = dofs.free_dofs();
@@ -605,6 +608,7 @@ TransientResult solve_transient(const FemModel& model, const Assembler& assemble
   result.time_step = dt;
   result.num_steps = steps;
   const std::vector<std::vector<Index>> nodes = monitor_nodes(model, options.monitors);
+  result.monitor_nodes = nodes;
   for (const DynamicMonitor& m : options.monitors) {
     result.monitor_names.push_back(m.name);
     result.monitor_units.push_back(monitor_unit(m.quantity));
@@ -825,6 +829,7 @@ FrequencyResponseResult solve_frequency_response(const FemModel& model,
   FrequencyResponseResult result;
   result.load_case_name = model.load_case_specs()[load_case].name;
   const std::vector<std::vector<Index>> nodes = monitor_nodes(model, options.monitors);
+  result.monitor_nodes = nodes;
   for (const DynamicMonitor& m : options.monitors) {
     result.monitor_names.push_back(m.name);
     result.monitor_units.push_back(monitor_unit(m.quantity));

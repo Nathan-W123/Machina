@@ -183,6 +183,7 @@ struct TransientResult {
   std::string load_case_name;
   std::vector<std::string> monitor_names;
   std::vector<std::string> monitor_units;
+  std::vector<std::vector<Index>> monitor_nodes;  ///< the nodes each monitor covers
   std::vector<TransientStep> steps;  ///< the initial state, then every step
   HhtParameters parameters;
   Scalar time_step = 0.0;
@@ -212,6 +213,8 @@ struct TransientResult {
   std::string termination;
   int total_iterations = 0;
   bool plastic = false;
+  /// Non-linear: some elastoplastic element averages its dilatation.
+  bool mean_dilatation = false;
   Scalar max_plastic_strain = 0.0;
 };
 
@@ -252,6 +255,7 @@ struct FrequencyResponseResult {
   std::string load_case_name;
   std::vector<std::string> monitor_names;
   std::vector<std::string> monitor_units;
+  std::vector<std::vector<Index>> monitor_nodes;  ///< the nodes each monitor covers
   std::vector<FrequencyPoint> points;
   std::vector<FrequencySnapshot> snapshots;
   std::vector<std::string> warnings;
