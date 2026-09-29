@@ -181,13 +181,18 @@ class DeviationSurrogate:
             else None
         return self.calibrator.intervals(mu, sd, level, region)
 
-    def assess(self, commanded: HeightMap, setup: Any, *, max_points: int = 1500
+    def assess(self, commanded: Any, setup: Any = None, *, max_points: int = 1500
                ) -> Dict[str, Any]:
-        """The envelope report of a commanded part (see `ood.OODEnvelope`) on
-        at most `max_points` part nodes (evenly spread), with the data source
-        the model learned from."""
+        """The envelope report of a commanded part - a HeightMap with its
+        setup, or a `Sample` - (see `ood.OODEnvelope`) on at most `max_points`
+        part nodes (evenly spread), with the data source the model learned
+        from."""
         if self.ood is None:
             raise PrecompError("this surrogate has no OOD envelope")
+        if isinstance(commanded, Sample):
+            commanded, setup = commanded.commanded, commanded.setup
+        if setup is None:
+            raise ValueError("assess needs the setup with a commanded surface")
 
         def make() -> Dict[str, Any]:
             fm = self.feature_maps(commanded, setup)
@@ -215,18 +220,25 @@ class DeviationSurrogate:
 
 def fit_envelope(samples: Sequence[Sample], features: FeatureConfig, *,
                  points_per_sample: int = 400, seed: int = 0, n_jobs: int = 1,
+                 points: Optional[Tuple[np.ndarray, np.ndarray]] = None,
                  **kwargs: Any) -> OODEnvelope:
     """An OOD envelope from the training samples (their part nodes and
-    descriptors, grouped by part id)."""
-    table = build_table(samples, features, points_per_sample=points_per_sample, mask="part",
-                        rng=seed + 101, stratify=True, n_jobs=n_jobs)
+    descriptors, grouped by part id). `points` = (X, part ids) of part nodes
+    already featurised (e.g. the training table) saves featurising again."""
+    if points is None:
+        table = build_table(samples, features, points_per_sample=points_per_sample,
+                            mask="part", rng=seed + 101, stratify=True, n_jobs=n_jobs)
+        points = (table.X, table.part_id)
+    X, groups = points
+    if X.shape[1] != len(features.names):
+        raise ValueError("the envelope's node features must follow the feature schema")
     D, names = [], None
     for s in samples:
         d, names = global_features(s.commanded, s.setup, features)
         D.append(d)
     return OODEnvelope(seed=seed, **kwargs).fit(
-        table.X, table.part_id, np.stack(D), np.array([s.part_id for s in samples]),
-        point_names=table.feature_names, part_names=names)
+        X, groups, np.stack(D), np.array([s.part_id for s in samples]),
+        point_names=features.names, part_names=names)
 
 
 def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
@@ -295,6 +307,7 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
                                     if s.provenance.get("sparlab_version")}),
         "seed": int(seed), "mask": mask, "points_per_sample": points_per_sample,
         "calibration_sample_ids": sorted(s.sample_id for s in cal)}
+    table = None
     if getattr(model, "kind", None) == "field":
         model.fit_samples(train)
     else:
@@ -304,7 +317,16 @@ def train_surrogate(model: Any, train: Sequence[Sample], *,
         info["n_rows"] = len(table)
     sur = DeviationSurrogate(model, features, data_source=label, training=info, domain=mask)
     if envelope:
-        sur.ood = fit_envelope(train, features, seed=seed, n_jobs=n_jobs)
+        reuse = None
+        if table is not None and mask == "part":
+            # the training table's part nodes, without a prior column, thinned
+            # to at most 400 per sample (the envelope keeps 5000 anyway)
+            ncol = len(features.names)
+            rng = np.random.default_rng(seed + 101)
+            keep = np.concatenate([rng.permutation(np.flatnonzero(table.groups == g))[:400]
+                                   for g in np.unique(table.groups)])
+            reuse = (table.X[np.sort(keep), :ncol], table.part_id[np.sort(keep)])
+        sur.ood = fit_envelope(train, features, seed=seed, n_jobs=n_jobs, points=reuse)
     if cal:
         sur.calibrator = calibrate(sur, cal, points_per_sample=calibration_points,
                                    mondrian=mondrian, seed=seed)

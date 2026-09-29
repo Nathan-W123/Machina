@@ -160,8 +160,11 @@ def cmd_train(args: argparse.Namespace) -> int:
     rest, test = grouped_split(idx, test_fraction=args.test_fraction, seed=args.seed) \
         if args.test_fraction > 0 else (list(idx["sample_id"]), [])
     rest_idx = idx[idx["sample_id"].isin(rest)]
-    train_ids, cal_ids = grouped_split(rest_idx, test_fraction=args.calibration_fraction,
-                                       seed=args.seed + 1)
+    if args.calibration_fraction > 0:
+        train_ids, cal_ids = grouped_split(rest_idx, test_fraction=args.calibration_fraction,
+                                           seed=args.seed + 1)
+    else:                                       # no intervals: said so by predict_interval
+        train_ids, cal_ids = list(rest_idx["sample_id"]), []
     params = _assignments(args.param)
     features = _features(args)
     created = args.created_at or _now()

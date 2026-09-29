@@ -576,6 +576,9 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
     dropped; a compensated variant whose uncompensated run failed is recorded
     as a failure of its own ("dependency failed").
 
+    seed : seeds the perturbations; the perturbation of `points[i]` is drawn
+        from SeedSequence([seed, i, 1]), so resume with the same list of
+        points (and seed) to get the same variants.
     compensator : ``(target, setup) -> commanded`` for the "compensated"
         variant (e.g. surrogate DA with an earlier model); default: one DA
         step from the simulated uncompensated part.

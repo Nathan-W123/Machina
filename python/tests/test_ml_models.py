@@ -69,6 +69,8 @@ def test_the_envelope_flags_an_unseen_family_more_than_known_ones(gbm_surrogate,
     out = [a for a in unseen if not a["in_envelope"]]
     assert all(a["reasons"] for a in out)                     # it says why
     assert known[0]["model_data_source"] == "proxy - not physics"
+    s = proxy_split["test"][0]
+    assert gbm_surrogate.assess(s)["part_score"] == known[0]["part_score"]   # a Sample too
 
 
 @pytest.fixture(scope="module")
