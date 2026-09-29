@@ -85,7 +85,11 @@
 /// change \f$\ln(1 + \alpha\Delta T)/\alpha\f$: a freely heated body is
 /// stress-free. In plane stress the return finds \f$E_{\log,33}\f$ with
 /// \f$T_{33} = 0\f$ (which is \f$S_{33} = 0\f$: the normal is principal),
-/// and the thickness stretches by \f$\exp E_{\log,33}\f$.
+/// and the thickness stretches by \f$\exp E_{\log,33}\f$. Since
+/// \f$C = F^TF\f$ is positive definite at an inverted point too, where
+/// \f$E_{\log}\f$ is that of a valid state with an axis reflected, every
+/// point checks \f$\det F > 0\f$ and an inverted one throws SolverError
+/// (a failed step).
 ///
 /// *Mean dilatation* on the logarithmic volumetric strain: since
 /// \f$\mathrm{tr}\,E_{\log} = \ln J\f$, the average replaces each point's

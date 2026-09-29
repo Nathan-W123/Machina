@@ -88,8 +88,12 @@ struct LogarithmicStrain {
 
 /// The logarithmic strain of the Green-Lagrange strain `green` (engineering
 /// Voigt), with its first derivative.
-/// \throws SolverError when a principal stretch is not positive (an
-///         inverted or degenerate point) or the strain is not finite.
+/// \throws SolverError when an eigenvalue of \f$C = I + 2E\f$ is not
+///         positive (a degenerate point, or an E that no deformation has)
+///         or the strain is not finite. An inverted point is *not* seen
+///         here: \f$C = F^TF\f$ is positive definite at \f$\det F < 0\f$
+///         too, so the element checks the sign of \f$\det F\f$
+///         (Elastoplastic.cpp).
 LogarithmicStrain logarithmic_strain(const Vector6& green);
 
 /// The second Piola-Kirchhoff stress \f$S = P^T T\f$ of the stress T

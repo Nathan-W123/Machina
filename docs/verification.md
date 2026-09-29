@@ -1760,7 +1760,7 @@ were taken:
 ### Logarithmic-strain finite plasticity
 
 `kinematics: finite_logarithmic` (formulation, section 7d). **Unit tests**
-(`tests/test_logarithmic.cpp`, 12 cases):
+(`tests/test_logarithmic.cpp`, 14 cases):
 
 * *the strain and its derivatives* at C = Q diag(lambda) Q^T in a general
   frame: distinct eigenvalues, two equal, `C = I`, `C = s^2 I`, two and three
@@ -1774,8 +1774,8 @@ were taken:
   accuracy); `T : L` is symmetric and `S = P^T T` to `1e-15`; two eigenvalues
   `1e-9` apart give the `P` and `T : L` of the equal pair to `2e-9`; `C = I`
   gives `P = I`; at strains of `1e-6` the strain is `E - E^2 + (4/3) E^3` to
-  `1e-15` (the `log1p` of the eigenvalues of E); an inverted point throws
-  `SolverError`;
+  `1e-15` (the `log1p` of the eigenvalues of E); an E that no deformation
+  has (`C` not positive definite) or a non-finite one throws `SolverError`;
 * *the element tangent* of Hex8, Q4 in plane strain and in plane stress and
   Tet10, with and without mean dilatation, elastic (Hencky), J2 with Voce,
   linear and Prager hardening, Hill48 with Voce, and Chaboche (non-symmetric),
@@ -1789,6 +1789,16 @@ were taken:
   0.9 rad leaves the energy (`1e-12`), the plastic strain, back stress and
   accumulated strain (`1e-11`), `S` and the log strain unchanged, and turns
   the forces, the Kirchhoff and the Cauchy stress (`1e-11`);
+* *inverted points*: Hex8, Q4 in plane strain and plane stress and Tet10,
+  with and without mean dilatation - a reflection `diag(-1/2, 1, 1)` (whose
+  C, log strain and energy are those of a valid compression) and a general
+  inverted F are refused by the element and by the stress recovery with
+  `SolverError`, while a compression to `det F = 0.05` evaluates and a turn
+  by pi (`det F = +1`, negative entries) gives the energy of the unturned
+  state (`1e-12`); a Hex8 block, elastic and with J2, whose end is pushed to
+  `u_x = -1.5 L` in 10 steps stops short of zero volume (`lambda < 2/3`)
+  with every converged state valid - without the check the elastic run
+  converged through it to `lambda = 1` at `det F = -0.76`;
 * *the small-strain limit*: at strains of `1e-6` the forces and tangents of
   the logarithmic and the Green-Lagrange Hex8, Tet10 and Q4 differ by
   `3.3` to `11.9` times the strain (tolerance 20 times), elastic or yielding,

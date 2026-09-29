@@ -70,6 +70,24 @@ void add_geometric(Matrix& k, const Matrix& g, const Vector6& s, Scalar w, int d
   }
 }
 
+/// Logarithmic kinematics: throws SolverError at an inverted point. C = F^T F
+/// is positive definite at det F < 0 too, and E_log, the energy and
+/// tr E_log = ln|det F| are those of a valid state (F with an axis
+/// reflected), which the solver would accept as an equilibrium. A plane
+/// model's F_33 is 1 (plane strain) or exp(E_log,33) > 0 (plane stress), so
+/// the sign is that of the in-plane determinant.
+void refuse_inverted(const Matrix& f, int dim) {
+  Matrix3 f3 = Matrix3::Identity();
+  f3.topLeftCorner(dim, dim) = f;
+  const Scalar j = f3.determinant();
+  if (!(j > 0.0)) {
+    std::ostringstream os;
+    os << "an element is inverted (det F = " << j
+       << "); the load step is too large or the mesh too coarse for this deformation";
+    throw SolverError(os.str());
+  }
+}
+
 Kinematic kinematics_of(const FemModel& model, Index e, const Vector& ue, Kinematics kinematics,
                         bool mean_dilatation, const Vector* temperature) {
   const Mesh& mesh = model.mesh();
@@ -108,6 +126,7 @@ Kinematic kinematics_of(const FemModel& model, Index e, const Vector& ue, Kinema
       // E_log of E (a plane model's C_33 = 1: its normal is principal with
       // E_log,33 = 0), dE_log = P B_NL du.
       const Matrix f = Matrix::Identity(dim, dim) + p.h;
+      refuse_inverted(f, dim);
       p.bnl = voigt6(green_lagrange_operator(f, p.g), dim);
       p.log = logarithmic_strain(voigt6(green_lagrange_voigt(p.h), dim));
       p.strain = p.log.strain;

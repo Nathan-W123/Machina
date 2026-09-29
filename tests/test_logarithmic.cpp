@@ -209,10 +209,15 @@ TEST_CASE("the logarithmic strain and its first and second derivatives are exact
   REQUIRE(relative(logarithmic_strain(engineering(e)).strain, engineering(series)) <= 1.0e-15);
   INFO("worst: log " << worst_log << ", P " << worst_p << ", T : L " << worst_l);
   REQUIRE(worst_log <= 1.0e-14);
-  // An inverted point is refused as a failed step.
-  Vector6 inverted = Vector6::Zero();
-  inverted(0) = -0.6;  // 1 + 2 E_11 < 0
-  REQUIRE_THROWS_AS(logarithmic_strain(inverted), SolverError);
+  // A Green-Lagrange strain that no deformation has - C = I + 2E not
+  // positive definite - or a non-finite one is refused as a failed step.
+  // (C = F^T F of an inverted point is positive definite, so ln C cannot
+  // see an inversion: the element checks det F - see the next test.)
+  Vector6 degenerate = Vector6::Zero();
+  degenerate(0) = -0.6;  // 1 + 2 E_11 < 0
+  REQUIRE_THROWS_AS(logarithmic_strain(degenerate), SolverError);
+  degenerate(0) = std::numeric_limits<Scalar>::quiet_NaN();
+  REQUIRE_THROWS_AS(logarithmic_strain(degenerate), SolverError);
 }
 
 namespace {
@@ -434,6 +439,67 @@ TEST_CASE("logarithmic kinematics is objective: a superposed rotation leaves T, 
       REQUIRE(relative(t2.cauchy, stress_voigt(rot * stress_tensor(t1.cauchy) * rot.transpose())) <=
               1.0e-11);
       REQUIRE(t2.min_jacobian == Approx(t1.min_jacobian).epsilon(1e-13));
+    }
+  }
+}
+
+TEST_CASE("an inverted point is refused with logarithmic kinematics: det F <= 0 throws although "
+          "C = F^T F stays positive definite",
+          "[logarithmic][element]") {
+  // A reflection F = diag(-1/2, 1, 1) has C = diag(1/4, 1, 1), the C of the
+  // compression diag(1/2, 1, 1): the log strain, the energy and |det F| are
+  // those of a valid state, and only the sign of det F tells them apart.
+  // Every inverted F is refused - by the element and by the stress recovery
+  // - while a turn by pi (det F = +1, F with negative entries) and a
+  // compression to det F = 0.05 evaluate, the turn with the energy of the
+  // unturned state.
+  const PlasticityParameters p = j2(1.0e9);
+  const IsotropicMaterial m = steel(&p);
+  struct Case {
+    ElementType type;
+    StressState state;
+  };
+  const std::vector<Case> cases = {{ElementType::Hex8, StressState::ThreeDimensional},
+                                   {ElementType::Quad4, StressState::PlaneStrain},
+                                   {ElementType::Quad4, StressState::PlaneStress},
+                                   {ElementType::Tet10, StressState::ThreeDimensional}};
+  const Matrix3 flip = Vector3(1.0, -1.0, 1.0).asDiagonal();
+  const Matrix3 turn = Vector3(-1.0, -1.0, 1.0).asDiagonal();  // by pi about z
+  for (const Case& c : cases) {
+    FemModel model = one_element(c.type, c.state, m);
+    const int dim = model.dim();
+    const std::vector<PlasticState> virgin(static_cast<std::size_t>(elastoplastic_points(model)));
+    const auto in_plane = [&](const Matrix3& f) { return dim == 3 ? f : plane(f); };
+    for (const bool averaged : {false, true}) {
+      if (averaged && c.state == StressState::PlaneStress) continue;
+      INFO(to_string(c.type) << " " << to_string(c.state)
+                             << (averaged ? ", mean dilatation" : ""));
+      const auto element = [&](const Matrix3& f) {
+        return elastoplastic_element(model, 0, element_motion(model, 0, in_plane(f), 0.0, 1u),
+                                     virgin, averaged, nullptr, 0.0, true,
+                                     Kinematics::FiniteLogarithmic);
+      };
+      const auto stress = [&](const Matrix3& f) {
+        return elastoplastic_stress(model, 0, element_motion(model, 0, in_plane(f), 0.0, 1u),
+                                    virgin, averaged, nullptr, 0.0,
+                                    Kinematics::FiniteLogarithmic);
+      };
+      const Matrix3 reflection = Vector3(-0.5, 1.0, 1.0).asDiagonal();
+      const Matrix3 inverted = large_deformation(1.0) * flip;  // a general inverted F
+      for (const Matrix3& f : {reflection, inverted}) {
+        REQUIRE(in_plane(f).determinant() < 0.0);
+        REQUIRE_THROWS_AS(element(f), SolverError);
+        REQUIRE_THROWS_AS(stress(f), SolverError);
+      }
+      const Matrix3 compressed = Vector3(0.05, 1.0, 1.0).asDiagonal();
+      const ElastoplasticElement squeezed = element(compressed);
+      REQUIRE(squeezed.yielding_points > 0);
+      REQUIRE(stress(compressed).min_jacobian > 0.0);
+      const ElastoplasticElement straight = element(large_deformation(1.0));
+      const ElastoplasticElement turned = element(turn * large_deformation(1.0));
+      REQUIRE(turned.energy == Approx(straight.energy).epsilon(1e-12));
+      REQUIRE(stress(turn * large_deformation(1.0)).min_jacobian ==
+              Approx(stress(large_deformation(1.0)).min_jacobian).epsilon(1e-13));
     }
   }
 }
@@ -773,6 +839,37 @@ TEST_CASE("Hill48 pulled along RD and TD to a stretch of 1.6 keeps the plastic l
     REQUIRE(plastic >= 10);
     REQUIRE(stress_error <= 1.0e-9);
     REQUIRE(ratio_error <= 1.0e-9);
+  }
+}
+
+TEST_CASE("a block crushed past zero volume stops with logarithmic kinematics instead of "
+          "converging to an inverted state",
+          "[logarithmic][solver]") {
+  // One Hex8 on symmetry planes with its end pushed to u_x = -1.5 L in 10
+  // steps: at lambda = 2/3 it is flat, beyond it F_11 < 0 - inverted. The
+  // Hencky energy sees only |det F|, so an inverted state is an equilibrium
+  // of it; the run must stop short of lambda = 2/3 with every converged
+  // state valid, as the neo-Hookean one does.
+  const Specimen s;
+  const PlasticityParameters p = j2(1.5e9);
+  for (const bool plastic : {false, true}) {
+    const IsotropicMaterial m = steel(plastic ? &p : nullptr);
+    const Scalar push = -1.5 * s.length;
+    FemModel model = uniaxial_model(s, m, false, push);
+    Assembler assembler(model);
+    const NonlinearResult r =
+        NonlinearStaticAnalysis(model, assembler, uniaxial_options(s, {}, 10)).solve(0);
+    INFO((plastic ? "J2" : "elastic") << ": stopped at lambda = " << r.load_factor
+                                      << ", min det F " << r.min_jacobian << ": "
+                                      << r.termination);
+    REQUIRE_FALSE(r.completed);
+    REQUIRE(r.load_factor > 0.5);
+    REQUIRE(r.load_factor < 2.0 / 3.0);
+    REQUIRE(r.min_jacobian > 0.0);
+    for (const NonlinearStep& step : r.steps) {
+      REQUIRE(1.0 + step.load_factor * push / s.length > 0.0);
+      REQUIRE(step.monitors[1] > 0.0);  // the lateral faces move out, not through
+    }
   }
 }
 

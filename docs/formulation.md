@@ -1182,6 +1182,16 @@ the return finds `E_log,33` with `T_33 = 0`, which is `S_33 = 0` (the
 normal is a principal direction of C), and the thickness stretches by
 `exp(E_log,33)`.
 
+`E_log` sees only `C = F^T F`, which is positive definite at an inverted
+point (`det F < 0`) too, where `E_log`, the energy and `tr E_log =
+ln |det F|` are those of a valid state with one axis reflected - an
+equilibrium the solver would otherwise accept. Each point therefore checks
+the sign of `det F` (the in-plane determinant in a plane model, whose `F_33`
+is 1 or `exp(E_log,33)`), and an inverted one fails the step as with the
+neo-Hookean law: the line search shortens a step into it and load control
+cuts one that ends there, so a block crushed to zero volume stops short of
+it instead of converging on the far side.
+
 *Mean dilatation* acts on the logarithmic volumetric strain `ln J`: each
 point's `ln J` is replaced by the element's volume average,
 `E_log_bar = E_log + (1/3) m (mean(ln J) - ln J)`, exactly the log strain of

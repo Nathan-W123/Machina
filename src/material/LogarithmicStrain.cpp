@@ -117,7 +117,7 @@ LogarithmicStrain logarithmic_strain(const Vector6& green) {
     const Scalar stretch2 = 1.0 + 2.0 * out.green(a);
     if (!(stretch2 > 0.0) || !std::isfinite(stretch2)) {
       std::ostringstream os;
-      os << "a point is inverted or degenerate: a principal stretch squared of C is "
+      os << "a point is degenerate: a principal stretch squared of C is "
          << stretch2 << "; the load step is too large or the mesh too coarse";
       throw SolverError(os.str());
     }
