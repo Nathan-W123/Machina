@@ -290,6 +290,11 @@ int main(int argc, char** argv) {
           "the deck has topology.enabled = false; sparlab_topopt needs a topology "
           "section. Use sparlab_solve for a plain analysis");
     }
+    if (config.nonlinear.enabled) {
+      throw ConfigError(
+          "the deck enables the non-linear analysis, but the optimiser designs for linear "
+          "statics; run the non-linear analysis of a design with sparlab_solve");
+    }
 
     const std::string out_dir =
         cli.value("output", app::default_output_directory(config.name));

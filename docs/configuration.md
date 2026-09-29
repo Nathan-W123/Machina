@@ -378,7 +378,7 @@ body force, rotation or temperature - is an error unless
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `linear.type` | string | `auto` | `auto`, `simplicial_ldlt`, `amg_cg` (also `amg`, `multigrid`), `conjugate_gradient`, `simplicial_llt`, `sparse_lu`, `dense_lu` |
-| `linear.residual_tolerance` | number | `1e-8` | scaled residual `||K u - f|| / ||f||` accepted after each solve, whatever the solver |
+| `linear.residual_tolerance` | number | `1e-8` | scaled residual `||K u - f|| / ||f||` accepted after each solve, whatever the solver. A solve whose backward error `||K u - f|| / || |K| |u| + |f| ||` is at round-off (64 machine epsilon) is accepted too: its residual is the rounding of the sums that form `K u`, which in a slender structure can exceed `1e-8 ||f||` (`docs/formulation.md`, section 5) |
 | `linear.iterative_tolerance` | number | `1e-12` | relative residual the CG solvers iterate to |
 | `linear.max_iterations` | integer | `0` | CG iteration cap; `0` means `2n` for Jacobi CG and 1000 for multigrid CG |
 | `linear.pivot_tolerance` | number | `1e-14` | smallest accepted `min/max` LDL^T pivot ratio |
@@ -468,6 +468,96 @@ only stretches the structure has no positive load factor and is reported
 as such. The results are `buckling_<solid|topology>.csv` with every mode's
 load factor, residual and energy share in solid material, and, with
 `output.vtk` and `output.mode_shapes`, one VTK file per mode.
+
+## `nonlinear`
+
+```json
+"nonlinear": {
+  "enabled": true,
+  "material_model": "saint_venant_kirchhoff",
+  "method": "load_control",
+  "steps": 10,
+  "residual_tolerance": 1e-8,
+  "follower_pressure": true,
+  "load_factors": [0.25, 0.5],
+  "monitors": [
+    { "name": "tip_deflection", "component": "y", "region": { "box": { "xmin": 1.0 } } },
+    { "name": "root_force", "component": "y", "quantity": "reaction",
+      "region": { "box": { "xmax": 0.0 } } }
+  ],
+  "load_cases": ["tip_force"]
+}
+```
+
+A geometrically non-linear static analysis of each selected load case: large
+displacement and rotation in the total Lagrangian form, the equilibrium
+solved by Newton's method along a load path (`docs/formulation.md`, section
+7c). One load factor lambda scales every load of the case together - forces,
+pressures, self-weight and body forces, the rotation, the temperature change
+and prescribed displacements - from 0 to 1. `sparlab_solve` runs it after the
+linear analysis, which stays in the summary for comparison; `sparlab_topopt`
+refuses a deck with it enabled (the optimisation is linear).
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `enabled` | bool | `false` | run the non-linear analysis |
+| `material_model` | string | `saint_venant_kirchhoff` | `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only |
+| `method` | string | `load_control` | `load_control`: Newton at prescribed load factors. `arc_length`: Crisfield's cylindrical arc-length method, which follows the path through limit points |
+| `steps` | integer | `10` | load control: the equal steps to lambda = 1 it starts with (halved on failure, lengthened again after easy steps, never beyond this size). Arc length: the first arc length is that of the first of `steps` equal load increments |
+| `max_steps` | integer | `500` | converged steps before the run stops |
+| `max_iterations` | integer | `25` | Newton iterations per step |
+| `max_cuts` | integer | `12` | successive halvings of a failing step before the run stops |
+| `residual_tolerance` | number | `1e-8` | out-of-balance force over the load scale (the largest of the applied loads, the reactions and the thermal forces) |
+| `displacement_tolerance` | number | `1e-8` | Newton correction over the displacement increment of the step |
+| `line_search` | bool | `true` | energy line search along each Newton direction |
+| `follower_pressure` | bool | `true` | pressures act on the deformed faces, their direction and area following the deformation; `false` keeps them on the reference faces (dead) |
+| `load_factors` | array of numbers | none | load control: load factors in (0, 1), strictly increasing, that the path passes through exactly, so the results are recorded at chosen load levels. Not with `arc_length` |
+| `target_load_factor` | number | `1` | arc length: the load factor where the run stops, reached exactly by a last load-controlled step |
+| `desired_iterations` | integer | `5` | arc length: the Newton iterations per step the arc length adapts towards |
+| `min_arc_ratio`, `max_arc_ratio` | number | `1e-6`, `10` | arc length: bounds on the arc length relative to the first one |
+| `monitors` | array | none | quantities recorded at every converged step. Each has a `name`, a node `region`, a `component` (`x`, `y`, `z`) and a `quantity`: `displacement` (default) is the mean over the region's nodes [m], `reaction` the sum of the support reactions over them [N] |
+| `load_cases` | array of strings | all | load cases to analyse, by name |
+
+A load case whose path meets a limit or bifurcation point cannot be followed
+by load control past it. The analysis rejects a step whose Newton iterations,
+from a stable state, meet a tangent with a negative pivot, or whose converged
+state lies farther from the tangent predictor than the predicted increment
+itself (a jump to another branch). It closes in on the point by halving and
+stops when `max_cuts` halvings have failed to pass it. `summary.json` then
+records `completed: false`, the reason and the bracket of the critical load
+factor (`critical_load_factor_bracket`), and the console line says `STOPPED`.
+The arc-length method follows such a path, and records the negative pivots
+of each converged state, which mark the unstable stretches.
+
+Refused with a message before any step: the neo-Hookean law in plane stress
+(its plane-stress form, which needs the thickness stretch that makes S_33
+vanish, is not implemented), the neo-Hookean law under a temperature change
+in a material with thermal expansion (the thermal strain is modelled for
+Saint Venant-Kirchhoff only), and the arc-length method with a non-zero
+prescribed displacement (its constraint measures the free displacements
+only; drive a prescribed displacement by load control, which the arch study
+does to follow a snap-through in displacement control).
+
+The results, per load case:
+
+| File | Content |
+|------|---------|
+| `nonlinear_<lc>.csv` | one row per converged step: load factor, Newton iterations, halvings, the relative residual at convergence, the arc length, the negative pivots of the tangent (`-1` when a non-symmetric tangent was factorised by LU, which reports no inertia), the largest displacement, and the monitors |
+| `nonlinear_displacement_<lc>.csv`, `nonlinear_reactions_<lc>.csv` | nodal displacements and reactions at the final load factor (with `output.csv`) |
+| `nonlinear_stress_<lc>.csv` | element Cauchy stress (with `szz` in plane strain), its von Mises stress and the second Piola-Kirchhoff stress (with `output.csv`) |
+| `nonlinear_<lc>.vtk` | displacement, Cauchy stress and von Mises stress at the final state (with `output.vtk`) |
+
+The `nonlinear` block of `summary.json` holds, per load case, whether it
+reached lambda = 1, the steps, iterations and halvings, the largest
+displacement beside the linear analysis's, the strain energy, the largest
+Green-Lagrange strain, the smallest volume ratio J, the largest von Mises
+stress, the final monitors, the force and moment balance of the deformed
+body, which factorisation the tangent took, and warnings - for a run that
+stopped, a final state that is not stable, a non-symmetric tangent whose
+stability is therefore not assessed, and a Saint Venant-Kirchhoff state
+whose strains exceed the law's range (Green strain above 0.05, or a volume
+ratio J below 1/sqrt(3): below a stretch of 1/sqrt(3) the law's compressive
+force falls again).
 
 ## `topology`
 
@@ -717,12 +807,21 @@ duplicate a deck. Each corresponds to one deck field:
 --tag NAME               appended to the case name in summary.json
 ```
 
-`sparlab_solve` takes `--solver`, `--modes` and `--buckling` too. With
-`--export-calculix` it additionally writes one CalculiX input deck per load
-case (`calculix_<case>.inp`: CPS4 / CPE4, CPS3 / CPE3, C3D8, C3D4 or C3D10
+`sparlab_solve` takes `--solver`, `--modes` and `--buckling` too, and
+`--nonlinear`, which enables the non-linear analysis with the deck's
+`nonlinear` settings or their defaults. With `--export-calculix` it
+additionally writes one CalculiX input deck per load case
+(`calculix_<case>.inp`: CPS4 / CPE4, CPS3 / CPE3, C3D8, C3D4 or C3D10
 elements, the same nodes, supports and nodal loads, every field within
 CalculiX's 20 characters) into the output directory, which is what
 `scripts/run_cross_validation.sh` feeds to `ccx`, as a static step and, for a
-run with buckling, as a `*BUCKLE` step.
+run with buckling, as a `*BUCKLE` step. A non-linear Saint Venant-Kirchhoff
+case also goes out as `calculix_<case>_nlgeom.inp`: a `*STEP, NLGEOM` with
+CalculiX's own load cards (a follower `*DLOAD` pressure, `CENTRIF`, `GRAV`;
+a dead pressure as the nodal forces of the reference faces), increments of
+at most 1/50 of the load (CalculiX lags a centrifugal load at the deformed
+position within an increment) and convergence controls of 1e-6 on residual
+and correction. A neo-Hookean case is not exported: CalculiX's `NEO HOOKE` is
+a different strain energy.
 
 Run any app with `--help` for its full flag list.

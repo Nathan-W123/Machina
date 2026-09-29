@@ -11,6 +11,7 @@ import glob
 import os
 from typing import Dict, List, Optional, Tuple
 
+import matplotlib.ticker
 import numpy as np
 import pandas as pd
 
@@ -920,7 +921,9 @@ def plot_sensitivity_projection(directory: str, path: str) -> str:
 # Cross-validation against independent codes
 # ---------------------------------------------------------------------------
 def plot_cross_validation(directory: str, path: str) -> str:
-    """Largest relative nodal-displacement difference per code and load case."""
+    """Largest relative nodal-displacement difference per code and load case:
+    the linear solutions and, where a deck has one, the large-deflection
+    state."""
     summary = load_json(os.path.join(directory, "summary.json"))
     codes = summary.get("codes", {})
     tolerances = summary.get("tolerances", {})
@@ -932,14 +935,18 @@ def plot_cross_validation(directory: str, path: str) -> str:
     if not rows:
         raise ValueError("cross-validation summary lists no comparisons")
 
-    # The slot follows the code, not its position among the codes present, so
-    # scikit-fem keeps its colour on a runner where CalculiX is not installed.
+    # Colour follows the code - the slot does not depend on which codes are
+    # present, so scikit-fem keeps its colour on a runner without CalculiX -
+    # and the marker the comparison: a circle for the linear solution, a
+    # diamond, set just below, for the large-deflection state.
     code_names = ["scikit-fem", "calculix"]
     st.require_scatter_series(len(code_names), "codes")
-    present = [code for code in code_names if any(code in r[3] for r in rows)]
+    nonlinear_of = {"scikit-fem": "scikit-fem non-linear", "calculix": "calculix NLGEOM"}
+    present = [code for code in code_names
+               if any(code in r[3] or nonlinear_of[code] in r[3] for r in rows)]
     # The legend gets a row of its own beneath the panel: beside it, it took a
     # third of the width from a log axis spanning ten decades.
-    fig, grid, legend_ax = _grid_with_legend_row(7.4, 0.36 * len(rows) + 3.0, 1, 1)
+    fig, grid, legend_ax = _grid_with_legend_row(7.4, 0.36 * len(rows) + 3.4, 1, 1)
     ax = grid[0, 0]
     y = np.arange(len(rows))[::-1]
     floors = set()
@@ -947,31 +954,54 @@ def plot_cross_validation(directory: str, path: str) -> str:
     for slot, code in enumerate(code_names):
         if code not in present:
             continue
-        xs, ys, info_x, info_y = [], [], [], []
-        for position, (_c, _e, _l, results) in zip(y, rows):
-            entry = results.get(code)
-            if entry is None:
-                continue
-            # passed is None for a comparison between two different
-            # idealisations (a plane element CalculiX expands through the
-            # thickness, at nu != 0): recorded, not judged.
-            if entry.get("passed") is None:
-                info_x.append(entry["max_rel_diff"])
-                info_y.append(position)
-            else:
-                xs.append(entry["max_rel_diff"])
-                ys.append(position)
-            floor = entry.get("frd_rounding_floor_rel")
-            if floor:
-                floors.add(float(floor))
+        colour = st.series_color(slot)
         version = codes.get(code, {}).get("version", "")
-        ax.plot(xs, ys, "o", color=st.series_color(slot), markersize=7,
-                label=f"{code} {version}".strip())
-        if info_x:
-            informational += len(info_x)
-            ax.plot(info_x, info_y, "o", color=st.series_color(slot), markersize=7,
-                    markerfacecolor="none", markeredgewidth=1.5,
-                    label=f"{code}: different idealisation, not judged")
+        for key, marker, offset, kind in ((code, "o", 0.0, "linear"),
+                                          (nonlinear_of[code], "D", -0.22, "large deflection")):
+            judged_x, judged_y, info_x, info_y, own_x, own_y = [], [], [], [], [], []
+            for position, (_c, _e, _l, results) in zip(y, rows):
+                entry = results.get(key)
+                if entry is None:
+                    continue
+                floor = entry.get("frd_rounding_floor_rel")
+                if floor:
+                    floors.add(float(floor))
+                # passed is None for a comparison between two idealisations
+                # (a plane element CalculiX expands through the thickness at
+                # nu != 0, CalculiX's own thermal model at finite strain):
+                # recorded, not judged.
+                if entry.get("passed") is None:
+                    info_x.append(entry["max_rel_diff"])
+                    info_y.append(position + offset)
+                    continue
+                # Where CalculiX's formulation of a load differs from SparLab's,
+                # the judged number is CalculiX against scikit-fem solving
+                # CalculiX's problem; SparLab's own difference is drawn apart.
+                judged_x.append(entry.get("max_rel_diff_judged", entry["max_rel_diff"]))
+                judged_y.append(position + offset)
+                if "max_rel_diff_judged" in entry:
+                    own_x.append(entry["max_rel_diff"])
+                    own_y.append(position + offset)
+            if not (judged_x or info_x):
+                continue
+            label = f"{code} {version}".strip() + f", {kind}"
+            if key == "scikit-fem non-linear":
+                label = "scikit-fem, large deflection (its own total Lagrangian solver)"
+            elif key == "calculix NLGEOM":
+                label = "calculix, large deflection (*STEP, NLGEOM)"
+            size = 7 if marker == "o" else 6
+            if judged_x:
+                ax.plot(judged_x, judged_y, marker, color=colour, markersize=size, label=label)
+            if info_x:
+                informational += len(info_x)
+                ax.plot(info_x, info_y, marker, color=colour, markersize=size,
+                        markerfacecolor="none", markeredgewidth=1.5,
+                        label=f"{code}, {kind}: different idealisation, not judged")
+            if own_x:
+                ax.plot(own_x, own_y, "s", color=colour, markersize=5.5,
+                        markerfacecolor="none", markeredgewidth=1.2,
+                        label=f"{code}, {kind}: SparLab vs CalculiX's own formulation, "
+                              "not judged")
     tol_lines = [
         ("skfem", "scikit-fem tolerance", 0, "--", "scikit-fem"),
         ("calculix_solid", "CalculiX tolerance", 1, "--", "calculix"),
@@ -998,22 +1028,27 @@ def plot_cross_validation(directory: str, path: str) -> str:
     st.figure_title(
         fig, "Cross-validation: nodal displacements vs independent codes",
         f"{len(rows)} load cases, {len(present)} "
-        f"code{'s' if len(present) != 1 else ''}; {verdict}",
+        f"code{'s' if len(present) != 1 else ''}, linear and large-deflection; {verdict}",
     )
     handles, labels = ax.get_legend_handles_labels()
-    legend_ax.legend(handles, labels, loc="center", ncol=2, fontsize=7.8, frameon=False,
+    legend_ax.legend(handles, labels, loc="center", ncol=2, fontsize=7.4, frameon=False,
                      columnspacing=1.6)
     st.annotate_note(
         fig,
         "Same mesh, material, supports and nodal loads in every code. scikit-fem "
-        "uses the same elements (bilinear, trilinear and linear simplices), so its "
-        "differences are solver round-off. CalculiX C3D8 and C3D4 are the same "
-        "elements as SparLab's Hex8 and Tet4. Its plane elements (CPS4, CPS3) are "
-        "expanded into a layer of solid elements, which matches plane stress only "
-        "for nu = 0; plane comparisons at nu != 0 are drawn hollow and not judged. "
-        "CalculiX results are read from the .frd file, which carries six "
-        "significant digits, so differences below the dotted floor are its output "
-        "rounding.",
+        "uses the same elements (bilinear, trilinear, linear and quadratic "
+        "simplices), so its differences are solver round-off - larger only on the "
+        "slender elastica cantilever, whose conditioning amplifies it. CalculiX C3D8, "
+        "C3D4 and C3D10 are the same elements as SparLab's Hex8, Tet4 and Tet10; its "
+        "plane elements are a layer of solid elements, which matches plane stress "
+        "only for nu = 0, so plane-stress comparisons at nu != 0 are hollow and not "
+        "judged. Where CalculiX's own formulation of a load differs (the "
+        "element-average temperature of a C3D8, the C3D10's rules for a centrifugal "
+        "load and a curved face), the filled point is CalculiX against scikit-fem "
+        "solving CalculiX's problem - the judged number - and the square SparLab's "
+        "difference to CalculiX. CalculiX results are read from the .frd file, which "
+        "carries six significant digits, so differences below the dotted floor are "
+        "its output rounding.",
     )
     return st.save_figure(fig, path)
 
@@ -1740,5 +1775,216 @@ def plot_buckling_cross_validation(directory: str, path: str) -> str:
         "smaller. Which detail of CalculiX's stress stiffness accounts for it has not "
         "been identified; the tolerance records the measured size, it does not "
         "explain it.",
+    )
+    return st.save_figure(fig, path)
+
+
+# ---------------------------------------------------------------------------
+# Verification: geometrically non-linear statics
+# ---------------------------------------------------------------------------
+
+def plot_arch_snap_through(directory: str, path: str) -> str:
+    """The shallow arch's force-deflection path, its unstable stretch, the
+    limit load and where load control stopped."""
+    table = load_csv(os.path.join(directory, "arch_snap_through.csv"))
+    block = load_json(os.path.join(directory, "summary.json")).get("arch_snap_through")
+    if not block:
+        raise ValueError("summary.json has no arch_snap_through block")
+    mm = 1.0e3
+    deflection = table["crown_deflection[m]"].to_numpy() * mm
+    force = table["force_arc_length[N]"].to_numpy()
+    control = table["force_displacement_control[N]"].to_numpy()
+    unstable = table["negative_pivots_arc_length"].to_numpy() > 0
+    fig, ax = st.figure(7.4, 4.6)
+    # The unstable stretch: states whose tangent has a negative pivot.
+    if unstable.any():
+        first = int(np.argmax(unstable))
+        last = len(unstable) - 1 - int(np.argmax(unstable[::-1]))
+        lo = 0.5 * (deflection[first - 1] + deflection[first]) if first > 0 else deflection[0]
+        hi = (0.5 * (deflection[last] + deflection[last + 1]) if last + 1 < len(deflection)
+              else deflection[-1])
+        ax.axvspan(lo, hi, color=st.GRID, alpha=0.6, linewidth=0.0,
+                   label="unstable: the tangent has a negative pivot")
+    ax.plot(deflection, force, "-", color=st.series_color(0), linewidth=1.6)
+    ax.plot(deflection[~unstable], force[~unstable], "o", color=st.series_color(0),
+            markersize=5.5, label="arc length, stable")
+    ax.plot(deflection[unstable], force[unstable], "o", markerfacecolor=st.SURFACE,
+            markeredgecolor=st.series_color(0), markeredgewidth=1.3, markersize=5.5,
+            label="arc length, unstable")
+    ax.plot(deflection, control, "x", color=st.series_color(1), markersize=6.0,
+            markeredgewidth=1.3, label="displacement control")
+    limit = float(block["limit_force_N"])
+    limit_x = float(block["limit_deflection_m"]) * mm
+    ax.annotate(f"limit {limit:.2f} N", (limit_x, limit), xytext=(-6, 9),
+                textcoords="offset points", ha="right", fontsize=8,
+                color=st.INK_SECONDARY)
+    # Load control's stop, and the jump it refuses: the far branch at the same
+    # force, on the rising stretch after the lowest sample.
+    stop = float(block["load_control_stop_force_N"])
+    stop_x = float(block["load_control_stop_deflection_m"]) * mm
+    valley = int(np.argmin(np.where(deflection > limit_x, force, np.inf)))
+    rising_x, rising_f = deflection[valley:], force[valley:]
+    ax.plot([stop_x], [stop], "s", color=st.series_color(2), markersize=6.5,
+            label="load control, last converged")
+    if len(rising_f) > 1 and rising_f.max() > stop:
+        far = float(np.interp(stop, rising_f, rising_x))
+        ax.annotate("", xy=(far, stop), xytext=(stop_x, stop),
+                    arrowprops=dict(arrowstyle="->", color=st.INK_MUTED, linewidth=1.0,
+                                    linestyle="--"))
+        ax.annotate("the snap that load control refuses", ((stop_x + far) / 2.0, stop),
+                    xytext=(0, -13), textcoords="offset points", ha="center", fontsize=8,
+                    color=st.INK_SECONDARY)
+    ax.set_xlabel("crown deflection [mm]")
+    ax.set_ylabel("crown force on the half model [N]")
+    top = 1.35 * limit
+    ax.set_ylim(0.0, top)
+    # The frame ends a little past where the stiffening branch leaves it.
+    exit_x = float(np.interp(top, rising_f, rising_x)) if rising_f.max() > top else deflection[-1]
+    ax.set_xlim(0.0, 1.08 * exit_x)
+    st.title(ax, "Snap-through of a shallow arch: one path, three solution methods",
+             "clamped circular arch, half span 1 m, rise 0.1 m, 20 x 20 mm section, "
+             "E = 70 GPa, plane stress; half model of 60 x 4 Q4 cells, Saint "
+             "Venant-Kirchhoff; the path continues to 20 kN at 224 mm")
+    st.legend(ax, loc="lower right")
+    st.annotate_note(
+        fig,
+        "The arc-length method follows the path through both limit points in "
+        f"{int(block['arc_length_steps'])} steps. Displacement control, driving the crown "
+        "to the same deflections, reproduces the force at every sample to "
+        f"{float(block['largest_force_difference_over_limit']):.1e} of the limit load, and "
+        "the force-controlled tangent has one more negative pivot exactly where the "
+        f"force falls ({int(block['inertia_points_checked']) - int(block['inertia_mismatches'])} "
+        f"of {int(block['inertia_points_checked'])} points). Load control stops at "
+        f"{stop:.3f} N and rejects {float(block['load_control_bound_force_N']):.3f} N, "
+        f"bracketing the limit found by a 60-station displacement sweep ({limit:.4f} N).",
+    )
+    return st.save_figure(fig, path)
+
+
+def plot_elastica(directory: str, path: str) -> str:
+    """The Tet10 cantilever against Euler's elastica: the tip state, and the
+    error set against the continuum-elastica gap it converges to."""
+    from matplotlib.lines import Line2D
+
+    table = load_csv(os.path.join(directory, "elastica.csv"))
+    orders = load_csv(os.path.join(directory, "elastica_orders.csv")).set_index("k[-]")
+    finest = int(table["nx"].max())
+    fig, (left, right) = st.figure(9.6, 4.4, ncols=2)
+    ref = table[table["nx"] == finest].sort_values("k[-]")
+    k = np.concatenate([[0.0], ref["k[-]"].to_numpy()])
+    for slot, (column, label) in enumerate((("deflection", "tip deflection v / L"),
+                                            ("shortening", "tip shortening / L"))):
+        exact = np.concatenate([[0.0], ref[f"{column}_elastica[-]"].to_numpy()])
+        left.plot(k, exact, "-", color=st.series_color(slot), linewidth=1.6)
+        left.plot(ref["k[-]"], ref[f"{column}[-]"], "o", color=st.series_color(slot),
+                  markersize=5.0)
+        # Direct label above the curve, in text ink.
+        left.annotate(label, (8.0, float(np.interp(8.0, k, exact))), xytext=(0, 8),
+                      textcoords="offset points", ha="center", fontsize=8.5,
+                      color=st.INK_SECONDARY)
+    linear = np.linspace(0.0, 3.0, 20)
+    left.plot(linear, linear / 3.0, "--", color=st.INK_MUTED, linewidth=1.0)
+    handles = [Line2D([], [], color=st.INK_SECONDARY, linewidth=1.6, label="elastica"),
+               Line2D([], [], color=st.INK_SECONDARY, marker="o", linestyle="none",
+                      label=f"Tet10, {finest} cells"),
+               Line2D([], [], color=st.INK_MUTED, linestyle="--", linewidth=1.0,
+                      label="linear theory, kL/3")]
+    left.legend(handles=handles, loc="lower right")
+    left.set_xlabel("k = P L^2 / EI [-]")
+    left.set_ylabel("displacement / L [-]")
+    left.set_ylim(0.0, 1.0)
+    left.set_xlim(0.0, 10.4)
+    st.title(left, "Tip of the cantilever", wrap=46)
+
+    scale = 1.0e4
+    for slot, nx in enumerate(sorted(table["nx"].unique())[-2:]):
+        sub = table[table["nx"] == nx].sort_values("k[-]")
+        right.plot(sub["k[-]"], scale * sub["deflection_error[-]"], "o-",
+                   color=st.series_color(slot), markersize=4.5, label=f"error, {nx} cells")
+    gap = orders["deflection_gap[-]"]
+    right.plot(gap.index, scale * gap.to_numpy(), "--", color=st.INK_SECONDARY, linewidth=1.2,
+               label="their Richardson limit: continuum minus elastica")
+    right.axhline(0.0, color=st.INK_MUTED, linewidth=0.8)
+    right.set_ylim(-0.05, 1.4 * scale * float(gap.max()))
+    right.set_xlabel("k = P L^2 / EI [-]")
+    right.set_ylabel("tip deflection error [1e-4 L]")
+    st.title(right, "Error, and the gap it converges to", wrap=46)
+    st.legend(right, loc="upper left")
+    st.figure_title(
+        fig, "Euler's elastica: a Tet10 cantilever at large rotation",
+        "L = 1 m, h = 0.01 m square, E = 210 GPa, nu = 0, clamped, dead tip force; Saint "
+        "Venant-Kirchhoff, load control through k = 1 ... 10; 25, 50, 100 x 2 x 2 cells")
+    low = float(orders[["deflection_order[-]", "shortening_order[-]"]].min().min())
+    high = float(orders[["deflection_order[-]", "shortening_order[-]"]].max().max())
+    st.annotate_note(
+        fig,
+        "At k = 10 the tip has moved 0.81 L and turned 1.43 rad, where the linear analysis "
+        "puts it at 3.3 L. The errors of the 25, 50 and 100-cell meshes converge at "
+        f"order {low:.2f} to {high:.2f} (Richardson, three meshes; the 25-cell errors are "
+        "negative, below the right panel) to a limit that is not zero: the continuum is "
+        "not the beam - shear adds 0.6 (h/L)^2 of the deflection and the Saint "
+        "Venant-Kirchhoff bending moment softens with the curvature. The finest mesh sits "
+        "just below that gap at every k, so what remains on it is the model's gap, not "
+        "discretisation.",
+    )
+    return st.save_figure(fig, path)
+
+
+def plot_finite_strain_tube(directory: str, path: str) -> str:
+    """RMS displacement error of the tube at finite strain against the exact
+    solution, per load and element, under refinement."""
+    table = load_csv(os.path.join(directory, "hyperelastic_cylinder.csv"))
+    summary = load_json(os.path.join(directory, "summary.json")).get("hyperelastic_cylinder", {})
+    cases = [("inflation", "Inflation, neo-Hookean", "follower pressure 1.5 MPa, E = 10 MPa"),
+             ("spin", "Spin, neo-Hookean", "200 rad/s, deformed-position load"),
+             ("heating", "Heating, Saint Venant-Kirchhoff", "bore +100 K, alpha = 5e-4 /K")]
+    fig, axes = st.figure(10.4, 4.2, ncols=3, sharey=True)
+    for ax, (case, label, detail) in zip(axes, cases):
+        sub_case = table[table["case"] == case]
+        # The Q4 goes last and dashed: on the meshes both run, the one-cell-deep
+        # Hex8 section is exactly plane strain and its errors equal the Q4's.
+        for element in ("Tri3", "Hex8", "Tet10", "Quad4"):
+            sub = sub_case[sub_case["element"] == element].sort_values("h[m]")
+            if sub.empty:
+                continue
+            slot = ELEMENT_SLOTS.get(element, 4) if element != "Tri3" else 4
+            ax.plot(sub["h[m]"], sub["u_rms_error[-]"],
+                    ELEMENT_MARKERS[element] + ("--" if element == "Quad4" else "-"),
+                    color=st.series_color(slot), markersize=4.5,
+                    label=ELEMENT_NAMES[element])
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ticks = [0.002, 0.005, 0.01, 0.02, 0.05]
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([f"{t:g}" for t in ticks])
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlabel("radial cell size h [m]")
+        stretch = summary.get(case, {}).get("bore_hoop_stretch_exact")
+        subtitle = detail + (f"; bore hoop stretch {stretch:.4f}" if stretch else "")
+        st.title(ax, label, subtitle, wrap=34)
+    axes[0].set_ylabel("RMS displacement error / RMS exact [-]")
+    # Slope guides for orders 2 and 3, anchored at the coarsest Q4 and Tet10 points.
+    for order, element in ((2.0, "Quad4"), (3.0, "Tet10")):
+        sub = table[(table["case"] == "inflation") & (table["element"] == element)]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("h[m]")
+        h = sub["h[m]"].to_numpy()
+        e0 = float(sub["u_rms_error[-]"].to_numpy()[-1]) * 0.35
+        guide = e0 * (h / h[-1]) ** order
+        axes[0].plot(h, guide, ":", color=st.INK_MUTED, linewidth=1.0)
+        axes[0].annotate(f"order {order:g}", (h[0], guide[0]), xytext=(2, -8),
+                         textcoords="offset points", fontsize=7.5, color=st.INK_MUTED)
+    st.legend(axes[-1], loc="lower right")
+    st.annotate_note(
+        fig,
+        "Quarter section of a tube a = 0.1 m, b = 0.2 m in plane strain (the Hex8 and "
+        "Tet10 sections one cell deep with u_z = 0), in ten load-control steps. The "
+        "reference solves the radial equilibrium of the finite deformation exactly (a "
+        "two-point boundary-value problem by shooting), so the error must vanish at the "
+        "element's order: 2 for the linear elements and 3 for the Tet10, whose edge nodes "
+        "lie on the curved surfaces. On the meshes both run, the Q4 errors (dashed) equal "
+        "the Hex8 errors: the one-cell-deep Hex8 section held at u_z = 0 is exactly plane "
+        "strain.",
     )
     return st.save_figure(fig, path)

@@ -254,16 +254,18 @@ Scalar profile_difference(Scalar a, Scalar b, const std::function<Scalar(Scalar)
   return diff / scale;
 }
 
+Selector box_selector() {
+  Selector s;
+  s.kind = SelectorKind::Box;
+  return s;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
-// Quarter sections of a cylinder
+// Quarter sections of a cylinder (shared with verify_nonlinear.cpp)
 // ---------------------------------------------------------------------------
 
-/// The unit box [0, 1]^2 of a structured mesh (times [0, depth] in 3-D) mapped
-/// onto the annular sector a <= r <= b, 0 <= theta <= 90 deg by
-/// r = a + (b - a) x, theta = 90 deg y. Every node moves, a Tet10's edge nodes
-/// included, so a Tet10 cell follows the circles with curved faces while a
-/// linear cell spans their chords. The mapped mesh carries no structured-grid
-/// information: its cells differ.
 Mesh quarter_annulus(const Mesh& unit, Scalar a, Scalar b) {
   Matrix x = unit.coordinates();
   for (Index n = 0; n < unit.num_nodes(); ++n) {
@@ -281,8 +283,6 @@ Mesh quarter_annulus(const Mesh& unit, Scalar a, Scalar b) {
   return mapped;
 }
 
-/// Quarter section with n_r cells through the wall and n_theta round it. A
-/// solid section is one layer of cells as deep as a cell is wide.
 Mesh sector_mesh(ElementType type, Index nr, Index nt, Scalar a, Scalar b) {
   StructuredMeshSpec ms;
   ms.nx = nr;
@@ -301,14 +301,6 @@ Mesh sector_mesh(ElementType type, Index nr, Index nt, Scalar a, Scalar b) {
   throw ConfigError("unhandled element type");
 }
 
-Selector box_selector() {
-  Selector s;
-  s.kind = SelectorKind::Box;
-  return s;
-}
-
-/// Symmetry supports of a quarter section, plus u_z = 0 at every node of a
-/// solid one (plane strain).
 void add_quarter_supports(FemModel& model) {
   DisplacementConstraint theta0;
   theta0.region.name = "theta_0";
@@ -337,8 +329,6 @@ void add_quarter_supports(FemModel& model) {
   }
 }
 
-/// The cylindrical surface r = radius: the bore (every node with r <= radius)
-/// or the outer surface (every node with r >= radius).
 SelectorGroup cylinder_surface(const std::string& name, Scalar radius, bool bore) {
   SelectorGroup g;
   g.name = name;
@@ -354,6 +344,8 @@ SelectorGroup cylinder_surface(const std::string& name, Scalar radius, bool bore
   g.members.push_back(s);
   return g;
 }
+
+namespace {
 
 SelectorGroup whole_model_region() {
   SelectorGroup g;

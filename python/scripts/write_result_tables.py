@@ -827,6 +827,198 @@ def load_verification_table(results_dir: str) -> Optional[str]:
                             "stress error", "T RMS error", "T order"], rows)
 
 
+#: Rows of docs/results/nonlinear.csv, collected by the four non-linear tables
+#: below and written by main() once they have all run.
+_NONLINEAR_FRAMES: List[Dict] = []
+
+
+def elastica_table(results_dir: str) -> Optional[str]:
+    """The elastica study: the exact tip state at each load and the error of
+    the finest Tet10 cantilever, with the order measured over the three
+    meshes."""
+    base = os.path.join(results_dir, "verification")
+    path = os.path.join(base, "elastica.csv")
+    orders_path = os.path.join(base, "elastica_orders.csv")
+    if not (os.path.isfile(path) and os.path.isfile(orders_path)):
+        return None
+    table = pd.read_csv(path)
+    orders = pd.read_csv(orders_path).set_index("k[-]")
+    finest = table[table["nx"] == table["nx"].max()]
+    rows = []
+    for _, r in finest.iterrows():
+        k = int(r["k[-]"])
+        o = orders.loc[k]
+        _NONLINEAR_FRAMES.append({
+            "study": "elastica", "element": "Tet10", "case": f"k = {k}",
+            "mesh": f"{int(r['nx'])} x 2 x 2",
+            "deflection_exact[-]": float(r["deflection_elastica[-]"]),
+            "deflection_error[-]": float(r["deflection_error[-]"]),
+            "deflection_order[-]": float(o["deflection_order[-]"]),
+            "shortening_exact[-]": float(r["shortening_elastica[-]"]),
+            "shortening_error[-]": float(r["shortening_error[-]"]),
+            "shortening_order[-]": float(o["shortening_order[-]"]),
+            "rotation_exact[rad]": float(r["rotation_elastica[rad]"]),
+            "rotation_error[rad]": float(r["rotation_error[rad]"]),
+            "iterations": int(r["iterations"]),
+        })
+        rows.append([str(k), _fmt(float(r["deflection_elastica[-]"]), 6),
+                     _fmt(float(r["deflection_error[-]"]), 3),
+                     _fmt(float(o["deflection_order[-]"]), 3),
+                     _fmt(float(r["shortening_elastica[-]"]), 6),
+                     _fmt(float(r["shortening_error[-]"]), 3),
+                     _fmt(float(o["shortening_order[-]"]), 3),
+                     _fmt(float(r["rotation_elastica[rad]"]), 6),
+                     _fmt(float(r["rotation_error[rad]"]), 3), str(int(r["iterations"]))])
+    return _markdown_table(
+        ["k = PL^2/EI", "deflection / L", "error", "order", "shortening / L", "error",
+         "order", "rotation [rad]", "error [rad]", "Newton iterations"], rows)
+
+
+def finite_strain_table(results_dir: str) -> Optional[str]:
+    """The thick-walled tube against its exact finite-strain solutions: one
+    row per load and element, on the finest mesh of each ladder."""
+    path = os.path.join(results_dir, "verification", "hyperelastic_cylinder.csv")
+    if not os.path.isfile(path):
+        return None
+    table = pd.read_csv(path)
+    labels = {"inflation": "inflation, neo-Hookean", "spin": "spin, neo-Hookean",
+              "heating": "heating, SVK"}
+    rows = []
+    for (case, element), sub in table.groupby(["case", "element"], sort=False):
+        last = sub.iloc[-1]
+        record = {
+            "study": "tube", "element": str(element), "case": str(case),
+            "mesh": f"{int(last['n_r'])} x {int(last['n_theta'])}",
+            "DOFs": int(last["num_dofs"]),
+            "u_rms_error[-]": float(last["u_rms_error[-]"]),
+            "u_rms_order[-]": float(last["u_rms_order[-]"]),
+            "bore_hoop_stretch[-]": float(last["bore_hoop_stretch[-]"]),
+            "bore_hoop_stretch_exact[-]": float(last["bore_hoop_stretch_exact[-]"]),
+            "iterations": int(last["iterations"]),
+        }
+        _NONLINEAR_FRAMES.append(record)
+        rows.append([labels.get(str(case), str(case)), ELEMENT_LABELS.get(element, element),
+                     record["mesh"], _fmt(record["DOFs"]), _fmt(record["u_rms_error[-]"], 3),
+                     _fmt(record["u_rms_order[-]"], 4),
+                     _fmt(record["bore_hoop_stretch[-]"], 8),
+                     _fmt(record["bore_hoop_stretch_exact[-]"], 8),
+                     str(record["iterations"])])
+    if not rows:
+        return None
+    return _markdown_table(["load", "element", "finest mesh", "DOFs", "u RMS error", "order",
+                            "bore hoop stretch", "exact", "Newton iterations"], rows)
+
+
+def arch_table(results_dir: str) -> Optional[str]:
+    """The shallow arch's snap-through: what the arc-length run found and
+    what the displacement-controlled and load-controlled runs said of it."""
+    base = os.path.join(results_dir, "verification")
+    summary_path = os.path.join(base, "summary.json")
+    path = os.path.join(base, "arch_snap_through.csv")
+    if not (os.path.isfile(summary_path) and os.path.isfile(path)):
+        return None
+    block = load_json(summary_path).get("arch_snap_through")
+    if not block:
+        return None
+    path_table = pd.read_csv(path)
+    past = path_table[path_table["step"] > block["limit_step"]]
+    valley = past.loc[past["force_arc_length[N]"].idxmin()] if not past.empty else None
+    rows = [
+        ["arc-length steps / iterations / cuts",
+         f"{block['arc_length_steps']} / {block['arc_length_iterations']} / "
+         f"{block['arc_length_cuts']}"],
+        ["unstable steps (a negative pivot)", str(block["unstable_arc_length_steps"])],
+        ["limit force [N] at crown deflection [m] (fine displacement-controlled sweep)",
+         f"{_fmt(block['limit_force_N'], 8)} +- {_fmt(block['limit_force_error_N'], 1)} at "
+         f"{_fmt(block['limit_deflection_m'], 4)}"],
+        ["highest arc-length sample [N] at crown deflection [m]",
+         f"{_fmt(block['highest_sampled_force_N'], 6)} at "
+         f"{_fmt(block['highest_sample_deflection_m'], 4)}"],
+        ["limit force from the arc-length samples alone (parabola) [N]",
+         _fmt(block["limit_force_coarse_parabola_N"], 6)],
+    ]
+    if valley is not None:
+        rows.append(["lowest sampled force past the limit [N] at crown deflection [m]",
+                     f"{_fmt(float(valley['force_arc_length[N]']), 6)} at "
+                     f"{_fmt(float(valley['crown_deflection[m]']), 4)}"])
+    rows += [
+        ["largest force difference, arc length vs displacement control / limit",
+         _fmt(block["largest_force_difference_over_limit"], 3)],
+        ["inertia consistent (Haynsworth)",
+         f"{block['inertia_points_checked'] - block['inertia_mismatches']} of "
+         f"{block['inertia_points_checked']}"],
+        ["load control: reached lambda = 1", _fmt(bool(block["load_control_completed"]))],
+        ["load control: last converged / lowest rejected crown force [N]",
+         f"{_fmt(block['load_control_stop_force_N'], 8)} / "
+         f"{_fmt(block['load_control_bound_force_N'], 8)}"],
+        ["load control: the bracket encloses the limit force",
+         _fmt(bool(block["load_control_brackets_limit"]))],
+    ]
+    _NONLINEAR_FRAMES.append({
+        "study": "arch", "element": "Quad4", "case": "crown force",
+        "limit_force_N": float(block["limit_force_N"]),
+        "limit_force_error_N": float(block["limit_force_error_N"]),
+        "limit_deflection_m": float(block["limit_deflection_m"]),
+        "force_difference[-]": float(block["largest_force_difference_over_limit"]),
+        "unstable_steps": int(block["unstable_arc_length_steps"]),
+        "load_control_stop_force_N": float(block["load_control_stop_force_N"]),
+        "load_control_bound_force_N": float(block["load_control_bound_force_N"]),
+        "iterations": int(block["arc_length_iterations"]),
+    })
+    return _markdown_table(["quantity", "value"], rows)
+
+
+#: The geometrically non-linear decks (configs/verification/*_nonlinear.json).
+NONLINEAR_CASES = ["elastica_tet10_nonlinear", "block_hex_nonlinear", "strip_q4_nonlinear",
+                   "block_tet10_neohookean_nonlinear"]
+
+
+def nonlinear_decks_table(results_dir: str) -> Optional[str]:
+    """The large-deflection decks solved by sparlab_solve: where each load
+    case ended, how hard it was and how far it is from the linear answer."""
+    rows = []
+    for case in NONLINEAR_CASES:
+        path = os.path.join(results_dir, case, "summary.json")
+        if not os.path.isfile(path):
+            continue
+        doc = load_json(path)
+        block = doc.get("nonlinear")
+        if not block:
+            continue
+        element = doc.get("mesh", {}).get("element_type", "")
+        law = {"saint_venant_kirchhoff": "SVK", "neo_hookean": "neo-Hookean"}.get(
+            block.get("material_model"), block.get("material_model"))
+        for lc in block.get("load_cases", []):
+            linear = lc.get("linear_max_displacement_m")
+            ratio = (lc["max_displacement_m"] / linear) if linear else None
+            record = {
+                "study": "deck", "element": element, "case": f"{case}/{lc['load_case']}",
+                "material_model": block.get("material_model"),
+                "load_factor": lc["load_factor"], "steps": lc["steps"],
+                "iterations": lc["iterations"], "cuts": lc["cuts"],
+                "max_displacement_m": lc["max_displacement_m"],
+                "linear_max_displacement_m": linear,
+                "max_green_strain": lc["max_green_strain"],
+                "min_jacobian": lc["min_jacobian"],
+                "symmetric_tangent": lc["symmetric_tangent"],
+                "relative_force_error": lc["equilibrium"]["relative_force_error"],
+            }
+            _NONLINEAR_FRAMES.append(record)
+            rows.append([case, ELEMENT_LABELS.get(element, element), law, lc["load_case"],
+                         _fmt(lc["load_factor"], 4),
+                         f"{lc['steps']} / {lc['iterations']} / {lc['cuts']}",
+                         _fmt(lc["max_displacement_m"], 4), _fmt(linear, 4), _fmt(ratio, 4),
+                         _fmt(lc["max_green_strain"], 3), _fmt(lc["min_jacobian"], 4),
+                         "LDLT" if lc["symmetric_tangent"] else "LU",
+                         _fmt(lc["equilibrium"]["relative_force_error"], 2)])
+    if not rows:
+        return None
+    return _markdown_table(
+        ["deck", "element", "law", "load case", "lambda", "steps / iterations / cuts",
+         "max displacement [m]", "linear [m]", "ratio", "max Green strain", "min J",
+         "tangent", "force balance"], rows)
+
+
 _OUTPUT = "docs/results"
 
 
@@ -877,6 +1069,52 @@ def main(argv=None) -> int:
          "Tri3 rows are a plane-stress disk, the Hex8 and Tet10 rows a plane-strain "
          "cylinder. The bimetal row is the error of the curvature against "
          "Timoshenko's formula; the Tet10 hanging bar is exact."),
+        ("Large deflection: the elastica", elastica_table(args.results),
+         "From `results/verification/elastica.csv` and `elastica_orders.csv` "
+         "(`sparlab_verify --study elastica`): a Tet10 cantilever L = 1 m of square "
+         "section h = 0.01 m (E = 210 GPa, nu = 0) under a dead tip force, Saint "
+         "Venant-Kirchhoff, against Euler's elastica solved by shooting. Tip "
+         "deflection and shortening are in units of L. Errors are those of the finest "
+         "mesh (100 x 2 x 2 cells); the order is Richardson's, from the 25, 50 and "
+         "100-cell meshes alone. Most of the finest-mesh error is not discretisation "
+         "error but the gap between the continuum and the beam theory (shear and the "
+         "curvature dependence of the SVK bending stiffness), which the three meshes "
+         "extrapolate to: `deflection_gap` in elastica_orders.csv."),
+        ("Finite strain: a thick tube against exact solutions",
+         finite_strain_table(args.results),
+         "From `results/verification/hyperelastic_cylinder.csv` (`sparlab_verify "
+         "--study hyperelastic-cylinder`): a quarter section of a tube a = 0.1 m, "
+         "b = 0.2 m in plane strain (the 3-D sections one cell deep with u_z = 0), "
+         "against the exact axisymmetric solution of finite elasticity. Inflation: "
+         "neo-Hookean (E = 10 MPa, nu = 0.3), a bore pressure of 1.5 MPa that "
+         "follows the bore. Spin: the same material spinning at 200 rad/s, the "
+         "centrifugal load at the deformed radius. Heating: Saint Venant-Kirchhoff "
+         "(E = 1 GPa, alpha = 5e-4 /K) under the conducted temperature of a bore at "
+         "+100 K. The error is the RMS nodal displacement error over the RMS exact "
+         "displacement on the finest mesh, the order is measured between the two "
+         "finest meshes (the element's order is 2, 3 for the Tet10), and the bore "
+         "hoop stretch is the mean over the bore nodes."),
+        ("Snap-through of a shallow arch", arch_table(args.results),
+         "From `results/verification/summary.json` and `arch_snap_through.csv` "
+         "(`sparlab_verify --study arch-snap-through`): a clamped circular arch "
+         "(half span 1 m, rise 0.1 m, 0.02 m x 0.02 m section, E = 70 GPa, plane "
+         "stress, 60 x 4 Q4 cells on the half model) under a crown force. The "
+         "arc-length path is compared with a displacement-controlled run at the same "
+         "crown deflections; an unstable step is one whose tangent has a negative "
+         "pivot, and the inertia check is that the force-controlled tangent has one "
+         "more negative pivot than the displacement-controlled one exactly where the "
+         "path descends. The limit force is found by displacement control through 60 "
+         "stations around the highest arc-length sample. Load control has to stop at "
+         "the limit point, say so, and bracket it."),
+        ("Large-deflection decks", nonlinear_decks_table(args.results),
+         "Each `configs/verification/*_nonlinear.json` deck solved by `sparlab_solve` "
+         "(`results/<deck>/summary.json`, block `nonlinear`). `max displacement` is "
+         "the largest nodal displacement at the final load factor, `linear` the same "
+         "for the linear analysis of the same loads and `ratio` the first over the "
+         "second. `tangent` is LDLT when the "
+         "assembled tangent is symmetric (its inertia is then known) and LU when a "
+         "follower pressure makes it non-symmetric. `force balance` is the relative "
+         "error of the applied loads against the reactions in the deformed state."),
         ("Cross-validation against independent codes", cross_validation_table(args.results),
          "Generated from `results/cross_validation/summary.json` by "
          "`python/scripts/cross_validate.py`: node-by-node comparison of the "
@@ -899,7 +1137,12 @@ def main(argv=None) -> int:
          "pressure rules of a C3D10 - the max rel diff shown is CalculiX against "
          "scikit-fem solving CalculiX's problem, the judged number; SparLab's "
          "difference to CalculiX is in cross_validation.csv "
-         "(`sparlab_vs_calculix`)."),
+         "(`sparlab_vs_calculix`). The large-deflection decks compare their final "
+         "states at the full load: `scikit-fem non-linear` is an independent total "
+         "Lagrangian solver written on scikit-fem (dead loads), `calculix NLGEOM` "
+         "CalculiX's `*STEP, NLGEOM` with its own follower pressure and "
+         "centrifugal load (Saint Venant-Kirchhoff only: its NEO HOOKE is a "
+         "different strain energy)."),
         ("Benchmark results", benchmark_table(args.results),
          "Generated from each `results/<case>/summary.json`. `stiffness gain` is "
          "the compliance of an equal-mass uniform plate divided by the optimised "
@@ -984,6 +1227,10 @@ def main(argv=None) -> int:
          "contains a point whose thresholded density field is not a single "
          "connected structure."),
     ]
+
+    if _NONLINEAR_FRAMES:
+        pd.DataFrame(_NONLINEAR_FRAMES).to_csv(os.path.join(args.output, "nonlinear.csv"),
+                                               index=False)
 
     lines = [
         "# SparLab result tables",

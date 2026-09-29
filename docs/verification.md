@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 218 cases, 13 433 assertions
+make test              # the Catch2 suite: 235 cases, 14 696 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -51,6 +51,9 @@ All numbers in this document come from `results/verification/summary.json`,
 | Conduction and thermal stress in a thick cylinder vs exact | verification | largest shortfall of the RMS temperature and displacement orders | `0.005` | `0.3` | PASS |
 | Bimetallic strip under uniform heating vs Timoshenko | verification | finest-mesh relative curvature error (order `2.00` also required) | `3.01e-04` | `1e-3` | PASS |
 | Bar hanging under its own weight vs exact | verification | Tet10 displacement error (its space holds the exact field); linear-element RMS orders also required | `3.78e-13` | `1e-10` | PASS |
+| Large-deflection cantilever vs Euler's elastica (Tet10, `k <= 10`) | verification + validation | largest tip-displacement error on the finest mesh, in `L` (observed order `>= 2.7` also required) | `1.36e-04` | `1e-3` | PASS |
+| Thick tube at finite strain vs exact: follower pressure, spin, heating (Q4, Tri3, Hex8, Tet10) | verification | largest shortfall of the RMS displacement order below the element's | `9.0e-04` | `0.3` | PASS |
+| Shallow-arch snap-through: arc length vs displacement control | verification | largest crown-force difference at equal deflection / limit force (inertia and the load-control bracket also required) | `2.82e-11` | `1e-6` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -63,6 +66,9 @@ Supporting measurements from the same runs:
 | Elements excluded from the FD check at active bounds | 6 of 72 (Q4), 2 of 36 (Hex8) |
 | Tet10 cantilever error vs Timoshenko, coarsest to finest grid | `6.1e-04 -> 4.7e-05 -> 6.4e-06`; Hex8 3.0 % and Tet4 11 % on the finest grid |
 | Column `lambda_1` error vs Euler-Engesser, finest mesh | Q4 0.66 %, Tet10 0.29 % (Richardson limit of the Tet10 errors 0.21 %), Hex8 11.1 %, Tet4 39.7 % |
+| Elastica: observed Tet10 order, continuum-elastica gap | deflection `3.01 -> 3.49`, shortening `3.06 -> 3.65` from `k = 1` to 10; gap `2.2e-05 L -> 1.46e-04 L` |
+| Finite-strain tube: exact bore hoop stretch, reference checks | `1.48077` (inflation), `1.17256` (spin), `1.02502` (heating); equilibrium `<= 3.7e-7`, Lame limit `3.2e-11` |
+| Arch: limit force, load-control bracket | `1588.2464 N`; load control stops at `1588.135 N` and rejects `1588.257 N` |
 
 And from the cross-validation against two independent codes (section 14):
 
@@ -573,12 +579,15 @@ node (`python/scripts/cross_validate.py`, `make cross-validation`):
   same integration order - the 4-point rule for the Tet10. It is the *same
   element formulation* in an independent implementation, so the only
   expected difference is linear-solver round-off - and that is what is
-  measured, from `8.7e-14` to `1.5e-10` relative over the seventeen problems.
+  measured, from `8.7e-14` to `1.5e-10` relative over twenty of the
+  twenty-one problems, and `8.0e-9` on the slender cantilever of the
+  elastica deck, whose conditioning amplifies the round-off (formulation,
+  section 5).
   scikit-fem's Tet10 node order is checked against SparLab's cell by cell
   before anything is solved;
 * **CalculiX 2.21** (`ccx`) runs the exported `.inp` decks. `C3D8`, `C3D4`
   and `C3D10` are the same trilinear hexahedron and linear and quadratic
-  tetrahedra as SparLab's; the differences, `1.0e-06` to `3.6e-06`, are
+  tetrahedra as SparLab's; the differences, `6.4e-07` to `3.6e-06`, are
   within the six-significant-digit rounding of its `.frd` result file (floor
   `5e-6`), i.e. as close as the file format allows one to see - including
   the 39 936-tetrahedron engine mount read from a Gmsh file, which SparLab
@@ -622,11 +631,18 @@ factors are compared as well:
   rests on the scikit-fem comparison and the Euler-Engesser study
   (section 20).
 
-Tolerances are `1e-7` for scikit-fem (displacements and load factors) and
-`1e-5` for CalculiX displacements, `1e-4` for its load factors, all recorded
-in the summary with the `.frd` floor. The comparison exits non-zero if any
-judged pair exceeds its tolerance; CI runs the scikit-fem half, displacements
-and load factors, on every push.
+**Large-deflection states.** The four non-linear decks are compared at the
+full load with scikit-fem's own total Lagrangian solver and CalculiX's
+`*STEP, NLGEOM` (section 23).
+
+Tolerances are `1e-7` for scikit-fem (displacements, load factors and
+non-linear states) and `1e-5` for CalculiX displacements, linear and
+non-linear, `1e-4` for its load factors, all recorded in the summary with
+the `.frd` floor. The comparison exits non-zero if any judged pair exceeds
+its tolerance, or if a non-linear run stopped short of its load. Of the 137
+comparisons on 21 decks and 46 load cases, 135 pass and 2 are
+informational. CI runs the scikit-fem half - displacements, load factors and
+the dead-load non-linear states - on every push.
 
 ## 15. The linear simplices (Tri3, Tet4)
 
@@ -1039,8 +1055,9 @@ with `*TEMPERATURE`, one `*MATERIAL` per material - so CalculiX integrates
 the loads with its own code, and a conducted temperature as a steady
 `*HEAT TRANSFER` job CalculiX solves itself. scikit-fem integrates the same
 loads independently from the same deck, with order-6 rules (the thermal load
-with SparLab's stiffness rule). All 113 comparisons of the cross-validation
-pass (2 informational, as before):
+with SparLab's stiffness rule). Every comparison of the cross-validation
+passes - 137 with the large-deflection decks of section 23, 2 of them
+informational, as before:
 
 * scikit-fem's independent integration agrees with SparLab to `1.4e-13` -
   `1.8e-12` on the structured blocks and plates (self-weight, pressure,
@@ -1081,21 +1098,307 @@ scikit-fem's check of the stiffness now assembles each element with its own
 material's Lame constants, so the two-material decks are the same discrete
 problem there too.
 
+## 23. Geometrically non-linear statics
+
+**Unit tests against exact answers** (`tests/test_nonlinear.cpp`, 17 cases):
+
+* *the laws*: for both laws in plane stress (SVK), plane strain and 3-D, at
+  a displacement gradient of order 0.3 with rotation, the energy derivative
+  is the stress (`1e-7`), the stress derivative is the tangent (`1e-6`), and
+  the tangent is symmetric (`1e-12`); at a strain of `1e-7` both reduce to
+  linear elasticity, the stress to `1e-6` and the tangent to `1e-5` (the
+  stress differs at second order in the strain, relatively `1e-7`); the
+  neo-Hookean law refuses plane stress, a temperature and an inverted point;
+* *the element*: on all five element types and both laws, the tangent is the
+  central difference of the internal force to `1e-6` at a state of up to
+  10 % strain and a 0.4 rad rotation, and the internal force is the
+  derivative of the energy; on Q4, Hex8 and Tet10 a rigid 90-degree rotation
+  leaves no internal force (`1e-12` of `E`) and no energy, and the tangent at
+  zero displacement is the linear stiffness to `1e-10`;
+* *the assembled system*: on a distorted Hex8 block carrying a follower
+  pressure, the deformed-position rotation, self-weight and a temperature
+  (`alpha dT = 0.05` at `lambda = 1`), the tangent is the central difference
+  of the residual to `1e-6` and the load rate is `-dR/dlambda` to `1e-6` - and
+  the tangent is measurably non-symmetric, as a follower pressure over free
+  edges makes it;
+* *a homogeneous large deformation* (30 % stretch, 20 % shear, a rotation)
+  prescribed on the boundary of distorted Q4, Hex8 and Tet10 meshes is
+  reproduced at every interior node to `1e-9` m, with the law's Cauchy stress
+  in every element (`1e-7`) - the non-linear patch test, both laws;
+* *a free cube under pressure on every face* takes the exact homogeneous
+  stretch: `s = (-p + sqrt(p^2 + K3^2)) / K3` for a follower pressure (a Cauchy
+  stress `-p`) at `p = 0.1 K3`, and the root of `K3 s (s^2 - 1)/2 = -p` for a
+  dead one (a first Piola-Kirchhoff stress `-p`), to `1e-9` m, with zero
+  reactions, a symmetric assembled tangent over the closed surface and no
+  negative pivot;
+* *the dead pressure destabilises the cube*: the smallest eigenvalue of the
+  tangent at the homogeneous state changes sign at `lambda_c = 0.0456314`
+  (found by bisection, independently of the path-following); load control
+  must stop below it, with the bracket enclosing it and no wider than 1 %,
+  every recorded state homogeneous and stable - which it does, saying that
+  the tangent loses positive definiteness;
+* *load control and arc length* reach the same state of a Tet10 cantilever
+  at `k = 3` to `1e-7`, both with the force and moment balance to `1e-9`;
+* *the small-load limit*: on a cantilever, the relative difference from the
+  linear solution falls in proportion to `P` (the shortening of the bent
+  beam, absent from linear theory) and that of the tip deflection to `P^2`
+  (the elastica's `1 - c k^2`), both over two decades of load, down to
+  `2e-8` of the deflection;
+* *thermal*: a free body heated to `alpha dT = 0.05` takes `F = 1.05 I`
+  stress-free on Q4, Hex8 and Tet10; a cube between two walls takes the
+  split's closed-form stretch and stress (`1e-10`, formulation section 7c);
+* *rotation*: translating a spinning body by `d` normal to the axis changes
+  its total centrifugal force by exactly `rho omega^2 V d` on Q4, Hex8 and
+  Tet10 (`1e-12`), and the tangent's spin-softening term carries the same
+  `-rho omega^2 V d` (`1e-10`) - the test written after CalculiX exposed
+  `rho` counted twice in that term (below);
+* *the deck*: the `nonlinear` block parses, passes through its `load_factors`
+  exactly, its reaction monitor balances the tip force at every step
+  (`1e-8`), and eleven malformed blocks are refused; the arc-length method
+  refuses a prescribed displacement.
+
+**Studies** (`apps/verify_nonlinear.cpp`; `docs/results/README.md` has the
+full tables).
+
+*Euler's elastica* (`--study elastica`). A Tet10 cantilever `L = 1 m` of
+square section `h = 0.01 m` (`E = 210 GPa`, `nu = 0`), clamped, carries a dead
+shear traction on its tip face whose resultant `P` gives
+`k = P L^2 / EI = 1 ... 10` at the load factors `0.1 ... 1`, which load
+control passes through exactly. It is meshed with 25, 50 and 100 cells along
+the span and 2 x 2 in the section (3 825 to 15 075 DOFs). The reference is
+the elastica, `theta'' = -k cos(theta)`, solved by shooting on `theta'(0)`
+with fourth-order Runge-Kutta; 20 000 and 40 000 steps agree to `1.2e-14`.
+The tip deflection, the shortening and the rotation of the tip face (its
+chord from bottom to top edge) are compared at every `k`. A continuum is not
+a beam: shear adds `0.6 (h/L)^2` of the deflection at `nu = 0`, and the Saint
+Venant-Kirchhoff moment `M = EI c (1 - 0.3 (c h)^2)` softens with the
+curvature `c` (`c h <= 0.045` here). The study therefore separates two
+errors. The discretisation error must vanish at the Tet10's order, which
+Richardson's method measures from the three meshes alone; its limit, the
+gap between the converged continuum and the elastica, must be small.
+
+| `k` | Tip deflection / `L`, elastica | Error, 100 cells | Order | Continuum gap | Shortening order |
+|----:|------:|------:|-----:|------:|-----:|
+| 1 | `0.3017208` | `1.95e-05` | `3.01` | `2.21e-05` | `3.06` |
+| 2 | `0.4934575` | `4.00e-05` | `3.29` | `4.43e-05` | `3.36` |
+| 5 | `0.7137915` | `8.14e-05` | `3.46` | `8.82e-05` | `3.58` |
+| 10 | `0.8106090` | `1.36e-04` | `3.49` | `1.46e-04` | `3.65` |
+
+Every order lies between `3.01` and `3.65` (required: at least 2.7), the
+finest-mesh error stays below `1.4e-04 L` in deflection and shortening and
+`2.1e-05 rad` in rotation (tolerance `1e-3`), and the error approaches the
+gap from below. What remains on 100 cells is therefore the model's gap, not
+discretisation. At `k = 1` shear alone accounts for about `1.8e-05 L` of the
+`2.2e-05 L`. The linear analysis of the same load would put the tip at
+`3.3 L`. Each mesh takes 85 Newton iterations over the ten steps, with no
+halving; the largest Green-Lagrange strain is `0.019`.
+
+![Euler's elastica: the tip against the elastica, and the error against the continuum gap](figures/verify_elastica.png)
+
+*A thick tube at finite strain* (`--study hyperelastic-cylinder`). A
+quarter section of a tube `a = 0.1 m`, `b = 0.2 m` in plane strain, with
+symmetry supports, is loaded three ways in ten steps. The Hex8 and Tet10
+sections are one cell deep with `u_z = 0`.
+
+* *inflation*: neo-Hookean (`E = 10 MPa`, `nu = 0.3`) under a bore pressure
+  of 1.5 MPa that follows the bore, to a bore hoop stretch of `1.48077`
+  (largest Green strain 0.59);
+* *spin*: the same material (`rho = 1100 kg/m^3`) at 200 rad/s, the
+  centrifugal load at the deformed radius, to a bore hoop stretch of
+  `1.17256`;
+* *heating*: Saint Venant-Kirchhoff (`E = 1 GPa`, `nu = 0.3`,
+  `alpha = 5e-4 /K`) under the conducted temperature of a bore at +100 K and
+  an outer surface at 0 K, the multiplicative split, to a bore hoop stretch
+  of `1.02502`.
+
+The exact solution is the radial equilibrium of the finite deformation, with
+body force and temperature gradient. It is a two-point boundary-value
+problem for the deformed radius, solved by shooting with fourth-order
+Runge-Kutta (4 000 steps; halving them changes the displacement by less
+than `1e-14`). It checks itself in each run: it meets its outer boundary
+condition and its own equilibrium equation, by central differences, to
+`3.7e-7` of the stress scale, and without load it reduces to Lame's
+solution (`2 d(p) - d(2p) = 3.2e-11` at a small pressure `p`). RMS
+displacement errors on the finest meshes (64 x 128 for Q4 and Tri3, 32 x 64
+for Hex8, 16 x 32 for Tet10), with the order between the two finest:
+
+| Load | Q4 | Tri3 | Hex8 | Tet10 |
+|------|----|------|------|-------|
+| Inflation | `5.31e-05` (`2.000`) | `1.33e-04` (`2.000`) | `2.12e-04` (`1.999`) | `1.57e-06` (`3.098`) |
+| Spin | `5.35e-05` (`2.001`) | `1.07e-04` (`2.001`) | `2.14e-04` (`2.001`) | `2.08e-06` (`3.140`) |
+| Heating | `1.10e-04` (`2.004`) | `7.92e-05` (`2.006`) | `4.42e-04` (`2.007`) | `6.04e-06` (`3.237`) |
+
+Every element converges at its order, with a largest shortfall of `9.0e-4`
+(tolerance 0.3). The Tet10's bore hoop stretch is `1.4807644` against the
+exact `1.4807651`. Every run factorises its tangent by `LDL^T`: the
+non-symmetric part of a follower-pressure stiffness is a skew block at the
+end nodes of the loaded surface (it integrates `(N_a N_b)_s`), and there the
+symmetry supports fix one of the two components, which removes it.
+
+![The tube at finite strain: RMS displacement error under refinement](figures/verify_finite_strain_tube.png)
+
+*Snap-through of a shallow arch* (`--study arch-snap-through`). A clamped
+circular arch (half span 1 m, rise 0.1 m, section 0.02 x 0.02 m, plane
+stress, `E = 70 GPa`, `nu = 0.3`) is modelled as a half with a symmetry
+support at the crown: 60 x 4 Q4 cells, Saint Venant-Kirchhoff, a crown force
+of 20 kN at `lambda = 1`. The arc-length method follows its path in 22 steps
+(89 iterations, no halving): up to a limit point, down through the
+snap-through, whose lowest sample is 752 N at a crown deflection of 0.124 m,
+and up again to 20 kN at 0.224 m. Eight of the steps are unstable (their
+tangent has a negative pivot). Four checks:
+
+1. *Two methods, one path.* A displacement-controlled run drives the crown
+   to exactly the arc-length deflections, and its reaction is the crown
+   force: the two agree to `2.8e-11` of the limit force at all 22 points
+   (tolerance `1e-6`).
+2. *Inertia.* Where the force falls as the crown goes down, the
+   force-controlled tangent has exactly one more negative pivot than the
+   displacement-controlled one, and elsewhere the same number: 18 of 18
+   points (Haynsworth's inertia additivity, section 7c of the formulation).
+3. *The limit load.* Displacement control through 60 stations around the
+   highest arc-length sample puts the limit at `1588.2464 +- 0.0005 N`, at a
+   crown deflection of 0.0374 m. A parabola through the three arc-length
+   samples around it, 7 mm apart, would say 1589.12 N (0.055 % high).
+4. *Load control stops and brackets it.* Load control of the same arch stops
+   at 1588.135 N and reports that the path turns at a limit point, every
+   step beyond it landing on a distant branch. Its last converged load and
+   its lowest rejected one, 1588.135 N and 1588.257 N, enclose the limit
+   load. It does not jump silently to the far branch at 20 kN, as it did
+   before the checks of section 7c existed.
+
+![Snap-through of a shallow arch](figures/verify_arch_snap_through.png)
+
+**Cross-validation of the large-deflection decks**
+(`configs/verification/*_nonlinear.json`, `python/scripts/cross_validate.py`).
+Each deck is solved by `sparlab_solve` and its state at the full load is
+compared node by node with two independent solutions:
+
+* an independent total Lagrangian solver written on scikit-fem for this
+  purpose. It forms the first Piola-Kirchhoff stress `P = F S` and its
+  consistent tangent with scikit-fem's tensor helpers, uses SparLab's
+  quadrature, and runs Newton with a tangent predictor and an energy line
+  search through SparLab's own load factors. It covers every case whose
+  loads are dead; a follower pressure, a rotation or a temperature is
+  outside it;
+* CalculiX's `*STEP, NLGEOM`, for Saint Venant-Kirchhoff. Its `*ELASTIC` is
+  Saint Venant-Kirchhoff under `NLGEOM`, and it uses its own follower
+  `*DLOAD` pressure and deformed-position `CENTRIF`, with increments of at
+  most 1/50 of the load and residual and correction controls of `1e-6`.
+
+A CalculiX run that did not complete its step is refused (CalculiX writes
+its last state to the `.frd` anyway, so the script reads the `.sta` file),
+and so is a SparLab run that stopped short of `lambda = 1`.
+
+| Deck | Load case | State at the full load | scikit-fem non-linear | CalculiX `NLGEOM` |
+|------|-----------|------------------------|----------------------:|------------------:|
+| Elastica, 576 Tet10, `L/h = 50`, `k = 10` | dead tip traction | tip at `0.811 L` down, `0.555 L` back | `6.10e-15` | `6.27e-07` (`C3D10`) |
+| Soft block, 256 Hex8 | follower pressure and self-weight | tip down 0.156 m, Green strain 0.16 | - | `3.72e-06` (`C3D8`) |
+| | rotation, 300 rad/s | 10 % stretch | - | `1.63e-06` |
+| Plane-strain strip, 160 Q4 | dead tip load | tip down 0.075 m | `1.36e-15` | `6.80e-07` (`CPE4`) |
+| | follower pressure | tip down 0.057 m | - | `8.74e-07` |
+| Rubber block, 192 Tet10, neo-Hookean | tip driven 0.08 m, self-weight | Green strain 0.19 | `8.75e-15` | - |
+
+The independent solver agrees to `1e-14`, the level of the Newton tolerance
+and round-off. CalculiX agrees to `6.3e-07` - `3.7e-06`, the size of its
+`.frd` rounding. The follower pressures' non-symmetric tangents, factorised
+by LU, meet CalculiX as closely as the symmetric cases do. The neo-Hookean
+deck has no CalculiX counterpart, since its `NEO HOOKE` is a different strain
+energy. The elastica deck runs at `L/h = 50`, where the linear solve of the
+study's `L/h = 100` beam would leave the *linear* scikit-fem comparison at
+`6.6e-8`, too near its `1e-7` tolerance for a check run on other machines
+(formulation, section 5). At 50 it is `8.0e-9`.
+
+What CalculiX was found to do, measured on probe decks while building the
+comparison:
+
+* on a cube under a dead pressure of `0.1 K3` it reproduces the exact Saint
+  Venant-Kirchhoff stretch to `6.6e-8`, but it follows that homogeneous
+  branch past the bifurcation at 4.6 % of the load, where SparLab stops -
+  CalculiX assesses no stability;
+* its centrifugal load acts at the deformed position but lags within an
+  increment. On the spinning block its difference from SparLab falls with
+  the increment: `1.03e-5` at 10 increments, `3.5e-6` at 20, `1.8e-6` at
+  40 and `1.4e-6` at 80, which is why the export uses at most 1/50;
+* its default convergence controls leave errors of order `1e-4` of the
+  displacement: `5.6e-5` on the elastica deck at `L/h = 100`, against
+  `6.4e-7` with the `1e-6` controls;
+* a free thermal expansion comes out exactly `1.05` (`C3D8`, `C3D10`), but a
+  cube held between two walls reaches `-43.018 MPa`, where the
+  multiplicative split gives `-43.070 MPa` and the version without `1/theta`
+  gives `-45.224 MPa`. Its finite-strain thermal model is a third one, and a
+  thermal `NLGEOM` comparison is informational.
+
+**What writing these checks found**, each fixed before the numbers above
+were taken:
+
+* *the linear solve refused a slender beam.* A Tet10 cantilever at
+  `L/h = 100` left a scaled residual of `6.45e-7`, above the `1e-8`
+  tolerance, although its backward error was `2.4e-16`: the residual is the
+  rounding of sums `2.7e9` times larger than the load. Solves are now
+  accepted on either measure (formulation, section 5);
+* *Newton stalled on the elastica.* Backtracking on the residual norm cut
+  good steps to a quarter, iteration after iteration, because a large
+  rotation stirs up axial forces. The energy line search took the run from
+  158 iterations and a halving to 87 and none;
+* *load control jumped over the arch's limit point* and converged on the far
+  branch at 20 kN, a snap-through presented as a static solution. The two
+  rejection tests and the bracketing of section 7c stop it now;
+* *the spin-softening stiffness counted the density twice*, `rho omega^2 M P`
+  with an `M` that already carries `rho`. CalculiX exposed it: on the
+  spinning block SparLab reported an instability at `lambda = 0.00017` where
+  CalculiX found none. It is fixed, and a unit test measures the term;
+* *the thermal strain at finite strain was wrong twice.* Adding `alpha dT`
+  to the Green strain gave a free body the stretch `sqrt(1 + 2 alpha dT)`.
+  Subtracting the Green strain of the free stretch fixed that but gave a
+  restrained body a stress `theta` times too high. The multiplicative split
+  is right on both, and is what the study and the unit tests now check;
+* *a freely heated body could not converge*: with no applied load and no
+  reaction the residual scale was the `1e-300` floor. The thermal forces
+  now enter the scale and the round-off floor;
+* *the elastica deck stalled at a residual of `3.4e-10`* of the load
+  against a tolerance of `1e-10`. At that level the residual is the rounding
+  of the displacement itself, about `0.3 eps || |K||u| ||`, so the round-off
+  floor now includes `64 eps || |K||u| ||`;
+* *a planned test case was unstable.* A cube under a dead compressive
+  pressure of `0.1 K3` was meant to test the homogeneous stretch, but the
+  cube loses stability at 4.6 % of that pressure. This is physics, not a
+  defect, and it became the test of load control's stop.
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
 
 * **no comparison against experiment**;
-* the cross-validation covers linear static displacements on seventeen
+* the cross-validation covers linear static displacements on twenty-one
   problems, five of them on the three meshes read from files - six of them
   under pressure, body and thermal loads, with conducted temperatures on four
-  - and linear buckling load factors on three. Stresses, natural frequencies and the optimised designs
-  are not compared with another code, and CalculiX's `*BUCKLE` factors for
+  - linear buckling load factors on three, and the final large-deflection
+  states of four, eight comparisons in all. Stresses, natural frequencies,
+  the non-linear load paths (only the final states are compared) and the
+  optimised designs are not compared with another code, and CalculiX's
+  `*BUCKLE` factors for
   `C3D8` and `C3D10` differ from SparLab's by up to `8.3e-5` for a reason
   not identified (section 14);
-* linear buckling is bifurcation of the perfect geometry: no geometric
-  nonlinearity, imperfection sensitivity or post-buckling path is computed
-  or verified, and the plane models only buckle in their plane;
+* linear buckling is bifurcation of the perfect geometry, and the plane
+  models only buckle in their plane. The non-linear analysis has no branch
+  switching, so a post-buckling path is computed only from an imperfect mesh,
+  and none is verified;
+* the non-linear analysis is verified against exact solutions of a beam
+  theory (the elastica, small strain), of plane-strain finite elasticity
+  (the tube: inflation, spin, heating) and by the consistency of three
+  solution methods on one snap-through. There is no exact 3-D finite-strain
+  solution with shear-dominated deformation among them, and no experiment.
+  The neo-Hookean law is cross-validated against scikit-fem only
+  (CalculiX's `NEO HOOKE` is a different strain energy). A follower pressure
+  over free edges, whose tangent is non-symmetric, is checked against
+  CalculiX `NLGEOM` on two decks and in the unit tests. The finite-strain
+  thermal split is checked against the exact tube and the unit tests only:
+  CalculiX's thermal model at finite strain is a third one (its stress on a
+  restrained cube lies 0.12 % from the split's), so the cross-validation
+  records a thermal `NLGEOM` comparison as informational, and none of the
+  committed non-linear decks carries a temperature. The bracketing of a
+  critical point is verified on
+  one limit point (the arch) and one bifurcation (the cube);
 * the overhang filter and check are verified for the 3- and 5-element
   stencils of structured square and cubic grids; the robust formulation for
   uniform erosion and dilation only. Neither is a process simulation;

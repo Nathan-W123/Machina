@@ -58,6 +58,7 @@ struct StaticSolution {
   Scalar max_displacement_magnitude = 0.0;  ///< [m]
   Index max_displacement_node = -1;
   Scalar scaled_residual = 0.0;       ///< ||K_ff u_f - rhs|| / ||rhs||
+  Scalar backward_error = 0.0;        ///< ||K_ff u_f - rhs|| / || |K_ff||u_f| + |rhs| ||
   int solver_iterations = 0;
   std::string solver_name;            ///< the linear solver that produced it
   EquilibriumCheck equilibrium;

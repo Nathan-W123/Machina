@@ -189,11 +189,14 @@ StaticSolution StaticAnalysis::build_solution(const std::string& name, Scalar we
     }
     const Vector uf = model_.dofs().restrict_to_free(sol.displacement);
     sol.scaled_residual = scaled_residual(k_ff_, uf, rhs);
-    if (sol.scaled_residual > options_.linear.residual_tolerance) {
+    sol.backward_error = backward_error(k_ff_, uf, rhs);
+    if (!residual_accepted(sol.scaled_residual, sol.backward_error,
+                           options_.linear.residual_tolerance)) {
       std::ostringstream os;
       os << "load case '" << name << "': the linear solve left a scaled residual of "
          << sol.scaled_residual << ", above the recorded tolerance "
-         << options_.linear.residual_tolerance;
+         << options_.linear.residual_tolerance << ", and a backward error of "
+         << sol.backward_error << ", above round-off (" << kRoundoffBackwardError << ")";
       throw SolverError(os.str());
     }
   }

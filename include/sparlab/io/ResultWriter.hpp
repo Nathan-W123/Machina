@@ -15,6 +15,11 @@
 ///   <out>/mode_<k>.vtk              one file per mode shape
 ///   <out>/buckling.csv              buckling load factors per checked load case
 ///   <out>/buckling_<lc>_<k>.vtk     buckling mode shapes (max |phi| = 1)
+///   <out>/nonlinear_<lc>.csv        load-displacement path of a non-linear run
+///   <out>/nonlinear_displacement_<lc>.csv  its final nodal displacements
+///   <out>/nonlinear_stress_<lc>.csv its final Cauchy and 2nd Piola-Kirchhoff stresses
+///   <out>/nonlinear_reactions_<lc>.csv     its final support reactions
+///   <out>/nonlinear_<lc>.vtk        its final fields
 ///   <out>/history.csv               optimisation iteration history
 ///   <out>/density_final.csv         final design and physical density
 ///   <out>/density_history.csv       density snapshots for the animation
@@ -30,6 +35,7 @@
 #include "sparlab/fem/Buckling.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
 #include "sparlab/fem/ModelDiagnostics.hpp"
+#include "sparlab/fem/NonlinearStatic.hpp"
 #include "sparlab/fem/StaticAnalysis.hpp"
 #include "sparlab/fem/StressRecovery.hpp"
 #include "sparlab/io/Config.hpp"
@@ -57,17 +63,19 @@ class ResultWriter {
   /// Nodes, connectivity, prescribed DOFs and the applied load vectors.
   void write_mesh(const FemModel& model) const;
 
-  /// Nodal displacements of one load case.
+  /// Nodal displacements of one load case (`<stem>_<lc>.csv`).
   void write_displacement(const Mesh& mesh, const std::string& load_case,
-                          const Vector& displacement) const;
+                          const Vector& displacement,
+                          const std::string& stem = "displacement") const;
 
   /// Element strain/stress data of one load case.
   void write_stress(const Mesh& mesh, const std::string& load_case,
                     const StressField& field, const Vector* density = nullptr) const;
 
-  /// Non-zero support reactions of one load case.
+  /// Support reactions of one load case (`<stem>_<lc>.csv`).
   void write_reactions(const Mesh& mesh, const DofManager& dofs,
-                       const std::string& load_case, const Vector& reactions) const;
+                       const std::string& load_case, const Vector& reactions,
+                       const std::string& stem = "reactions") const;
 
   /// Combined VTK file for one load case, with the nodal temperatures of a
   /// thermal case when given.
@@ -90,6 +98,12 @@ class ResultWriter {
   /// amplitude of its own).
   void write_buckling(const Mesh& mesh, const std::vector<BucklingResult>& results,
                       const std::string& tag = "") const;
+
+  /// A non-linear run: the load-displacement path (`nonlinear_<lc>.csv`,
+  /// always written) and, as the output settings ask, the final nodal
+  /// displacements, element stresses and reactions as CSV and the final
+  /// fields as VTK.
+  void write_nonlinear(const FemModel& model, const NonlinearResult& result) const;
 
   /// Optimisation iteration history.
   void write_history(const TopologyOptimizationResult& result) const;
@@ -150,6 +164,14 @@ json::Value make_provenance(const Configuration& config);
 /// method, its tolerances and what a load factor means.
 json::Value buckling_json(const std::vector<BucklingResult>& results,
                           const BucklingOptions& options, const std::string& what);
+
+/// Summary block of the non-linear runs: the formulation, the options and
+/// per load case the outcome, the final state and its checks. `linear` holds
+/// the linear solutions of all load cases (indexed like the deck's cases) so
+/// each run is set beside its linear counterpart.
+json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
+                           const NonlinearOptions& options, const FemModel& model,
+                           const std::vector<StaticSolution>& linear);
 
 /// Summary block of the overhang check of the final design.
 json::Value overhang_json(const OverhangReport& report, bool filtered);

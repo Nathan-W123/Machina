@@ -1,11 +1,12 @@
 /// \file sparlab_solve.cpp
-/// \brief Linear static (and optional modal and buckling) analysis of one
-///        configuration.
+/// \brief Linear static (and optional modal, buckling and geometrically
+///        non-linear) analysis of one configuration.
 ///
 /// Solves every load case of the deck, recovers stresses and reactions, checks
-/// global equilibrium, optionally runs a modal analysis and a linear buckling
-/// check of the load cases (reusing the static factorisation), and writes the
-/// full result set to the output directory.
+/// global equilibrium, optionally runs a modal analysis, a linear buckling
+/// check of the load cases (reusing the static factorisation) and a
+/// large-deflection analysis of the selected load cases, and writes the full
+/// result set to the output directory.
 
 #include "AppSupport.hpp"
 
@@ -14,6 +15,7 @@
 #include "sparlab/fem/Buckling.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
 #include "sparlab/fem/ModelDiagnostics.hpp"
+#include "sparlab/fem/NonlinearStatic.hpp"
 #include "sparlab/fem/StaticAnalysis.hpp"
 #include "sparlab/fem/StressRecovery.hpp"
 #include "sparlab/io/CalculixWriter.hpp"
@@ -29,7 +31,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> known = {"config",   "output",        "verbosity",
                                             "strict-config", "modes",   "no-vtk",
                                             "no-csv",   "export-calculix", "solver",
-                                            "buckling", "help"};
+                                            "buckling", "nonlinear", "help"};
     app::CommandLine cli(argc, argv, known);
     if (cli.has("help") || argc == 1) {
       return app::print_usage(
@@ -39,13 +41,16 @@ int main(int argc, char** argv) {
            {"--modes <n>", "override modal.num_modes and enable modal analysis"},
            {"--buckling <n>", "enable the linear buckling check with n modes per load "
                               "case"},
+           {"--nonlinear", "enable the geometrically non-linear analysis (the deck's "
+                           "'nonlinear' settings, or their defaults)"},
            {"--solver <type>", "override solver.linear.type (simplicial_ldlt, amg_cg, "
                                "auto, ...)"},
            {"--no-vtk", "skip VTK output"},
            {"--no-csv", "skip per-node/per-element CSV output"},
-           {"--export-calculix", "also write one CalculiX .inp per load case, and a "
-                                 "heat-transfer .inp for a conducted temperature, into "
-                                 "the output directory (cross-validation)"},
+           {"--export-calculix", "also write one CalculiX .inp per load case, a "
+                                 "heat-transfer .inp for a conducted temperature and an "
+                                 "NLGEOM .inp for a non-linear case, into the output "
+                                 "directory (cross-validation)"},
            {"--strict-config", "treat unknown configuration keys as errors"},
            {"--verbosity <lvl>", "trace|debug|info|warn|error|silent"},
            {"--help", "show this message"}});
@@ -63,6 +68,10 @@ int main(int argc, char** argv) {
     if (cli.has("buckling")) {
       config.buckling.enabled = true;
       config.buckling.options.num_modes = cli.integer("buckling", 4);
+    }
+    if (cli.has("nonlinear")) {
+      config.nonlinear.enabled = true;
+      (void)config.nonlinear_load_cases();  // validates the deck's names
     }
     if (cli.has("solver")) {
       config.analysis.linear.type = parse_linear_solver_type(cli.value("solver"));
@@ -121,6 +130,14 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Geometrically non-linear analysis of each selected load case.
+    std::vector<NonlinearResult> nonlinear;
+    if (config.nonlinear.enabled) {
+      ScopedTimer t(timings, "nonlinear_analysis");
+      NonlinearStaticAnalysis nl(model, assembler, config.nonlinear.options);
+      for (std::size_t l : config.nonlinear_load_cases()) nonlinear.push_back(nl.solve(l));
+    }
+
     std::vector<StressField> stresses;
     {
       ScopedTimer t(timings, "stress_recovery");
@@ -165,9 +182,25 @@ int main(int argc, char** argv) {
       }
       if (modal) writer.write_modal(model.mesh(), *modal);
       if (!buckling.empty()) writer.write_buckling(model.mesh(), buckling);
+      for (const NonlinearResult& r : nonlinear) writer.write_nonlinear(model, r);
       if (cli.has("export-calculix")) {
-        const std::vector<std::string> decks =
-            write_calculix_decks(model, writer.file("calculix"), config.name);
+        // The non-linear cases go out as NLGEOM decks too, when CalculiX has
+        // the same material law.
+        CalculixNonlinearExport nlgeom;
+        const CalculixNonlinearExport* nonlinear_export = nullptr;
+        if (config.nonlinear.enabled) {
+          if (config.nonlinear.options.law == HyperelasticModel::SaintVenantKirchhoff) {
+            nlgeom.load_cases = config.nonlinear_load_cases();
+            nlgeom.increments = config.nonlinear.options.steps;
+            nlgeom.follower_pressure = config.nonlinear.options.follower_pressure;
+            nonlinear_export = &nlgeom;
+          } else {
+            log::warn("the non-linear cases are not exported to CalculiX: its NEO HOOKE is a "
+                      "different strain energy from SparLab's neo-Hookean law");
+          }
+        }
+        const std::vector<std::string> decks = write_calculix_decks(
+            model, writer.file("calculix"), config.name, nonlinear_export);
         for (const std::string& deck : decks) log::info("wrote CalculiX deck ", deck);
       }
     }
@@ -178,6 +211,10 @@ int main(int argc, char** argv) {
     if (!buckling.empty()) {
       summary.set("buckling", buckling_json(buckling, config.buckling.options,
                                             "the model as meshed"));
+    }
+    if (!nonlinear.empty()) {
+      summary.set("nonlinear",
+                  nonlinear_json(nonlinear, config.nonlinear.options, model, solutions));
     }
     writer.write_json("summary.json", summary);
 
@@ -233,6 +270,17 @@ int main(int argc, char** argv) {
         }
       }
       std::cout << "\n";
+    }
+    for (const NonlinearResult& r : nonlinear) {
+      std::cout << "  non-linear '" << r.load_case_name << "' (" << r.method << ", " << r.law
+                << "): " << (r.completed ? "completed" : "STOPPED") << " at lambda = "
+                << app::format(r.load_factor) << " after " << r.steps.size() << " step(s), "
+                << r.total_iterations << " iteration(s)";
+      if (!r.steps.empty()) {
+        std::cout << ", max |u| " << app::format(r.steps.back().max_displacement) << " m";
+      }
+      std::cout << "\n";
+      if (!r.completed) std::cout << "      " << r.termination << "\n";
     }
     std::cout << "  runtime:     " << app::format(timings.get("total")) << " s\n";
     std::cout << "  results:     " << out_dir << "\n";

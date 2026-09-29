@@ -52,6 +52,17 @@
 ///   * `bimetal-strip`    curvature of a heated two-material strip vs
 ///                        Timoshenko;
 ///   * `self-weight`      a bar hanging under its own weight vs the exact field.
+///
+/// Studies of the geometrically non-linear analysis (verify_nonlinear.cpp):
+///   * `elastica`         a slender Tet10 cantilever under a dead tip force
+///                        vs Euler's elastica, up to k = PL^2/EI = 10;
+///   * `hyperelastic-cylinder` a thick tube at finite strain vs the exact
+///                        solutions: neo-Hookean, inflated by a follower
+///                        pressure and spinning; Saint Venant-Kirchhoff,
+///                        heated by a conducted temperature;
+///   * `arch-snap-through` a shallow arch's snap-through: arc length vs
+///                        displacement control, inertia, and load control
+///                        stopping at the limit point.
 
 #include "AppSupport.hpp"
 #include "VerifySupport.hpp"
@@ -2537,7 +2548,8 @@ int main(int argc, char** argv) {
             "multigrid | sensitivity-projection | patch-test-quadratic | "
             "mesh-convergence-tet10 | buckling-euler | sensitivity-buckling | "
             "sensitivity-overhang | lame-cylinder | rotating-disk | thermal-cylinder | "
-            "bimetal-strip | self-weight"},
+            "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
+            "arch-snap-through"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
             "pass threshold on the max relative gradient error (default 1e-5)"},
@@ -2636,6 +2648,15 @@ int main(int argc, char** argv) {
     }
     if (all || study == "self-weight") {
       outcomes.push_back(verify::study_self_weight(out_dir, summary));
+    }
+    if (all || study == "elastica") {
+      outcomes.push_back(verify::study_elastica(out_dir, summary));
+    }
+    if (all || study == "hyperelastic-cylinder") {
+      outcomes.push_back(verify::study_hyperelastic_cylinder(out_dir, summary));
+    }
+    if (all || study == "arch-snap-through") {
+      outcomes.push_back(verify::study_arch_snap_through(out_dir, summary));
     }
     if (outcomes.empty()) {
       throw ConfigError("unknown study '" + study +

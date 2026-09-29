@@ -18,6 +18,7 @@
 ///   "solver":   { "linear": {..}, "equilibrium_tolerance":.. },
 ///   "modal":    { "enabled": true, "num_modes":.. },
 ///   "buckling": { "enabled": true, "num_modes":.., "load_cases": [..] },
+///   "nonlinear": { "enabled": true, "method": "arc_length", "steps":.. },
 ///   "topology": { "enabled": true, "volume_fraction":.., "filter": {..} },
 ///   "output":   { "vtk": true, "csv": true }
 /// }
@@ -44,6 +45,7 @@
 #include "sparlab/fem/FemModel.hpp"
 #include "sparlab/fem/LinearSolver.hpp"
 #include "sparlab/fem/ModalAnalysis.hpp"
+#include "sparlab/fem/NonlinearStatic.hpp"
 #include "sparlab/fem/StaticAnalysis.hpp"
 #include "sparlab/io/Json.hpp"
 #include "sparlab/io/MeshReader.hpp"
@@ -101,6 +103,15 @@ struct BucklingConfig {
   std::vector<std::string> load_cases;
   /// Also check the thresholded structure of a topology run.
   bool analyse_optimised_topology = true;
+};
+
+/// Geometrically non-linear static analysis of the load cases
+/// (sparlab_solve), after the linear one.
+struct NonlinearConfig {
+  bool enabled = false;
+  NonlinearOptions options;
+  /// Load cases to analyse, by name; empty analyses every case.
+  std::vector<std::string> load_cases;
 };
 
 struct TopologyConfig {
@@ -176,6 +187,7 @@ class Configuration {
   StaticAnalysisOptions analysis;
   ModalConfig modal;
   BucklingConfig buckling;
+  NonlinearConfig nonlinear;
   TopologyConfig topology;
   OutputConfig output;
 
@@ -198,6 +210,9 @@ class Configuration {
 
   /// Indices of the load cases the buckling check covers.
   std::vector<std::size_t> buckling_load_cases() const;
+
+  /// Indices of the load cases the non-linear analysis covers.
+  std::vector<std::size_t> nonlinear_load_cases() const;
 
  private:
   std::optional<IsotropicMaterial> material_;

@@ -44,10 +44,12 @@ class Assembler {
  public:
   explicit Assembler(const FemModel& model);
 
-  /// Unit-density element stiffness matrix of element `e` [N/m].
+  /// Element stiffness matrix of element `e` of the solid material (design
+  /// density 1, before any SIMP interpolation) [N/m].
   const Matrix& element_stiffness(Index e) const;
 
-  /// Unit-density consistent element mass matrix of element `e` [kg].
+  /// Consistent element mass matrix of element `e` with its material's
+  /// density rho (design density 1, before any SIMP interpolation) [kg].
   const Matrix& element_mass(Index e) const;
 
   /// True when a single cached element matrix is reused for the whole mesh.

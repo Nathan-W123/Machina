@@ -29,6 +29,19 @@
 /// convection `F1`...`F6`, and `*NODE FILE, NT`, so CalculiX solves the
 /// conduction problem itself.
 ///
+/// A geometrically non-linear analysis of a case also gets
+/// `<stem>_<case>_nlgeom.inp`: the same model and loads in a `*STEP, NLGEOM`
+/// whose `*STATIC` step ramps every load (and prescribed displacement) with
+/// the step time from 0 to 1, as SparLab's load factor does, in automatically
+/// sized increments no longer than 1 / `increments`. Under NLGEOM CalculiX's
+/// `*ELASTIC` material is Saint Venant-Kirchhoff (second Piola-Kirchhoff
+/// stress linear in the Green-Lagrange strain) and its `*DLOAD` pressure
+/// follows the deforming face, so a follower pressure stays a face load
+/// while a dead one goes out as its nodal forces on the undeformed faces
+/// (`*CLOAD`). SparLab's neo-Hookean law has no CalculiX counterpart (its
+/// `NEO HOOKE` splits the energy into an isochoric part and (J - 1)^2), so
+/// such a run is not exported.
+///
 /// The exported problem is the *same discrete problem* SparLab solves
 /// (identical mesh, element type, integration order and materials), so
 /// agreement is expected to solver precision for the solid elements, up to
@@ -47,15 +60,24 @@
 
 namespace sparlab {
 
+/// The geometrically non-linear decks to write beside the linear ones.
+struct CalculixNonlinearExport {
+  std::vector<std::size_t> load_cases;  ///< indices of the cases to export
+  int increments = 10;                  ///< largest increment = 1 / increments
+  bool follower_pressure = true;        ///< as NonlinearOptions::follower_pressure
+};
+
 /// Write `<stem>_<load case>.inp` for every load case of `model`, followed by
 /// `<stem>_<load case>_conduction.inp` for a case whose temperature is
-/// conducted.
+/// conducted and `<stem>_<load case>_nlgeom.inp` for each case `nonlinear`
+/// names.
 /// \return the paths written, in load-case order.
 /// \throws IoError when a file cannot be written, or for a thermal case whose
 ///         materials have different reference temperatures (CalculiX measures
 ///         thermal strain from the initial nodal temperature).
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
-                                              const std::string& case_name);
+                                              const std::string& case_name,
+                                              const CalculixNonlinearExport* nonlinear = nullptr);
 
 /// CalculiX element keyword for the model's element type and stress state.
 std::string calculix_element_type(const FemModel& model);

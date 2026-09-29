@@ -5,12 +5,16 @@
 /// silently wrong answer. After each solve the caller can (and by default does)
 /// verify the scaled residual
 /// \f$ \|A x - b\|_2 / \max(\|b\|_2, \epsilon) \f$ against a recorded
-/// tolerance. Recorded tolerances appear in every run summary.
+/// tolerance, or - where forming \f$Ax - b\f$ cancels so much that no
+/// solver can meet that tolerance in double precision - a backward error at
+/// round-off (`residual_accepted`). Recorded tolerances appear in every run
+/// summary.
 #pragma once
 
 #include "sparlab/core/Types.hpp"
 #include "sparlab/fem/Multigrid.hpp"
 
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -108,8 +112,30 @@ std::unique_ptr<LinearSolver> make_linear_solver(const LinearSolverOptions& opti
 /// Scaled residual \f$\|Ax-b\| / \max(\|b\|, \text{tiny})\f$.
 Scalar scaled_residual(const SparseMatrix& a, const Vector& x, const Vector& b);
 
+/// Backward error of a solution: the residual over the norm of its gross
+/// terms, \f$\|Ax - b\| / \|\,|A||x| + |b|\,\|\f$. The rounding of the sums
+/// that form \f$Ax - b\f$ is a small multiple of \f$\epsilon\f$ times that
+/// denominator, so no solver - direct or iterative - can leave a smaller
+/// backward error than a few \f$\epsilon\f$; a backward-stable solve (the
+/// Cholesky factorisation of an SPD matrix) leaves about that. It never
+/// exceeds the scaled residual. The two part company in a bending-dominated
+/// structure: in a slender beam the entries of \f$Ax\f$ are sums of terms far
+/// larger than their result, so the Cholesky solve of a Tet10 cantilever with
+/// L/h = 100 leaves a scaled residual of 6.5e-7 and a backward error of
+/// 2.4e-16.
+Scalar backward_error(const SparseMatrix& a, const Vector& x, const Vector& b);
+
+/// The backward error at or below which a residual is round-off.
+inline constexpr Scalar kRoundoffBackwardError = 64.0 * std::numeric_limits<Scalar>::epsilon();
+
+/// A solve is accepted when its scaled residual is within `tolerance` or its
+/// backward error is at round-off (`kRoundoffBackwardError`): the solution is
+/// then the exact one of a system whose entries differ from the assembled
+/// ones in the last bits, the best any floating-point solve can deliver.
+bool residual_accepted(Scalar scaled, Scalar backward, Scalar tolerance);
+
 /// Factorise, solve and verify the residual in one call.
-/// \throws SolverError when the residual exceeds `options.residual_tolerance`
+/// \throws SolverError when the residual is not accepted (`residual_accepted`)
 ///         or the solution is not finite.
 Vector solve_and_verify(const SparseMatrix& a, const Vector& b,
                         const LinearSolverOptions& options,

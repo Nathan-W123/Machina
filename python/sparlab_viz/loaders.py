@@ -254,6 +254,22 @@ class CaseResults:
     def reactions(self, load_case: str) -> pd.DataFrame:
         return load_csv(self.path(f"reactions_{_safe(load_case)}.csv"))
 
+    def table(self, name: str) -> pd.DataFrame:
+        """Any CSV file of the directory, by file name."""
+        return load_csv(self.path(name))
+
+    # -- geometrically non-linear ------------------------------------------
+    def nonlinear_path(self, load_case: str) -> Optional[pd.DataFrame]:
+        """The load-displacement path of a non-linear run: one row per
+        converged step with the load factor, iterations, inertia and monitors."""
+        return load_csv(self.path(f"nonlinear_{_safe(load_case)}.csv"), required=False)
+
+    def nonlinear_displacement(self, load_case: str) -> pd.DataFrame:
+        return load_csv(self.path(f"nonlinear_displacement_{_safe(load_case)}.csv"))
+
+    def nonlinear_stress(self, load_case: str) -> pd.DataFrame:
+        return load_csv(self.path(f"nonlinear_stress_{_safe(load_case)}.csv"))
+
     # -- modal -------------------------------------------------------------
     def modes(self, tag: str = "") -> Optional[pd.DataFrame]:
         suffix = f"_{_safe(tag)}" if tag else ""

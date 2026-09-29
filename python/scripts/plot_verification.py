@@ -98,6 +98,15 @@ def main(argv=None) -> int:
         ("Tet4 / Tet10 engine mount study",
          lambda: studies.plot_tet10_part_study(
              args.tet10_study, figure("tet10_part_study.png"))),
+        ("large deflection: the elastica",
+         lambda: studies.plot_elastica(
+             args.verification, figure("verify_elastica.png"))),
+        ("finite strain: the thick tube",
+         lambda: studies.plot_finite_strain_tube(
+             args.verification, figure("verify_finite_strain_tube.png"))),
+        ("snap-through of a shallow arch",
+         lambda: studies.plot_arch_snap_through(
+             args.verification, figure("verify_arch_snap_through.png"))),
     ]
 
     for label, task in tasks:

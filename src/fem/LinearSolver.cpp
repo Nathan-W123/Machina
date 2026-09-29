@@ -429,6 +429,22 @@ Scalar scaled_residual(const SparseMatrix& a, const Vector& x, const Vector& b) 
   return r.norm() / scale;
 }
 
+Scalar backward_error(const SparseMatrix& a, const Vector& x, const Vector& b) {
+  const Vector r = a * x - b;
+  Vector gross = b.cwiseAbs();
+  for (Eigen::Index col = 0; col < a.outerSize(); ++col) {
+    const Scalar xc = std::abs(x(col));
+    for (SparseMatrix::InnerIterator it(a, col); it; ++it) {
+      gross(it.row()) += std::abs(it.value()) * xc;
+    }
+  }
+  return r.norm() / std::max(gross.norm(), std::numeric_limits<Scalar>::min());
+}
+
+bool residual_accepted(Scalar scaled, Scalar backward, Scalar tolerance) {
+  return scaled <= tolerance || backward <= kRoundoffBackwardError;
+}
+
 Vector solve_and_verify(const SparseMatrix& a, const Vector& b,
                         const LinearSolverOptions& options, Scalar* out_residual) {
   auto solver = make_linear_solver(options);
@@ -439,12 +455,15 @@ Vector solve_and_verify(const SparseMatrix& a, const Vector& b,
                       " returned a non-finite solution vector; " + kSingularHint);
   }
   const Scalar residual = scaled_residual(a, x, b);
+  const Scalar backward = backward_error(a, x, b);
   if (out_residual) *out_residual = residual;
-  if (residual > options.residual_tolerance) {
+  if (!residual_accepted(residual, backward, options.residual_tolerance)) {
     std::ostringstream os;
     os << solver->name() << " left a scaled residual of " << residual
        << ", above the tolerance " << options.residual_tolerance
-       << ". The system is likely ill-conditioned; " << kSingularHint;
+       << ", and a backward error of " << backward << ", above round-off ("
+       << kRoundoffBackwardError << "). The system is likely ill-conditioned; "
+       << kSingularHint;
     throw SolverError(os.str());
   }
   log::debug(solver->name(), ": solved ", a.rows(), " unknowns, scaled residual ",

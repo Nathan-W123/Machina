@@ -2,12 +2,16 @@
 /// \brief What the studies of sparlab_verify share across its source files.
 ///
 /// The structural studies live in sparlab_verify.cpp; the studies of the
-/// volume, pressure and thermal loads live in verify_loads.cpp. Both report a
+/// volume, pressure and thermal loads live in verify_loads.cpp, those of the
+/// geometrically non-linear analysis in verify_nonlinear.cpp. All report a
 /// `StudyOutcome` that the driver prints and writes to summary.json.
 #pragma once
 
 #include "sparlab/core/Types.hpp"
+#include "sparlab/fem/FemModel.hpp"
+#include "sparlab/fem/Selector.hpp"
 #include "sparlab/io/Json.hpp"
+#include "sparlab/mesh/Mesh.hpp"
 
 #include <cmath>
 #include <string>
@@ -41,6 +45,33 @@ StudyOutcome study_rotating_disk(const std::string& out_dir, json::Value& summar
 StudyOutcome study_thermal_cylinder(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_bimetal_strip(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_self_weight(const std::string& out_dir, json::Value& summary);
+/// \}
+
+/// Studies of the geometrically non-linear analysis (verify_nonlinear.cpp).
+/// \{
+StudyOutcome study_elastica(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_hyperelastic_cylinder(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_arch_snap_through(const std::string& out_dir, json::Value& summary);
+/// \}
+
+/// Quarter sections of a cylinder (verify_loads.cpp).
+/// \{
+/// The unit box [0, 1]^2 of a structured mesh (times [0, depth] in 3-D) mapped
+/// onto the annular sector a <= r <= b, 0 <= theta <= 90 deg by
+/// r = a + (b - a) x, theta = 90 deg y. Every node moves, a Tet10's edge nodes
+/// included, so a Tet10 cell follows the circles with curved faces while a
+/// linear cell spans their chords. The mapped mesh carries no structured-grid
+/// information: its cells differ.
+Mesh quarter_annulus(const Mesh& unit, Scalar a, Scalar b);
+/// Quarter section with n_r cells through the wall and n_theta round it. A
+/// solid section is one layer of cells as deep as a cell is wide.
+Mesh sector_mesh(ElementType type, Index nr, Index nt, Scalar a, Scalar b);
+/// Symmetry supports of a quarter section, plus u_z = 0 at every node of a
+/// solid one (plane strain).
+void add_quarter_supports(FemModel& model);
+/// The cylindrical surface r = radius: the bore (every node with r <= radius)
+/// or the outer surface (every node with r >= radius).
+SelectorGroup cylinder_surface(const std::string& name, Scalar radius, bool bore);
 /// \}
 
 }  // namespace verify

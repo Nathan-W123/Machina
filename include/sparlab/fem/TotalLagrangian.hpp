@@ -1,0 +1,79 @@
+/// \file TotalLagrangian.hpp
+/// \brief Internal force and consistent tangent of the total Lagrangian
+///        formulation, written once for every continuum element.
+///
+/// Everything is referred to the undeformed configuration. At a quadrature
+/// point with reference shape-function gradients \f$G = \partial N/\partial X\f$
+/// (dim x n, read off the element's strain operator) and nodal displacements
+/// \f$U\f$ (dim x n):
+/// \f[
+///   F = I + U G^T, \qquad E = \tfrac12(F^T F - I),
+/// \f]
+/// and the variation of the Green-Lagrange strain is
+/// \f$\delta E = B_{NL}\,\delta u\f$ with, for the Voigt component \f$(ij)\f$
+/// and the DOF \f$k\f$ of node \f$a\f$,
+/// \f[
+///   (B_{NL})_{(ii),ak} = F_{ki} G_{ia}, \qquad
+///   (B_{NL})_{(ij),ak} = F_{ki} G_{ja} + F_{kj} G_{ia} \quad (i \ne j).
+/// \f]
+/// Then
+/// \f[
+///   f_{int} = \int_{\Omega_0} B_{NL}^T S\,t\,dV_0 ,\qquad
+///   K_T = \int_{\Omega_0} B_{NL}^T \mathbb{C} B_{NL}\,t\,dV_0
+///       + \int_{\Omega_0} (G^T \mathbf{S}\,G) \otimes I\,t\,dV_0 ,
+/// \f]
+/// the material and the geometric (initial-stress) parts, with \f$S\f$ and
+/// \f$\mathbb{C}\f$ from Hyperelastic.hpp. The integration rule is the
+/// element's stiffness rule. For a small displacement \f$F \to I\f$,
+/// \f$B_{NL} \to B\f$ and \f$K_T\f$ tends to the linear stiffness; a rigid
+/// rotation gives \f$E = 0\f$ and no internal force (both tested). In plane
+/// stress the thickness is taken as constant: the Saint Venant-Kirchhoff law
+/// with the plane-stress \f$D\f$ applied to the in-plane Green strain, exact
+/// for large rotations with small strains.
+#pragma once
+
+#include "sparlab/core/Types.hpp"
+#include "sparlab/fem/FemModel.hpp"
+#include "sparlab/material/Hyperelastic.hpp"
+
+namespace sparlab {
+
+/// Element contribution of the total Lagrangian formulation.
+struct TotalLagrangianElement {
+  Vector internal_force;  ///< num_dofs [N]
+  Matrix tangent;         ///< num_dofs x num_dofs [N/m]; empty unless requested
+  /// Derivative of the internal force with respect to a scale on the
+  /// temperature change, \f$\partial f_{int}/\partial s\f$ at \f$\Delta T = s\,(T - T_{ref})\f$
+  /// [N]; empty without a temperature.
+  Vector thermal_force_rate;
+  Scalar energy = 0.0;    ///< \f$\int W\,t\,dV_0\f$ [J]
+};
+
+/// Evaluate element `e` of `model` at element displacements `ue` (node-major,
+/// num_dofs).
+/// \param law the material law.
+/// \param temperature nodal temperatures [K] or nullptr; the temperature
+///        change entering the law is `temperature_scale * (T - T_ref)`.
+/// \param want_tangent assemble the tangent as well.
+/// \throws SolverError when an element inverts under a neo-Hookean law.
+TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
+                                                const Vector& ue, HyperelasticModel law,
+                                                const Vector* temperature,
+                                                Scalar temperature_scale, bool want_tangent);
+
+/// Stresses of element `e` averaged over its stiffness quadrature points:
+/// the second Piola-Kirchhoff stress and the Cauchy stress (Voigt), and the
+/// out-of-plane Cauchy stress of a plane-strain element.
+struct TotalLagrangianStress {
+  Vector piola_kirchhoff;
+  Vector cauchy;
+  Scalar cauchy_zz = 0.0;
+  Scalar max_green_strain = 0.0;  ///< largest |E_ij| over the element's points
+  Scalar min_jacobian = 1.0;      ///< smallest det F over the element's points
+};
+
+TotalLagrangianStress total_lagrangian_stress(const FemModel& model, Index e, const Vector& ue,
+                                              HyperelasticModel law, const Vector* temperature,
+                                              Scalar temperature_scale);
+
+}  // namespace sparlab

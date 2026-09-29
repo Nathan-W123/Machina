@@ -156,6 +156,12 @@ beam or shell elements.
 * Positive moment is counter-clockwise about `+z`, i.e. `M = x F_y - y F_x`,
   taken about the origin. On a solid mesh the moment is the full vector
   `M = x cross F` about the origin, reported component by component.
+* A non-linear load factor `lambda` multiplies every load of the case at
+  once - forces, pressures, body loads, the rotation's centrifugal load (so
+  the angular velocity grows as `sqrt(lambda)`), the temperature change and
+  prescribed displacements - and `lambda = 1` is the load case as written.
+  A reaction monitor sums the support reactions over its nodes with the sign
+  above; a displacement monitor averages the nodal displacements.
 * A buckling load factor `lambda` multiplies the load case: the structure is
   predicted to buckle under `lambda f`. Load factors are reported positive
   and ascending; the negative ones of the pencil (buckling under the
@@ -239,7 +245,7 @@ Every tolerance is configurable and every run records the value it used in
 
 | Tolerance | Default | What it bounds |
 |-----------|---------|----------------|
-| `solver.linear.residual_tolerance` | `1e-8` | scaled residual `\|\|Ku-f\|\| / \|\|f\|\|` after each solve, whatever the solver |
+| `solver.linear.residual_tolerance` | `1e-8` | scaled residual `\|\|Ku-f\|\| / \|\|f\|\|` after each solve, whatever the solver; a solve whose backward error `\|\|Ku-f\|\| / \|\| \|K\|\|u\| + \|f\| \|\|` is at most `64 eps` is accepted too (its residual is round-off; `docs/formulation.md`, section 5) |
 | `solver.linear.pivot_tolerance` | `1e-14` | smallest / largest LDL^T pivot before the system is called singular |
 | `solver.linear.iterative_tolerance` | `1e-12` | relative residual the CG solvers (Jacobi and multigrid) iterate to |
 | `solver.linear.amg.coarse_pivot_tolerance` | `1e-13` | smallest / largest pivot of the multigrid's coarsest factorisation before the model is called under-constrained |
@@ -256,6 +262,9 @@ Every tolerance is configurable and every run records the value it used in
 | `buckling.tolerance` (and `topology.buckling_constraint.tolerance`) | `1e-8` | relative change of the requested load factors between subspace iterations |
 | `buckling.residual_tolerance` | `1e-6` | relative eigenpair residual `\|\|K phi + lambda K_G phi\|\| / \|\|K phi\|\|`, also part of the stopping rule |
 | `topology.length_scale_check.tolerance` | `0.02` | share of the solid (void) volume a morphological probe may change and still pass |
+| `nonlinear.residual_tolerance` | `1e-8` | out-of-balance force of a converged step over the load scale (the largest of the applied loads, the reactions and the thermal forces); a residual at its round-off floor, `max(1024 eps` gross element forces`, 64 eps \|\| \|K_T\|\|u\| \|\|)`, is accepted too |
+| `nonlinear.displacement_tolerance` | `1e-8` | last Newton correction over the displacement increment of the step, no finer than `64 eps \|\|u\|\|` |
+| `nonlinear.max_cuts` | `12` | successive halvings of a failing step, and of the steps closing in on a critical point, before the run stops |
 
 The decks that use the multigrid solver (`bracket_3d_projected`,
 `bracket_3d_large`, `engine_mount_3d`) set `iterative_tolerance` to `1e-10`.

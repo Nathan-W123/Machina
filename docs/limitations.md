@@ -18,20 +18,54 @@ every mode of a solid mesh fine enough to bend, but a plane model cannot
 buckle out of its plane, so plate buckling of a thin lightened web - which
 can govern it - stays invisible to the 2-D decks.
 
-**Linear, small strain, small displacement.** One factorisation, one solve, no
-load stepping. Geometric non-linearity, plasticity, contact and creep are
-absent. The deformation figures are exaggerated by a stated factor purely for
-visibility; the analysis behind them is linear.
+**Elastic, and linear unless asked otherwise.** The static, modal and
+buckling analyses and the topology optimisation are linear: small strain,
+small displacement, one factorisation. The deformation figures of those runs
+are exaggerated by a stated factor purely for visibility. `sparlab_solve`
+adds a geometrically non-linear static analysis (`nonlinear` in the deck;
+`docs/formulation.md`, section 7c): large displacement and rotation, with the
+Saint Venant-Kirchhoff law (small strain) or a compressible neo-Hookean law
+(large strain), follower pressures, a centrifugal load at the deformed
+position, the finite-strain thermal split, load control that stops at limit
+and bifurcation points and says so, and the arc-length method through limit
+points. What it does not do:
+
+* the material stays elastic: no plasticity, damage, creep or
+  viscoelasticity, so a run past yield is an elastic answer to a question
+  the material would answer otherwise;
+* no contact, and no dynamics - the path is quasi-static, and a
+  snap-through that the arc-length method follows is a sequence of
+  equilibria, not the dynamic jump a real structure would make;
+* at a bifurcation of a perfect structure there is no branch switching: load
+  control stops there, and the arc-length method stays on the fundamental
+  path. A post-buckling analysis needs an imperfection built into the mesh
+  (a perturbed geometry), which the deck does not generate;
+* the Saint Venant-Kirchhoff law is valid for small strain only - the summary
+  warns above a Green-Lagrange strain of 0.05, and under strong compression
+  (a stretch below `1/sqrt(3)`) it softens unphysically. The neo-Hookean law
+  has no plane-stress form and no thermal strain; its constants are the small-
+  strain `E` and `nu`, not a fit to test data of a real elastomer;
+* a follower pressure over free edges makes the tangent non-symmetric; LU
+  factorises it, which reports no inertia, so the stability of such a state
+  is not assessed (the summary says so);
+* body forces and self-weight stay dead loads per reference volume, a
+  prescribed displacement scales with the load factor, and every load of a
+  case shares one load factor - there are no load sequences (a preload
+  followed by a service load) within a case;
+* the topology optimisation, the modal analysis and the buckling analysis do
+  not use the non-linear state (`sparlab_topopt` refuses the block).
 
 **Buckling is linear bifurcation.** The buckling check is the eigenvalue
 problem `(K + lambda K_G(u)) phi = 0` of the linear static state: the
 bifurcation load of the perfect geometry, which is an upper bound on the
 collapse load of a real part with its imperfections, residual stresses and
-plasticity. No imperfection sensitivity, no post-buckling path, no follower
-loads, no knock-down factor. A load factor of 6 is not a safety factor of 6
-against collapse; for a shell-like or imperfection-sensitive structure the
-difference can be large, and a non-linear analysis would be needed to know
-it.
+plasticity. No imperfection sensitivity, no follower loads, no knock-down
+factor. A load factor of 6 is not a safety factor of 6 against collapse; for
+a shell-like or imperfection-sensitive structure the difference can be
+large. The non-linear analysis gives the limit load of the geometry as
+meshed - an imperfect mesh included - and brackets the first loss of
+stability under load control, but not a post-buckling branch that starts at
+a bifurcation of the perfect geometry.
 
 **Static and undamped free vibration only.** No transient response, no damping,
 no forced response, no fatigue. A natural frequency here is the undamped
@@ -40,9 +74,10 @@ eigenvalue of the constrained model.
 **Body loads: self-weight, force densities and steady rotation.** Gravity,
 uniform body force densities on element regions and the centrifugal load of a
 steady rotation are integrated exactly from the consistent mass. Rotation is
-the static centrifugal load only: no Coriolis or gyroscopic terms and no spin
-softening (the stiffness change of a spinning body), which a dynamic or
-geometrically non-linear analysis would add. There is no inertia relief (a
+the static centrifugal load only: no Coriolis or gyroscopic terms. In the
+linear analyses it acts at the undeformed position; the non-linear analysis
+applies it at the deformed position, with the spin-softening stiffness that
+follows. There is no inertia relief (a
 free-flying body balanced by its own acceleration), so a body load must be
 reacted by supports. The wing-rib deck's "fuel inertia" case is still a
 *representative edge pressure*, not a body-force calculation.
@@ -62,8 +97,11 @@ quadrilaterals integrate the interpolated temperature (the consistent load),
 which cannot represent the free expansion of a linear temperature gradient
 exactly - that needs a quadratic displacement - so a free Hex8 or Q4 part in
 a gradient shows a small spurious stress that vanishes under refinement; the
-Tet10 represents it exactly. Topology optimisation does not take body loads,
-temperatures or several materials yet (`sparlab_topopt` refuses them).
+Tet10 represents it exactly. In the non-linear analysis the thermal stretch
+`1 + alpha dT` splits off multiplicatively (Saint Venant-Kirchhoff only),
+with the same temperature-independent constants. Topology optimisation does
+not take body loads, temperatures or several materials yet (`sparlab_topopt`
+refuses them).
 
 **Linear elements, and one quadratic element.** The four-node
 quadrilateral, the three-node triangle, the eight-node hexahedron and the
@@ -108,12 +146,13 @@ peak stresses near a point load are mesh-dependent artefacts. The benchmark
 decks spread their resultants over a small region for this reason, and the
 distributed-traction path is the honest way to apply a pressure.
 
-**Plane strain is implemented but less exercised.** The constitutive matrix, the
-out-of-plane stress in the von Mises formula and the unit tests are all in
-place, and the test suite confirms plane strain is stiffer than plane stress for
-the same beam. But every verification and validation study runs in plane stress,
-so plane strain is documented as *available*, not as validated to the same
-depth.
+**Plane strain is verified on curved sections, not on beams.** The thick
+cylinder under pressure, the conducted thermal cylinder, the rotating
+cylinder and the finite-strain tube run in plane strain against exact
+solutions, the Hex8 and Tet10 sections held at `u_z = 0` reproduce the Q4
+answers, and CalculiX's plane-strain expansion (`CPE4`) agrees node by node.
+The beam and frequency studies against Timoshenko and Euler-Bernoulli run
+in plane stress only.
 
 ## Attachment and joint representation
 
@@ -379,21 +418,27 @@ dense solvers agree to 9e-12, and multigrid CG agrees with Cholesky to
 4e-12. The compliance gradient matches central differences to 2e-8 on Q4
 and Hex8, and to 1e-7 through the Heaviside projection on Q4 and Tet4; the
 buckling constraint's gradient to 1.7e-6 and the overhang filter's to
-2.8e-6. Mass is conserved to 5e-14. Linear static displacements are
-cross-validated node by node against two independent codes on eleven
-problems with seventeen load cases, covering all five element types and
-both mesh-file formats, and buckling load factors on three columns.
-scikit-fem agrees to solver round-off, 1.5e-10 or better, displacements and
-load factors alike. CalculiX's displacements agree to the rounding of its
-own result file, 4.3e-6 or better, wherever the two codes solve the same
-discrete problem; its plane-stress comparisons at `nu != 0` are recorded but
-not judged; its buckling factors differ by up to 8.3e-5 for a reason not
-identified. Validation against independent theory covers exactly four
-references: Euler-Bernoulli and Timoshenko cantilever deflection,
-Euler-Bernoulli bending frequencies, fixed-free rod axial frequencies, and
-the Euler-Engesser buckling load of a clamped column. Stresses, frequencies
-and optimised designs are not compared with another code, and there is
-**no comparison against experiment**.
+2.8e-6. Mass is conserved to 5e-14. A homogeneous large deformation on
+distorted meshes is reproduced to 1e-9 m, and the tube at finite strain
+converges at every element's order to its exact solution. Linear static
+displacements are cross-validated node by node against two independent
+codes on twenty-one problems with forty-six load cases, covering all five
+element types and both mesh-file formats; so are buckling load factors on
+three columns and large-deflection states on four decks. scikit-fem agrees
+to solver round-off, 1.5e-10 or better, displacements and load factors
+alike, except the slender elastica deck's linear solve (8.0e-9, its
+conditioning); scikit-fem's own total Lagrangian solver agrees with
+SparLab's non-linear states to 1e-14. CalculiX's displacements agree to the
+rounding of its own result file, 4.3e-6 or better, linear and `NLGEOM`
+alike, wherever the two codes solve the same discrete problem; its
+plane-stress comparisons at `nu != 0` are recorded but not judged; its
+buckling factors differ by up to 8.3e-5 for a reason not identified.
+Validation against independent theory covers exactly five references:
+Euler-Bernoulli and Timoshenko cantilever deflection, Euler-Bernoulli
+bending frequencies, fixed-free rod axial frequencies, the Euler-Engesser
+buckling load of a clamped column, and Euler's elastica. Stresses,
+frequencies, non-linear load paths and optimised designs are not compared
+with another code, and there is **no comparison against experiment**.
 
 **The MBB compliance is not compared to a published number.** SparLab reports
 what it computes (218.8 J with the density filter, 203.2 J with the sensitivity

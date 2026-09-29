@@ -243,10 +243,12 @@ ConductionResult solve_conduction(const FemModel& model, const ConductionSpec& s
       throw SolverError("the conduction solve returned a non-finite temperature field");
     }
     sum.scaled_residual = scaled_residual(a, tf, b);
-    if (sum.scaled_residual > linear.residual_tolerance) {
+    const Scalar backward = backward_error(a, tf, b);
+    if (!residual_accepted(sum.scaled_residual, backward, linear.residual_tolerance)) {
       std::ostringstream os;
       os << "the conduction solve left a scaled residual of " << sum.scaled_residual
-         << ", above the tolerance " << linear.residual_tolerance;
+         << ", above the tolerance " << linear.residual_tolerance << ", and a backward error of "
+         << backward << ", above round-off (" << kRoundoffBackwardError << ")";
       throw SolverError(os.str());
     }
     for (Index i = 0; i < nf; ++i) temperature(free_nodes[static_cast<std::size_t>(i)]) = tf(i);

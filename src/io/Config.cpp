@@ -352,6 +352,24 @@ std::vector<std::size_t> Configuration::buckling_load_cases() const {
   return out;
 }
 
+std::vector<std::size_t> Configuration::nonlinear_load_cases() const {
+  std::vector<std::size_t> out;
+  if (nonlinear.load_cases.empty()) {
+    for (std::size_t l = 0; l < load_cases.size(); ++l) out.push_back(l);
+    return out;
+  }
+  for (const std::string& wanted : nonlinear.load_cases) {
+    std::size_t l = 0;
+    while (l < load_cases.size() && load_cases[l].name != wanted) ++l;
+    if (l == load_cases.size()) {
+      throw ConfigError("'nonlinear.load_cases' names '" + wanted +
+                        "', which is not a load case of the deck");
+    }
+    out.push_back(l);
+  }
+  return out;
+}
+
 namespace {
 
 /// The eigensolver keys shared by the buckling check and the constraint.
@@ -792,6 +810,75 @@ Configuration parse_configuration(const json::Value& document, const std::string
         throw ConfigError("'buckling.num_modes' must be at least 1");
       }
       (void)config.buckling_load_cases();  // validates the names
+    }
+  }
+
+  // --- nonlinear ----------------------------------------------------------
+  {
+    const ConfigNode nl = root.child("nonlinear");
+    NonlinearConfig& c = config.nonlinear;
+    c.enabled = nl.boolean_or("enabled", false);
+    NonlinearOptions& o = c.options;
+    o.law = parse_hyperelastic_model(nl.string_or("material_model", "saint_venant_kirchhoff"));
+    o.method = parse_nonlinear_method(nl.string_or("method", "load_control"));
+    o.steps = nl.integer_or("steps", o.steps);
+    o.max_steps = nl.integer_or("max_steps", o.max_steps);
+    o.max_iterations = nl.integer_or("max_iterations", o.max_iterations);
+    o.max_cuts = nl.integer_or("max_cuts", o.max_cuts);
+    o.residual_tolerance = nl.number_or("residual_tolerance", o.residual_tolerance);
+    o.displacement_tolerance = nl.number_or("displacement_tolerance", o.displacement_tolerance);
+    o.line_search = nl.boolean_or("line_search", o.line_search);
+    o.follower_pressure = nl.boolean_or("follower_pressure", o.follower_pressure);
+    o.target_load_factor = nl.number_or("target_load_factor", o.target_load_factor);
+    o.desired_iterations = nl.integer_or("desired_iterations", o.desired_iterations);
+    o.min_arc_ratio = nl.number_or("min_arc_ratio", o.min_arc_ratio);
+    o.max_arc_ratio = nl.number_or("max_arc_ratio", o.max_arc_ratio);
+    int index = 0;
+    for (const ConfigNode& m : nl.array("monitors")) {
+      NonlinearMonitor monitor;
+      monitor.name = m.string_or("name", "monitor" + std::to_string(index++));
+      monitor.region = parse_region(m.require("region"), monitor.name, dim);
+      monitor.component = parse_axis(m, "component");
+      if (monitor.component >= dim) {
+        throw ConfigError("'" + m.path() + ".component' names an axis the " +
+                          std::to_string(dim) + "-D model lacks");
+      }
+      monitor.quantity = parse_monitor_quantity(m.string_or("quantity", "displacement"));
+      o.monitors.push_back(std::move(monitor));
+    }
+    for (const ConfigNode& f : nl.array("load_factors")) o.load_factors.push_back(f.number());
+    c.load_cases = string_list(nl, "load_cases");
+    if (c.enabled) {
+      if (o.steps < 1 || o.max_steps < 1 || o.max_iterations < 1 || o.max_cuts < 0 ||
+          o.desired_iterations < 1) {
+        throw ConfigError("'nonlinear' needs steps, max_steps, max_iterations and "
+                          "desired_iterations >= 1 and max_cuts >= 0");
+      }
+      if (!(o.residual_tolerance > 0.0) || !(o.displacement_tolerance > 0.0) ||
+          !(o.target_load_factor > 0.0)) {
+        throw ConfigError("'nonlinear' tolerances and target_load_factor must be positive");
+      }
+      if (!(o.min_arc_ratio > 0.0) || !(o.max_arc_ratio >= 1.0) ||
+          !(o.min_arc_ratio <= 1.0)) {
+        throw ConfigError("'nonlinear' needs 0 < min_arc_ratio <= 1 <= max_arc_ratio");
+      }
+      if (!o.load_factors.empty() && o.method == NonlinearOptions::Method::ArcLength) {
+        throw ConfigError("'nonlinear.load_factors' fixes the load levels of load control; "
+                          "the arc-length method chooses its own");
+      }
+      Scalar previous = 0.0;
+      for (Scalar f : o.load_factors) {
+        if (!(f > previous) || !(f < 1.0)) {
+          throw ConfigError("'nonlinear.load_factors' must increase strictly within (0, 1)");
+        }
+        previous = f;
+      }
+      if (o.law == HyperelasticModel::NeoHookean &&
+          config.stress_state == StressState::PlaneStress) {
+        throw ConfigError("'nonlinear.material_model' \"neo_hookean\" needs plane strain or a "
+                          "solid mesh; in plane stress use \"saint_venant_kirchhoff\"");
+      }
+      (void)config.nonlinear_load_cases();  // validates the names
     }
   }
 

@@ -475,7 +475,8 @@ void ResultWriter::write_mesh(const FemModel& model) const {
 }
 
 void ResultWriter::write_displacement(const Mesh& mesh, const std::string& load_case,
-                                      const Vector& full_displacement) const {
+                                      const Vector& full_displacement,
+                                      const std::string& stem) const {
   const int dim = mesh.dim();
   const Vector displacement = translations(mesh, full_displacement);
   const Vector rotation = rotations(mesh, full_displacement);
@@ -484,7 +485,7 @@ void ResultWriter::write_displacement(const Mesh& mesh, const std::string& load_
   header = concat(header, component_headers(dim, "u", "m"));
   header.push_back("umag[m]");
   if (rotation.size() > 0) header = concat(header, component_headers(3, "r", "rad"));
-  CsvWriter csv(file("displacement_" + sanitise(load_case) + ".csv"), header);
+  CsvWriter csv(file(stem + "_" + sanitise(load_case) + ".csv"), header);
   for (Index n = 0; n < mesh.num_nodes(); ++n) {
     const Vector3 x = mesh.node(n);
     std::vector<Scalar> row;
@@ -538,7 +539,8 @@ void ResultWriter::write_stress(const Mesh& mesh, const std::string& load_case,
 
 void ResultWriter::write_reactions(const Mesh& mesh, const DofManager& dofs,
                                    const std::string& load_case,
-                                   const Vector& full_reactions) const {
+                                   const Vector& full_reactions,
+                                   const std::string& stem) const {
   const int dim = mesh.dim();
   const int ndpn = dofs.dofs_per_node();
   const Vector reactions = translations(mesh, full_reactions);
@@ -548,7 +550,7 @@ void ResultWriter::write_reactions(const Mesh& mesh, const DofManager& dofs,
   header = concat(header, component_headers(dim, "r", "N"));
   header.push_back("rmag[N]");
   if (moments.size() > 0) header = concat(header, component_headers(3, "m", "Nm"));
-  CsvWriter csv(file("reactions_" + sanitise(load_case) + ".csv"), header);
+  CsvWriter csv(file(stem + "_" + sanitise(load_case) + ".csv"), header);
   for (Index n = 0; n < mesh.num_nodes(); ++n) {
     bool constrained = false;
     for (int k = 0; k < ndpn; ++k) {
@@ -732,6 +734,87 @@ void ResultWriter::write_buckling(const Mesh& mesh, const std::vector<BucklingRe
       name << "buckling" << suffix << "_" << sanitise(r.load_case) << "_" << i + 1 << ".vtk";
       writer.write(file(name.str()));
     }
+  }
+}
+
+void ResultWriter::write_nonlinear(const FemModel& model, const NonlinearResult& result) const {
+  const Mesh& mesh = model.mesh();
+  const int dim = mesh.dim();
+  const std::string lc = sanitise(result.load_case_name);
+  {
+    std::vector<std::string> header{"step",          "load_factor[-]",     "iterations[-]",
+                                    "cuts[-]",       "residual[-]",        "arc_length[m]",
+                                    "negative_pivots[-]", "max_displacement[m]"};
+    for (std::size_t i = 0; i < result.monitor_names.size(); ++i) {
+      header.push_back(result.monitor_names[i] + "[" + result.monitor_units[i] + "]");
+    }
+    CsvWriter csv(file("nonlinear_" + lc + ".csv"), header);
+    for (const NonlinearStep& s : result.steps) {
+      std::vector<Scalar> row{s.load_factor, static_cast<Scalar>(s.iterations),
+                              static_cast<Scalar>(s.cuts), s.residual, s.arc_length,
+                              static_cast<Scalar>(s.negative_pivots), s.max_displacement};
+      row.insert(row.end(), s.monitors.begin(), s.monitors.end());
+      csv.row(s.index, row);
+    }
+    csv.close();
+  }
+  const bool plane_strain = dim == 2 && model.stress_state() == StressState::PlaneStrain;
+  const Index ne = mesh.num_elements();
+  if (config_.output.write_csv) {
+    write_displacement(mesh, result.load_case_name, result.displacement,
+                       "nonlinear_displacement");
+    write_reactions(mesh, model.dofs(), result.load_case_name, result.reactions,
+                    "nonlinear_reactions");
+    // Cauchy (true) stress on the deformed element and the second
+    // Piola-Kirchhoff stress, both averaged over the integration points; the
+    // coordinates are the reference centroid.
+    std::vector<std::string> header{"element"};
+    header = concat(header, coordinate_headers(dim, "c"));
+    header.push_back(dim == 2 ? "area[m2]" : "volume[m3]");
+    const std::vector<std::string> pairs =
+        dim == 2 ? std::vector<std::string>{"xx", "yy", "xy"}
+                 : std::vector<std::string>{"xx", "yy", "zz", "xy", "yz", "zx"};
+    for (const std::string& p : pairs) header.push_back("s" + p + "[Pa]");
+    if (plane_strain) header.push_back("szz[Pa]");
+    header.push_back("von_mises[Pa]");
+    for (const std::string& p : pairs) header.push_back("pk2_" + p + "[Pa]");
+    CsvWriter csv(file("nonlinear_stress_" + lc + ".csv"), header);
+    for (Index e = 0; e < ne; ++e) {
+      const Vector3 c = mesh.element_centroid(e);
+      std::vector<Scalar> row;
+      for (int k = 0; k < dim; ++k) row.push_back(c(k));
+      row.push_back(mesh.element_measure(e));
+      for (Eigen::Index i = 0; i < result.element_cauchy.rows(); ++i) {
+        row.push_back(result.element_cauchy(i, e));
+      }
+      if (plane_strain) row.push_back(result.element_cauchy_zz(e));
+      row.push_back(result.element_von_mises(e));
+      for (Eigen::Index i = 0; i < result.element_piola_kirchhoff.rows(); ++i) {
+        row.push_back(result.element_piola_kirchhoff(i, e));
+      }
+      csv.row(e, row);
+    }
+    csv.close();
+  }
+  if (config_.output.write_vtk) {
+    std::ostringstream title;
+    title << "SparLab non-linear solution: " << config_.name << " / " << result.load_case_name
+          << " at load factor " << result.load_factor;
+    VtkWriter writer(mesh, title.str());
+    Vector mag(mesh.num_nodes());
+    for (Index n = 0; n < mesh.num_nodes(); ++n) mag(n) = magnitude(result.displacement, n, dim);
+    writer.add_point_vectors("displacement", result.displacement);
+    writer.add_point_scalars("displacement_magnitude", mag);
+    const std::vector<std::string> pairs =
+        dim == 2 ? std::vector<std::string>{"xx", "yy", "xy"}
+                 : std::vector<std::string>{"xx", "yy", "zz", "xy", "yz", "zx"};
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+      writer.add_cell_scalars("cauchy_" + pairs[i],
+                              result.element_cauchy.row(static_cast<Eigen::Index>(i)).transpose());
+    }
+    if (plane_strain) writer.add_cell_scalars("cauchy_zz", result.element_cauchy_zz);
+    writer.add_cell_scalars("von_mises", result.element_von_mises);
+    writer.write(file("nonlinear_" + lc + ".vtk"));
   }
 }
 
@@ -1075,6 +1158,7 @@ json::Value make_static_summary(const Configuration& config, const FemModel& mod
     entry.set("max_displacement_node",
               json::Value::make_number(sol.max_displacement_node));
     entry.set("scaled_residual", json::Value::make_number(sol.scaled_residual));
+    entry.set("backward_error", json::Value::make_number(sol.backward_error));
     entry.set("solver_iterations", json::Value::make_number(sol.solver_iterations));
     entry.set("linear_solver", json::Value::make_string(sol.solver_name));
     entry.set("equilibrium", equilibrium_json(sol.equilibrium, model.dim()));
@@ -1131,6 +1215,139 @@ json::Value buckling_json(const std::vector<BucklingResult>& results,
       c.set("linear_solver", json::Value::make_string(r.linear_solver));
     }
     c.set("warnings", json::array_of(r.warnings));
+    cases.push_back(c);
+  }
+  out.set("load_cases", cases);
+  return out;
+}
+
+json::Value nonlinear_json(const std::vector<NonlinearResult>& results,
+                           const NonlinearOptions& options, const FemModel& model,
+                           const std::vector<StaticSolution>& linear) {
+  const bool arc = options.method == NonlinearOptions::Method::ArcLength;
+  const bool svk = options.law == HyperelasticModel::SaintVenantKirchhoff;
+  json::Value out = json::Value::make_object();
+  out.set("formulation",
+          json::Value::make_string(
+              "geometrically non-linear statics, total Lagrangian: second Piola-Kirchhoff "
+              "stress and Green-Lagrange strain on the reference configuration, consistent "
+              "tangent (material plus initial-stress part), Newton's method"));
+  out.set("material_model", json::Value::make_string(to_string(options.law)));
+  out.set("method", json::Value::make_string(to_string(options.method)));
+  out.set("follower_pressure", json::Value::make_bool(options.follower_pressure));
+  out.set("load_scaling",
+          json::Value::make_string(
+              "every load of the case - forces, pressures, body forces, the rotation's "
+              "centrifugal load, a temperature change and prescribed displacements - scales "
+              "with the load factor lambda; pressures follow the deformed faces when "
+              "follower_pressure is set, a rotation acts at the deformed position"));
+  json::Value opts = json::Value::make_object();
+  opts.set("steps", json::Value::make_number(options.steps));
+  opts.set("max_steps", json::Value::make_number(options.max_steps));
+  opts.set("max_iterations", json::Value::make_number(options.max_iterations));
+  opts.set("max_cuts", json::Value::make_number(options.max_cuts));
+  opts.set("residual_tolerance", json::Value::make_number(options.residual_tolerance));
+  opts.set("displacement_tolerance", json::Value::make_number(options.displacement_tolerance));
+  opts.set("line_search", json::Value::make_bool(options.line_search));
+  if (arc) {
+    opts.set("target_load_factor", json::Value::make_number(options.target_load_factor));
+    opts.set("desired_iterations", json::Value::make_number(options.desired_iterations));
+    opts.set("min_arc_ratio", json::Value::make_number(options.min_arc_ratio));
+    opts.set("max_arc_ratio", json::Value::make_number(options.max_arc_ratio));
+  }
+  out.set("options", opts);
+
+  const int dim = model.dim();
+  json::Value cases = json::Value::make_array();
+  for (const NonlinearResult& r : results) {
+    json::Value c = json::Value::make_object();
+    c.set("load_case", json::Value::make_string(r.load_case_name));
+    c.set("completed", json::Value::make_bool(r.completed));
+    c.set("termination", json::Value::make_string(r.termination));
+    c.set("load_factor", json::Value::make_number(r.load_factor));
+    if (!std::isnan(r.critical_bound)) {
+      json::Value bracket = json::Value::make_array();
+      bracket.push_back(json::Value::make_number(r.load_factor));
+      bracket.push_back(json::Value::make_number(r.critical_bound));
+      c.set("critical_load_factor_bracket", bracket);
+    }
+    c.set("steps", json::Value::make_number(static_cast<Scalar>(r.steps.size())));
+    c.set("iterations", json::Value::make_number(r.total_iterations));
+    c.set("cuts", json::Value::make_number(r.total_cuts));
+    Scalar max_u = 0.0;
+    for (Index n = 0; n < model.mesh().num_nodes(); ++n) {
+      max_u = std::max(max_u, magnitude(r.displacement, n, dim));
+    }
+    c.set("max_displacement_m", json::Value::make_number(max_u));
+    for (const StaticSolution& s : linear) {
+      if (s.load_case_name != r.load_case_name) continue;
+      // The linear solution at the same load factor (it is linear in lambda).
+      c.set("linear_max_displacement_m",
+            json::Value::make_number(r.load_factor * s.max_displacement_magnitude));
+    }
+    c.set("strain_energy_J", json::Value::make_number(r.strain_energy));
+    c.set("max_green_strain", json::Value::make_number(r.max_green_strain));
+    c.set("min_jacobian", json::Value::make_number(r.min_jacobian));
+    c.set("max_von_mises_Pa", json::Value::make_number(
+                                  r.element_von_mises.size() > 0 ? r.element_von_mises.maxCoeff()
+                                                                 : 0.0));
+    Scalar min_lambda = 0.0;
+    Scalar max_lambda = 0.0;
+    int max_pivots = -1;
+    for (const NonlinearStep& s : r.steps) {
+      min_lambda = std::min(min_lambda, s.load_factor);
+      max_lambda = std::max(max_lambda, s.load_factor);
+      max_pivots = std::max(max_pivots, s.negative_pivots);
+    }
+    c.set("max_load_factor_on_path", json::Value::make_number(max_lambda));
+    c.set("min_load_factor_on_path", json::Value::make_number(min_lambda));
+    const int final_pivots = r.steps.empty() ? -1 : r.steps.back().negative_pivots;
+    c.set("final_negative_pivots", json::Value::make_number(final_pivots));
+    c.set("max_negative_pivots_on_path", json::Value::make_number(max_pivots));
+    json::Value monitors = json::Value::make_object();
+    if (!r.steps.empty()) {
+      for (std::size_t i = 0; i < r.monitor_names.size(); ++i) {
+        monitors.set(r.monitor_names[i] + "_" + r.monitor_units[i],
+                     json::Value::make_number(r.steps.back().monitors[i]));
+      }
+    }
+    c.set("final_monitors", monitors);
+    c.set("equilibrium", equilibrium_json(r.equilibrium, dim));
+    c.set("symmetric_tangent", json::Value::make_bool(r.symmetric_tangent));
+    c.set("linear_solver", json::Value::make_string(r.linear_solver));
+
+    std::vector<std::string> warnings;
+    if (!r.completed) warnings.push_back("the run stopped early: " + r.termination);
+    if (final_pivots > 0) {
+      warnings.push_back("the final state is unstable: its tangent has " +
+                         std::to_string(final_pivots) +
+                         " negative eigenvalue(s), so the path has passed a limit or "
+                         "bifurcation point");
+    } else if (max_pivots > 0) {
+      warnings.push_back("the path passed through unstable states (up to " +
+                         std::to_string(max_pivots) +
+                         " negative eigenvalue(s) of the tangent) before the final one");
+    }
+    if (!r.symmetric_tangent) {
+      warnings.push_back("the tangent is non-symmetric (follower pressure), factorised by LU, "
+                         "which reveals no inertia: stability is not assessed");
+    }
+    if (svk && r.max_green_strain > 0.05) {
+      std::ostringstream os;
+      os << "the largest Green-Lagrange strain is " << r.max_green_strain
+         << "; the Saint Venant-Kirchhoff law is meant for small strain (large rotation) - "
+            "use \"neo_hookean\" for large strain";
+      warnings.push_back(os.str());
+    }
+    if (svk && r.min_jacobian < 1.0 / std::sqrt(3.0)) {
+      std::ostringstream os;
+      os << "an integration point is compressed to a volume ratio J = " << r.min_jacobian
+         << " < 1/sqrt(3): below a stretch of 1/sqrt(3) the Saint Venant-Kirchhoff law's "
+            "compressive force falls again, so it does not model strong compression - use "
+            "\"neo_hookean\"";
+      warnings.push_back(os.str());
+    }
+    c.set("warnings", json::array_of(warnings));
     cases.push_back(c);
   }
   out.set("load_cases", cases);

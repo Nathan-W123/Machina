@@ -158,10 +158,12 @@ Scalar common_reference_temperature(const FemModel& model) {
   return t_ref;
 }
 
-/// The mechanical deck of load case `l`.
+/// The mechanical deck of load case `l`: linear, or with `nonlinear` a
+/// geometrically non-linear step.
 void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
                        const std::string& case_name,
-                       const std::vector<Mesh::BoundaryFace>& boundary) {
+                       const std::vector<Mesh::BoundaryFace>& boundary,
+                       const CalculixNonlinearExport* nonlinear = nullptr) {
   const Mesh& mesh = model.mesh();
   const int dim = mesh.dim();
   // CalculiX numbers the DOFs of a node 1-3 (translations) and 4-6
@@ -208,7 +210,27 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
         << field(common_reference_temperature(model)) << "\n";
   }
 
-  out << "*STEP\n*STATIC\n";
+  if (nonlinear != nullptr) {
+    // Automatic increments from 1 / increments (at most 1/50) down to 1e-6
+    // of it; the step time is the load factor. At least 50 increments,
+    // because CalculiX lags the deformed-position centrifugal load within an
+    // increment (its answer converges to SparLab's as the increments shrink:
+    // measured 1e-5 of the displacement at 10, 1.4e-6 at 80). CalculiX's
+    // default convergence test (largest residual below 0.005 of the mean
+    // force, largest correction below 0.01 of the increment) leaves errors of
+    // about 1e-4 of the displacement; a comparison needs it converged: 1e-6
+    // on both, up to 200 iterations, and never the looser residual test it
+    // otherwise switches to after the ninth iteration.
+    const int increments = std::max(nonlinear->increments, 50);
+    const Scalar dt = 1.0 / static_cast<Scalar>(increments);
+    out << "*STEP, NLGEOM, INC=" << 100 * increments << "\n"
+        << "*CONTROLS, PARAMETERS=FIELD\n1.e-6, 1.e-6\n"
+        << "*CONTROLS, PARAMETERS=TIME INCREMENTATION\n20, 30, 200, 200\n"
+        << "*STATIC\n"
+        << field(dt) << ", 1., " << field(1.0e-6 * dt) << ", " << field(dt) << "\n";
+  } else {
+    out << "*STEP\n*STATIC\n";
+  }
   out << "*BOUNDARY\n";
   for (Index d : model.dofs().constrained_dofs()) {
     const Index node = d / ndpn;
@@ -218,9 +240,13 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
   }
 
   // Point loads and tractions as the assembled nodal forces; every other load
-  // in CalculiX's own form, so that CalculiX integrates it itself.
+  // in CalculiX's own form, so that CalculiX integrates it itself - except a
+  // dead pressure under NLGEOM, where CalculiX's face load would follow the
+  // face: it stays among the nodal forces of the undeformed faces.
+  const bool pressure_faces =
+      !spec.pressures.empty() && (nonlinear == nullptr || nonlinear->follower_pressure);
   Vector concentrated = data.mechanical;
-  if (!spec.pressures.empty()) {
+  if (pressure_faces) {
     LoadCaseSpec pressures_only;
     pressures_only.name = spec.name;
     pressures_only.pressures = spec.pressures;
@@ -237,9 +263,10 @@ void write_static_deck(std::ostream& out, const FemModel& model, std::size_t l,
       out << n + 1 << ", " << k + 1 << ", " << field(f) << "\n";
     }
   }
-  const bool distributed = !spec.pressures.empty() || spec.has_body_loads();
+  const bool distributed = pressure_faces || spec.has_body_loads();
   if (distributed) out << "*DLOAD\n";
   for (const PressureLoadSpec& p : spec.pressures) {
+    if (!pressure_faces) break;
     for (const auto& face : calculix_faces_of(mesh, boundary, p.region)) {
       out << face.first + 1 << ", P" << face.second << ", " << field(p.pressure) << "\n";
     }
@@ -366,7 +393,8 @@ std::string calculix_element_type(const FemModel& model) {
 }
 
 std::vector<std::string> write_calculix_decks(const FemModel& model, const std::string& stem,
-                                              const std::string& case_name) {
+                                              const std::string& case_name,
+                                              const CalculixNonlinearExport* nonlinear) {
   if (!model.finalized()) throw IoError("the model must be finalised before export");
   const std::vector<LoadCaseSpec>& specs = model.load_case_specs();
   bool faces_needed = false;
@@ -393,6 +421,13 @@ std::vector<std::string> write_calculix_decks(const FemModel& model, const std::
     if (model.load_case_data(l).conduction_solved) {
       write(base + "_conduction.inp", [&](std::ostream& out) {
         write_conduction_deck(out, model, l, case_name, boundary);
+      });
+    }
+    if (nonlinear != nullptr && std::find(nonlinear->load_cases.begin(),
+                                          nonlinear->load_cases.end(),
+                                          l) != nonlinear->load_cases.end()) {
+      write(base + "_nlgeom.inp", [&](std::ostream& out) {
+        write_static_deck(out, model, l, case_name, boundary, nonlinear);
       });
     }
   }

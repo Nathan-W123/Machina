@@ -176,6 +176,24 @@ def run_calculix(deck: str, workdir: str) -> str:
     return frd
 
 
+def run_calculix_nlgeom(deck: str, workdir: str) -> str:
+    """Run an NLGEOM deck and return the .frd path - only if CalculiX completed
+    its step. A run that cuts back too often still writes its "best solution"
+    to the .frd file; the .sta file says whether the last increment converged
+    and reached the step's end, and nothing else is accepted."""
+    frd = run_calculix(deck, workdir)
+    sta = os.path.join(workdir, os.path.splitext(os.path.basename(deck))[0] + ".sta")
+    with open(sta, "r", encoding="utf-8", errors="replace") as handle:
+        rows = [line.split() for line in handle if line.strip()]
+    last = rows[-1] if rows else []
+    completed = (len(last) >= 7 and last[0].isdigit() and "U" not in last[2]
+                 and abs(float(last[5]) - 1.0) <= 1e-9)
+    if not completed:
+        raise ResultError(f"CalculiX did not complete the NLGEOM step of {deck} (last .sta "
+                          f"row: {' '.join(last)})")
+    return frd
+
+
 def parse_dat_buckling_factors(path: str) -> np.ndarray:
     """Buckling factors from the "B U C K L I N G   F A C T O R" block of a
     CalculiX .dat file."""
@@ -404,6 +422,155 @@ class SkfemProblem:
         for c in range(self.dim):
             out[:, c] = u[self.dof_of_node[:, c]]
         return out
+
+    def nonlinear(self, law: str, load_factors: List[float], f: Optional[np.ndarray] = None,
+                  tolerance: float = 1e-11, max_iterations: int = 60) -> np.ndarray:
+        """The geometrically non-linear static solution under dead loads, by
+        an independent total Lagrangian implementation: the internal force
+        int P : grad(v) with the first Piola-Kirchhoff stress P = F S and its
+        consistent tangent, written here with scikit-fem's tensor helpers, on
+        SparLab's quadrature (2 x 2 (x 2) Gauss points for Q4 / Hex8, the
+        four-point rule for Tet10; exact for the constant integrand of the
+        linear simplices). `law` is "saint_venant_kirchhoff"
+        (S = lambda tr E I + 2 mu E, with the plane-stress lambda* in plane
+        stress) or "neo_hookean" (S = mu (I - C^-1) + lambda ln J C^-1, plane
+        strain or 3-D). Newton's method converges each load factor of
+        `load_factors` in turn - the external load and the prescribed
+        displacements scale with it - to a residual of `tolerance` relative to
+        the load, with a line search on the energy (the slack criterion that
+        SparLab uses). Returns the solution at the last factor in
+        scikit-fem's numbering."""
+        import scipy.sparse.linalg as sla
+        from skfem import Basis, BilinearForm, LinearForm, asm
+        from skfem.helpers import ddot, det, eye, grad, inv, mul, trace, transpose
+
+        dim = self.dim
+        element = self.mesh.element_type
+        intorder = {"Quad4": 3, "Hex8": 3, "Tri3": 1, "Tet4": 1, "Tet10": 2}[element]
+        basis = Basis(self.skfem_mesh, self.vector_element, intorder=intorder)
+        if not np.array_equal(basis.nodal_dofs, self.basis.nodal_dofs):
+            raise ResultError("the non-linear basis numbers its DOFs differently")
+        nqp = basis.X.shape[-1]
+        lam = np.repeat(self.lam_e[:, None], nqp, axis=1)
+        mu = np.repeat(self.mu_e[:, None], nqp, axis=1)
+        if law == "neo_hookean" and self.stress_state == "plane_stress":
+            raise ResultError("the neo-Hookean law has no plane-stress form")
+
+        def kinematics(w):
+            h = grad(w["u"])
+            ident = eye(np.ones_like(h[0, 0]), dim)
+            return ident, ident + h
+
+        def stress(ident, f, w):
+            c = mul(transpose(f), f)
+            if law == "saint_venant_kirchhoff":
+                e = 0.5 * (c - ident)
+                return w["lam"] * eye(trace(e), dim) + 2.0 * w["mu"] * e, c
+            ci = inv(c)
+            lnj = np.log(det(f))
+            return w["mu"] * (ident - ci) + w["lam"] * lnj * ci, c
+
+        @LinearForm
+        def internal(v, w):
+            ident, f = kinematics(w)
+            s, _ = stress(ident, f, w)
+            return ddot(mul(f, s), grad(v))
+
+        @BilinearForm
+        def tangent(du, v, w):
+            ident, f = kinematics(w)
+            s, c = stress(ident, f, w)
+            df = grad(du)
+            dc = mul(transpose(df), f) + mul(transpose(f), df)
+            if law == "saint_venant_kirchhoff":
+                de = 0.5 * dc
+                ds = w["lam"] * eye(trace(de), dim) + 2.0 * w["mu"] * de
+            else:
+                ci = inv(c)
+                lnj = np.log(det(f))
+                ds = ((w["mu"] - w["lam"] * lnj) * mul(mul(ci, dc), ci)
+                      + 0.5 * w["lam"] * trace(mul(ci, dc)) * ci)
+            return ddot(mul(df, s) + mul(f, ds), grad(v))
+
+        load = self.f if f is None else f
+        free, fixed = self.free, self.fixed
+        t = self.thickness
+
+        def residual(u, factor):
+            return asm(internal, basis, u=basis.interpolate(u), lam=lam, mu=mu) * t - factor * load
+
+        def stiffness(u):
+            with np.errstate(invalid="ignore", divide="ignore"):
+                return asm(tangent, basis, u=basis.interpolate(u), lam=lam, mu=mu) * t
+
+        def residual_or_nan(u, factor):
+            with np.errstate(invalid="ignore", divide="ignore"):
+                return residual(u, factor)
+
+        u = np.zeros(basis.N)
+        scale = max(np.linalg.norm(load), 1e-300)
+        eps = np.finfo(float).eps
+        previous = 0.0
+        for factor in load_factors:
+            # Tangent predictor from the converged state: K du = dl f - R with
+            # the prescribed increment on its DOFs.
+            k = stiffness(u)
+            step = np.zeros(basis.N)
+            step[fixed] = (factor - previous) * self.x[fixed]
+            rhs = ((factor - previous) * load - residual(u, previous) - k @ step)[free]
+            step[free] = sla.spsolve(k[free][:, free].tocsc(), rhs)
+            u = u + step
+            u[fixed] = factor * self.x[fixed]
+            previous = factor
+            if not np.linalg.norm(load) > 0.0:
+                scale = max(np.linalg.norm(residual(u, factor)[fixed]), 1e-300)
+            floor = 0.0
+            for _ in range(max_iterations):
+                r = residual_or_nan(u, factor)
+                if not np.all(np.isfinite(r)):
+                    raise ResultError(f"scikit-fem's Newton reached an inverted element at load "
+                                      f"factor {factor}")
+                rf = r[free]
+                # Converged at the tolerance, or at the round-off floor the
+                # rounding of u itself leaves: 64 eps || |K| |u| || on the free
+                # DOFs, where Newton's residual stagnates on a slender structure.
+                if np.linalg.norm(rf) <= max(tolerance * max(scale, np.linalg.norm(r[fixed])),
+                                             floor):
+                    break
+                k = stiffness(u)
+                floor = 64.0 * eps * np.linalg.norm((abs(k) @ np.abs(u))[free])
+                du = np.zeros(basis.N)
+                du[free] = sla.spsolve(k[free][:, free].tocsc(), -rf)
+                # A step into an inverted element is halved until it is valid;
+                # then the line search on the energy: the full step unless it
+                # leaves |g(1)| > 0.8 |g(0)|, then regula falsi on
+                # g(a) = du . R(u + a du).
+                alpha = 1.0
+                trial = residual_or_nan(u + du, factor)
+                while not np.all(np.isfinite(trial)) and alpha > 1e-4:
+                    alpha *= 0.5
+                    trial = residual_or_nan(u + alpha * du, factor)
+                du = alpha * du
+                alpha = 1.0
+                g0 = du[free] @ rf
+                if g0 < 0.0:
+                    g1 = du[free] @ trial[free]
+                    if abs(g1) > 0.8 * abs(g0) and g1 > 0.0:
+                        lo, glo, hi, ghi = 0.0, g0, 1.0, g1
+                        for _ in range(5):
+                            a = min(max(lo - glo * (hi - lo) / (ghi - glo), 0.1), 1.0)
+                            ga = du[free] @ residual(u + a * du, factor)[free]
+                            alpha = a
+                            if abs(ga) <= 0.8 * abs(g0):
+                                break
+                            if ga < 0.0:
+                                lo, glo = a, ga
+                            else:
+                                hi, ghi = a, ga
+                u = u + alpha * du
+            else:
+                raise ResultError(f"scikit-fem's Newton did not converge at load factor {factor}")
+        return u
 
     def buckling(self, u: np.ndarray, num_modes: int) -> np.ndarray:
         """Lowest positive load factors of (K + lambda K_G(u)) phi = 0 on the
@@ -691,6 +858,13 @@ def sparlab_displacement(case, load_case: str) -> np.ndarray:
     return table[cols].to_numpy()
 
 
+def case_nonlinear_displacement(case, load_case: str) -> np.ndarray:
+    """SparLab's final non-linear displacement (nonlinear_displacement_<lc>.csv)."""
+    table = case.table(f"nonlinear_displacement_{_safe(load_case)}.csv")
+    cols = ["ux[m]", "uy[m]", "uz[m]"][: case.dim]
+    return table[cols].to_numpy()
+
+
 def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
                         skip_calculix: bool) -> Dict:
     case = load_case(case_dir)
@@ -717,6 +891,8 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
 
     buckling = {entry["load_case"]: entry
                 for entry in (summary.get("buckling") or {}).get("load_cases", [])}
+    nonlinear_cases = {entry["load_case"]: entry
+                       for entry in (summary.get("nonlinear") or {}).get("load_cases", [])}
     for name in mesh.load_case_names:
         ours = sparlab_displacement(case, name)
         entry = {"load_case": name, "codes": {}}
@@ -850,6 +1026,89 @@ def cross_validate_case(case_dir: str, tolerances: Dict[str, float],
             stats["passed"] = stats["max_rel_diff"] <= tolerances["calculix_conduction"]
             entry["codes"]["calculix conduction"] = stats
 
+        # --- the geometrically non-linear run, when the case has one ---
+        nl_case = nonlinear_cases.get(name)
+        if nl_case is not None:
+            # Every comparison below is made along SparLab's own load factors, so a
+            # run that stopped short would be compared - and could agree - at a
+            # partial load. The decks are built to reach lambda = 1; one that does
+            # not is a regression, not a result to compare.
+            if not nl_case.get("completed"):
+                raise ResultError(f"SparLab's non-linear run of load case '{name}' did not "
+                                  f"reach lambda = 1 ({nl_case.get('termination', '')}); the "
+                                  "cross-validation compares the full load")
+            nl_ours = case_nonlinear_displacement(case, name)
+            law = summary["nonlinear"]["material_model"]
+            follower = bool(summary["nonlinear"]["follower_pressure"])
+            path_table = case.table(f"nonlinear_{_safe(name)}.csv")
+            factors = path_table["load_factor[-]"].to_numpy().tolist()
+            dead_only = loads is None or (loads.centrifugal is None and loads.temperature is None
+                                          and not (loads.pressure and follower))
+            if dead_only:
+                u_nl = problem.nonlinear(law, factors)
+                stats = compare(problem.nodal(u_nl), nl_ours)
+                stats["tolerance"] = tolerances["skfem_nonlinear"]
+                stats["passed"] = stats["max_rel_diff"] <= tolerances["skfem_nonlinear"]
+                stats["element"] = entry["codes"]["scikit-fem"]["element"]
+                stats["law"] = law
+                stats["load_factors"] = len(factors)
+                stats["comparison"] = (
+                    "an independent total Lagrangian implementation (P = F S and its "
+                    "consistent tangent in scikit-fem's tensor helpers, SparLab's quadrature), "
+                    "Newton through SparLab's load factors, dead loads of mesh.json")
+                entry["codes"]["scikit-fem non-linear"] = stats
+            else:
+                entry["skipped_nonlinear_skfem"] = (
+                    "follower pressure, rotation and temperature are outside the dead-load "
+                    "scikit-fem comparison; CalculiX NLGEOM and the exact solutions of "
+                    "sparlab_verify cover them")
+            nl_deck = case.path(f"calculix_{_safe(name)}_nlgeom.inp")
+            if not skip_calculix and law != "saint_venant_kirchhoff":
+                entry["skipped_nonlinear_calculix"] = (
+                    "CalculiX's NEO HOOKE is a different strain energy from SparLab's "
+                    "neo-Hookean law; the exact tube solution of sparlab_verify verifies it")
+            elif not skip_calculix:
+                if not os.path.isfile(nl_deck):
+                    raise ResultError(f"{nl_deck} is missing; rerun sparlab_solve with "
+                                      "--export-calculix")
+                with tempfile.TemporaryDirectory(prefix="sparlab_ccx_nlgeom_") as work:
+                    frd = run_calculix_nlgeom(nl_deck, work)
+                    ref = parse_frd_displacements(frd, mesh.num_nodes)[:, : mesh.dim]
+                if np.isnan(ref).any():
+                    raise ResultError(f"CalculiX returned no displacement for some nodes of "
+                                      f"{name} (NLGEOM)")
+                stats = compare(ref, nl_ours)
+                stats["tolerance"] = tolerances["calculix_nlgeom"]
+                stats["element"] = f"{ccx_type} NLGEOM"
+                stats["loads"] = native_loads(nl_deck)
+                linear = entry["codes"].get("calculix", {})
+                # Judged only where the linear decks already coincide - the same
+                # discrete problem, CalculiX's formulation choices included - and
+                # nothing but CalculiX's finite-strain thermal model differs.
+                same_problem = (linear.get("passed") is True
+                                and "vs_skfem_calculix_formulation" not in linear)
+                if loads is not None and loads.temperature is not None:
+                    stats["passed"] = None
+                    stats["comparison"] = (
+                        "different thermal model at finite strain: SparLab splits the thermal "
+                        "stretch off multiplicatively (S = D (E - E_theta) / theta), CalculiX "
+                        "does not (measured: 4.9 % lower thermal stress than the additive "
+                        "split on a restrained cube at alpha dT = 0.05, 0.12 % from SparLab's); "
+                        "informational")
+                elif not same_problem:
+                    stats["passed"] = None
+                    stats["comparison"] = (
+                        "the linear decks already differ in formulation ("
+                        + str(linear.get("calculix_formulation", linear.get("comparison", "")))
+                        + "); informational")
+                else:
+                    stats["passed"] = stats["max_rel_diff"] <= tolerances["calculix_nlgeom"]
+                    stats["comparison"] = (
+                        "same discrete problem, CalculiX's *STEP, NLGEOM (Saint "
+                        "Venant-Kirchhoff *ELASTIC, follower *DLOAD pressure), step completed")
+                stats["frd_rounding_floor_rel"] = 5.0e-6
+                entry["codes"]["calculix NLGEOM"] = stats
+
         # --- linear buckling, when the run computed it ---
         ours_lf = np.asarray(buckling.get(name, {}).get("load_factors") or [], dtype=float)
         if ours_lf.size:
@@ -933,6 +1192,10 @@ def main(argv=None) -> int:
     parser.add_argument("--tol-calculix-plane", type=float, default=1e-5)
     parser.add_argument("--tol-skfem-buckling", type=float, default=1e-7)
     parser.add_argument("--tol-calculix-buckling", type=float, default=1e-4)
+    parser.add_argument("--tol-skfem-nonlinear", type=float, default=1e-7,
+                        help="scikit-fem's total Lagrangian solve vs SparLab's non-linear one")
+    parser.add_argument("--tol-calculix-nlgeom", type=float, default=1e-5,
+                        help="CalculiX *STEP, NLGEOM vs SparLab's non-linear solution")
     parser.add_argument("--tol-calculix-conduction", type=float, default=1e-4,
                         help="max nodal temperature difference over the temperature range "
                              "(the .frd rounding of a temperature near 300 K is 5e-4 K)")
@@ -951,6 +1214,8 @@ def main(argv=None) -> int:
                   "skfem_buckling": args.tol_skfem_buckling,
                   "calculix_buckling": args.tol_calculix_buckling,
                   "calculix_conduction": args.tol_calculix_conduction,
+                  "skfem_nonlinear": args.tol_skfem_nonlinear,
+                  "calculix_nlgeom": args.tol_calculix_nlgeom,
                   "skfem_buckling_max_dofs": args.skfem_buckling_max_dofs}
     import skfem
     summary = {

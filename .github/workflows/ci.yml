@@ -8,8 +8,8 @@ name: build-and-verify
 #   benchmark        does a full topology-optimisation benchmark still run end to
 #                    end and produce its figures - with the buckling constraint,
 #                    the robust formulation and the overhang filter too - and do
-#                    displacements and buckling load factors still agree with
-#                    scikit-fem?
+#                    displacements, buckling load factors and large-deflection
+#                    states still agree with scikit-fem?
 #
 # The verify job is the one that can catch a numerical regression, so it uploads
 # its summary either way.
@@ -140,13 +140,27 @@ jobs:
                                       --output results/$case --export-calculix
           done
 
+      - name: Large-deflection analysis (Tet10, Hex8, Q4, neo-Hookean Tet10)
+        run: |
+          # The elastica at k = 10, a soft block under a follower pressure
+          # and a rotation, a plane-strain strip under a dead load and a
+          # follower pressure, and a neo-Hookean block with a driven tip.
+          for case in elastica_tet10_nonlinear block_hex_nonlinear \
+                      strip_q4_nonlinear block_tet10_neohookean_nonlinear; do
+            ./build/bin/sparlab_solve --config configs/verification/$case.json \
+                                      --output results/$case --export-calculix
+          done
+
       - name: Cross-validation against scikit-fem
         # CalculiX is not installed on the runner, so only the scikit-fem
         # comparisons run: with SparLab's load vector, and - for the decks of
         # the volume, pressure and thermal loads - with the loads integrated
-        # by scikit-fem from the exported CalculiX decks. It exits non-zero if
-        # a displacement field, or a buckling load factor of the three
-        # columns, differs beyond the documented tolerance.
+        # by scikit-fem from the exported CalculiX decks; for the non-linear
+        # decks with dead loads, an independent total Lagrangian solve. It
+        # exits non-zero if a displacement field, a buckling load factor of
+        # the three columns or a large-deflection state differs beyond the
+        # documented tolerance, or if a large-deflection run stopped short of
+        # its full load.
         run: |
           CASES=()
           for case in cantilever_analysis block_3d_analysis cantilever_tri_analysis \
@@ -156,7 +170,9 @@ jobs:
                       column_tet4_buckling_analysis column_tet10_buckling_analysis \
                       block_loads_hex_analysis block_loads_tet10_analysis \
                       plate_thermal_hex_analysis plate_thermal_tet10_analysis \
-                      plate_thermal_q4_analysis engine_mount_tet10_loads_analysis; do
+                      plate_thermal_q4_analysis engine_mount_tet10_loads_analysis \
+                      elastica_tet10_nonlinear block_hex_nonlinear \
+                      strip_q4_nonlinear block_tet10_neohookean_nonlinear; do
             CASES+=(--case results/$case)
           done
           python3 python/scripts/cross_validate.py --skip-calculix "${CASES[@]}" \

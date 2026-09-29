@@ -481,8 +481,41 @@ refuses a mismatch above `1e-6` of the largest heat flow of the problem.
 | `dense_lu` | Eigen `PartialPivLU` | verification of small models; refuses above 4000 DOFs |
 
 After every solve the scaled residual `||A x - b|| / max(||b||, tiny)` is
-compared with `solver.linear.residual_tolerance`. Exceeding it raises
-`SolverError` with the measured value; a non-finite solution does the same. The
+compared with `solver.linear.residual_tolerance`, together with the backward
+error `||A x - b|| / || |A||x| + |b| ||`, the residual over the norm of its
+gross terms. The rounding of the sums that form `A x - b` is a few machine
+epsilons times that denominator, so no solver can leave a smaller backward
+error than that. A backward-stable solve, such as the Cholesky factorisation
+of an SPD matrix, leaves about that much.
+
+The two measures part company in a bending-dominated structure. In a slender
+beam the entries of `K u` are sums of terms far larger than their result.
+Take a Tet10 cantilever with `L/h = 100`, 50 cells long and 2 x 2 cells in
+section. There `|| |K||u| + |f| ||` is `2.7e9` times `||f||`. Its Cholesky
+solve leaves a scaled residual of `6.5e-7` and a backward error of
+`2.4e-16`, about one `eps`.
+
+A solve is accepted when either the scaled residual is within tolerance or
+the backward error is at round-off, which is at most `64 eps`, about
+`1.4e-14`. In the second case the residual is no larger than the rounding of
+the sums that form it, which no floating-point solve can go below. Only a
+backward-stable result reaches the test: the direct solvers check their
+pivots, and the CG solvers throw unless they met their own tolerance
+(`1e-12` by default). If both measures fail, the solve raises `SolverError`
+with both measured values. A non-finite solution raises the same error. The
+summary records both measures for each load case.
+
+Neither measure bounds the *forward* error, which can be the condition
+number times larger. On a Tet10 cantilever at `L/h = 100` (24 x 2 x 2
+cells), scikit-fem's solution of the same system - itself backward stable,
+`1.0e-16` against SparLab's `2.1e-16` - differs from SparLab's by `6.6e-8`
+of the largest displacement; at `L/h = 50` by `8.0e-9`, the `(L/h)^3` of a
+slender beam's conditioning. Nor can the backward error decide between two
+codes on such a problem: scaling SparLab's solution by `1 + 1e-6` moves its
+backward error only from `2.1e-16` to `3.3e-16`, because the residual that
+error leaves, `1e-6 f`, is tiny beside the sums `|K||u|`. The
+cross-validation therefore compares displacements, and its elastica deck
+runs at `L/h = 50` (`docs/verification.md`, section 14). The
 LDL^T path additionally inspects its pivots: a non-positive pivot, or a
 `min/max` pivot ratio below `pivot_tolerance`, is reported as a singular system
 together with the three modelling causes that usually produce it.
@@ -720,6 +753,186 @@ buckling constraint on the SIMP design is in `docs/topology_optimization.md`
 **Plane models.** A plane-stress model buckles only in its plane: a strut
 of a 2-D design can buckle sideways within the plane, but a thin plate
 cannot buckle out of it, which needs shell or solid elements.
+
+## 7c. Geometrically non-linear statics
+
+`fem/TotalLagrangian.cpp`, `material/Hyperelastic.cpp`,
+`fem/NonlinearStatic.cpp`. Large displacement and rotation, written on the
+reference configuration (total Lagrangian). With `H = grad_X u` the
+displacement gradient, `F = I + H` the deformation gradient and
+`E = (H + H^T + H^T H) / 2` the Green-Lagrange strain, equilibrium is the
+stationarity of
+
+```
+  Pi(u, lambda) = integral_Omega0 W(E) dV0 - lambda f_ext(u) . u   (conservative loads)
+  R(u, lambda)  = f_int(u) - f_ext(u, lambda) = 0 ,
+  f_int,e       = integral B_NL^T S dV0 ,       S = dW/dE  (second Piola-Kirchhoff)
+  K_T,e         = integral ( B_NL^T D_T B_NL + G^T S G ) dV0 - d f_ext,e / d u ,
+```
+
+where `B_NL` maps nodal displacement variations to `delta E` (its rows are
+`F_ki N_a,i` on the normal components, `F_ki N_a,j + F_kj N_a,i` on the
+engineering shears), `D_T = dS/dE` is the material tangent, and the second
+term is the initial-stress stiffness of section 7b with the current `S`. The
+element's stiffness quadrature integrates everything; a plane model
+multiplies by the thickness and a solid by 1.
+
+**Materials.**
+
+- *Saint Venant-Kirchhoff*: `S = D E`, `W = 1/2 E : D : E`, with the linear
+  elasticity matrix `D` of the stress state - large rotation, small strain.
+  It is the simplest frame-invariant extension of the linear law and reduces
+  to it as the strains vanish, but under compression its force falls again
+  below a stretch of `1/sqrt(3)`, so it is not a large-strain law. In plane
+  stress `S_33 = 0` fixes the thickness strain
+  `E_33 = [(1 + nu) E_theta - nu (E_11 + E_22)] / (1 - nu)` (with `E_theta = 0`
+  without temperature), which enters `J` and the Cauchy stress.
+- *Compressible neo-Hookean*: `W = mu/2 (tr C - 3) - mu ln J + lambda/2 (ln J)^2`,
+  `S = mu (I - C^-1) + lambda ln J C^-1`,
+  `D_T,ijkl = lambda C^-1_ij C^-1_kl + (mu - lambda ln J)(C^-1_ik C^-1_jl + C^-1_il C^-1_jk)`,
+  with `C = F^T F`, `J = det F` and the Lame constants of `E` and `nu`, so it
+  too reduces to linear elasticity at small strain. `J - 1` is formed from the
+  invariants of `H` and `ln J` by `log1p`, without the cancellation of
+  `det F - 1` at small strain. Plane strain and solids only; an inverted
+  point (`J <= 0`) is an error that halves the load step.
+
+**Thermal strain at finite strain.** A temperature change `dT` stretches a
+free element by `theta = 1 + alpha dT` in every direction. The thermal
+stretch splits off multiplicatively, `F = F_e theta I` (Lu and Pister 1975),
+so `E = theta^2 E_e + E_theta I` with `E_theta = alpha dT (1 + alpha dT / 2)`, the
+Green-Lagrange strain of the free stretch. The elastic energy per unit volume
+of the expanded, stress-free body is `1/2 E_e : D : E_e`, which per unit
+reference volume is `theta^3` times that:
+
+```
+  W = (E - E_theta I) : D : (E - E_theta I) / (2 theta) ,    S = D (E - E_theta I) / theta ,
+  dS/dlambda = -D [ alpha dT0 I + alpha dT0 (E - E_theta I) / theta^2 ]   (dT = lambda dT0),
+```
+
+in Voigt form, `E_theta I` and `alpha dT0 I` being the linear model's
+thermal-strain vectors of the stress state at those changes (the
+plane-strain `(1 + nu)` factor included). A freely heated body takes the
+stretch `1 + alpha dT` exactly, stress-free, and a restrained one carries
+the stress of the expanded material. The two obvious alternatives fail
+here. Subtracting the linear thermal strain, `S = D (E - alpha dT I)`, gives
+the free body the stretch `sqrt(1 + 2 alpha dT)`. Subtracting the Green
+strain of the free stretch without the `1/theta`, `S = D (E - E_theta I)`,
+gets the free stretch right, but measures the elastic energy per reference
+instead of per expanded volume and gives a restrained body a stress `theta`
+times too high. For a cube held between two walls and free sideways at
+`alpha dT = 0.05` (`E = 1 GPa`, `nu = 0.3`), the closed forms give
+`sigma_xx = -43.07 MPa` with the split and `-45.22 MPa` (`theta = 1.05` times
+it) without the `1/theta`. The unit tests reproduce the split's free state
+on Q4, Hex8 and Tet10 cells and its restrained state on Hex8 and Tet10
+cells, to `1e-10` or better. The thermal strain is written for Saint
+Venant-Kirchhoff only.
+
+**Loads**, all scaled by the one load factor `lambda`:
+
+- point loads, tractions, self-weight and body forces are *dead*: fixed
+  vectors of the reference configuration (a body force per unit reference
+  volume, which conserves mass);
+- a *follower pressure* acts on the deformed face,
+  `f_a = -lambda p integral N_a (x_s x x_t) ds dt` at the current nodal
+  positions, with the load stiffness of section 4b. Over a free edge that
+  stiffness is not symmetric, and the assembled tangent is tested for
+  symmetry (`max |A - A^T| <= 1e-12 max |A|`): a symmetric one is factorised
+  by `LDL^T`, a non-symmetric one by `LU`. `follower_pressure: false`
+  keeps the pressure on the reference faces;
+- a *rotation* loads each point at its deformed position,
+  `rho omega^2 P (x - c)` with `P = I - e e^T`, so
+  `f = lambda omega^2 (M (x) P) (x_hat - c_hat)` with `M` the consistent mass
+  matrix (whose entries carry `rho`) and the load stiffness
+  `-lambda omega^2 M (x) P`, the spin softening;
+- the temperature change is `lambda dT0`, and prescribed displacements are
+  `lambda u_0`.
+
+**Newton's method under load control.** From a converged state at
+`lambda`, the step to `lambda + dl` starts from the tangent predictor
+`K_T du = dl q - R`, `q = -dR/dlambda` (with the increment of the prescribed
+displacements), then corrects with `K_T du = -R`. Each direction is scaled
+by an energy line search: `g(a) = du . R(u + a du)` is the derivative of the
+potential along `du`; the full step stays when `|g(1)| <= 0.8 |g(0)|`
+(Crisfield's slack), else regula falsi on `g` finds a shorter one, no
+shorter than 0.1. The norm of the residual would be the wrong measure: in a
+slender structure a good Newton step stirs up large axial forces, and
+backtracking on `||R||` stalls Newton into a linear crawl (on the elastica it
+took 158 iterations and a halving where the energy search takes 87). A direction of ascent, as
+a non-symmetric or indefinite tangent can give, takes the full step. A step
+converges when
+
+```
+  ( ||R_f|| <= tol_r s  and  ||a du|| <= max(tol_u ||u - u_0||, 64 eps ||u||) )
+  or ||R_f|| <= max(1024 eps g_f, 64 eps || |K_T| |u| ||_f) ,
+```
+
+`s` the largest of the applied loads, the reactions and the thermal forces,
+`g_f` the gross assembly `sum_e |f_e| + |f_ext|`, `u - u_0` the step's
+displacement increment; the residual of the accepted state is checked once
+more. The second line is the round-off floor, below which no tolerance can
+be met: the residual stagnates at about 150 `eps g_f` on the plane
+cantilever, and at 0.3 `eps || |K_T| |u| ||` on the elastica, where each
+stored displacement is exact only to its own rounding. A step that fails
+is halved (at most `max_cuts` times in a row); three or fewer iterations
+lengthen the next one by half, never beyond the first.
+
+**Limit and bifurcation points.** Past a limit point load control has no
+nearby solution: Newton fails, or - worse - converges on a distant branch,
+a snap-through that is not quasi-static. Two tests reject such a step even
+when Newton converges:
+
+- from a stable state (no negative pivot), an iteration that meets a
+  tangent with a negative pivot. Near a stable stretch of the path, the
+  iterates of a short step stay near it;
+- a converged state farther from the tangent predictor than the predicted
+  increment. On a smooth path the corrector shrinks with the step - the
+  ratio measured 0.01 to 0.78 on the verification problems - while a jump to
+  another branch leaves it at order 1 or larger (21 on the snapping arch),
+  however short the step.
+
+The lowest load factor rejected this way is a suspected critical point. The
+steps close in on it by halving; a step that converges beyond it clears it,
+and after `max_cuts` failed halvings the run stops and reports the bracket
+`[lambda, lambda_c]` - a limit point if a step jumped, a loss of
+definiteness (limit or bifurcation) otherwise. At a bifurcation of a
+perfect structure the fundamental path continues, but unstable, which is
+why a negative pivot stops load control there rather than letting it go on.
+
+**Arc length.** Crisfield's cylindrical method makes the load factor an
+unknown and fixes the step length instead: `||du||^2 = ds^2`, with `du` the
+free displacement increment of the step. The predictor follows the tangent
+solution `K_T u_q = q` in the direction of the last converged increment.
+Each iteration solves `K_T u_r = -R` and `K_T u_q = q` and sets
+`du <- du + u_r + d(lambda) u_q`, taking the root of the quadratic in
+`d(lambda)` whose `du` turns least from the previous iterate. The first arc
+length is that of the first of `steps` load increments; each next one
+scales by `sqrt(desired_iterations / iterations)`, clamped to `[0.5, 2]`
+per step and to `[min_arc_ratio, max_arc_ratio]` times the first. A failed
+step halves the arc length. A step that would pass the target load factor
+is replaced by a load-controlled step from the last state onto it.
+
+**Stability.** For a symmetric tangent the `LDL^T` factorisation reports
+its inertia: the number of negative pivots equals the number of negative
+eigenvalues (Sylvester), so a converged state is stable when there are
+none. Holding one displacement instead of its force - displacement control
+- removes one row and column from the free system. Haynsworth's inertia
+additivity then says the force-controlled tangent has exactly one more
+negative pivot than the displacement-controlled one wherever the force
+falls as that displacement grows, `dF/d delta < 0`, and the same number
+elsewhere. The arch study checks this at every step. A non-symmetric
+tangent (a follower pressure over free edges) is factorised by `LU`, which
+reports no inertia; the summary then says that stability was not assessed.
+
+**Results.** Each converged step records the load factor, iterations,
+halvings, residual, arc length, negative pivots, largest displacement and
+the monitors - a mean displacement over a node region, or the sum of its
+reactions. The final state adds the Cauchy stress `sigma = F S F^T / J`
+(element averages of the integration points, with `sigma_zz` in plane
+strain and the thickness stretch in `F` in plane stress), its von Mises
+stress, `S` itself, the largest Green-Lagrange strain, the smallest `J`,
+the strain energy, and the balance of the applied loads against the
+reactions in the deformed configuration: forces, and moments about the
+deformed positions.
 
 ## 8. Topology optimisation
 
