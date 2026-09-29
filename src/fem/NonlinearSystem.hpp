@@ -161,6 +161,9 @@ inline Scalar residual_floor(const Evaluation& ev, Scalar k_gross, Scalar scale)
 
 class NonlinearSystem {
  public:
+  /// The system of load case `lc`. The options are copied: the system never
+  /// refers to the caller's (a driver may build per-step options as
+  /// temporaries).
   NonlinearSystem(const FemModel& model, const Assembler& assembler, std::size_t lc,
                   const NonlinearOptions& options)
       : model_(model), assembler_(assembler), options_(options),
@@ -171,27 +174,7 @@ class NonlinearSystem {
     dead_ = data.mechanical.size() > 0 ? data.mechanical : Vector::Zero(n);
     if (data.body.size() > 0) dead_ += data.body;
     if (data.temperature.size() > 0) temperature_ = data.temperature;
-
-    // Elastoplastic elements keep their points' internal variables, starting
-    // virgin; mean dilatation where it relaxes a constraint.
-    const Index ne = model.mesh().num_elements();
-    const int points = elastoplastic_points(model);
-    committed_.resize(static_cast<std::size_t>(ne));
-    averaged_.assign(static_cast<std::size_t>(ne), 0);
-    virgin_.assign(static_cast<std::size_t>(points), PlasticState());
-    for (Index e = 0; e < ne; ++e) {
-      if (!model.material_of(e).plasticity().enabled()) continue;
-      plastic_ = true;
-      committed_[static_cast<std::size_t>(e)].assign(static_cast<std::size_t>(points),
-                                                     PlasticState());
-      const ElementType type = model.mesh().element_type();
-      const bool wanted =
-          options.mean_dilatation == MeanDilatation::All ||
-          (options.mean_dilatation == MeanDilatation::Auto &&
-           (type == ElementType::Quad4 || type == ElementType::Hex8));
-      averaged_[static_cast<std::size_t>(e)] =
-          wanted && points > 1 && model.stress_state() != StressState::PlaneStress;
-    }
+    initialise_history();
 
     // Small strain: every load acts on the undeformed geometry, as in the
     // linear analysis. Finite kinematics: a follower pressure leaves the dead
@@ -246,8 +229,21 @@ class NonlinearSystem {
     }
   }
 
+  /// A system under no applied load at all - no load case: prescribed
+  /// displacements and forces added by the caller (the moving tools of the
+  /// forming analysis) drive it. `evaluate` then returns f_ext = 0 and
+  /// q = 0 whatever lambda.
+  NonlinearSystem(const FemModel& model, const Assembler& assembler,
+                  const NonlinearOptions& options)
+      : model_(model), assembler_(assembler), options_(options),
+        small_(options.kinematics == Kinematics::SmallStrain) {
+    dead_ = Vector::Zero(model.dofs().num_dofs());
+    initialise_history();
+  }
+
   bool symmetric() const { return symmetric_; }
   const Vector& dead() const { return dead_; }
+  const NonlinearOptions& options() const { return options_; }
   /// Some material is elastoplastic.
   bool plastic() const { return plastic_; }
   /// Element e averages its dilatation.
@@ -268,6 +264,30 @@ class NonlinearSystem {
       if (!committed_[e].empty()) committed_[e] = std::move(ev.states[e]);
     }
     ev.states.clear();
+  }
+  /// The committed internal variables of every element (empty for an
+  /// elastic element): the history a restart carries over.
+  const std::vector<std::vector<PlasticState>>& committed_all() const { return committed_; }
+  /// Replace the committed internal variables - a restart from a state saved
+  /// by `committed_all` of a system of the same model, kinematics and
+  /// integration rule.
+  /// \throws ConfigError when the element count differs, or when an element
+  ///         has a different number of points than this system keeps for it
+  ///         (none for an elastic element).
+  void set_committed(std::vector<std::vector<PlasticState>> states) {
+    if (states.size() != committed_.size()) {
+      throw ConfigError("the saved plastic history has " + std::to_string(states.size()) +
+                        " element(s); the model has " + std::to_string(committed_.size()));
+    }
+    for (std::size_t e = 0; e < states.size(); ++e) {
+      if (states[e].size() != committed_[e].size()) {
+        throw ConfigError("the saved plastic history of element " + std::to_string(e) +
+                          " has " + std::to_string(states[e].size()) +
+                          " point(s); the model keeps " + std::to_string(committed_[e].size()) +
+                          " for it (none for an elastic element)");
+      }
+    }
+    committed_ = std::move(states);
   }
   /// The largest accumulated plastic strain of the committed state.
   Scalar max_plastic_strain() const {
@@ -418,9 +438,33 @@ class NonlinearSystem {
   }
 
  private:
+  /// Elastoplastic elements keep their points' internal variables, starting
+  /// virgin; mean dilatation where it relaxes a constraint.
+  void initialise_history() {
+    const FemModel& model = model_;
+    const Index ne = model.mesh().num_elements();
+    const int points = elastoplastic_points(model);
+    committed_.resize(static_cast<std::size_t>(ne));
+    averaged_.assign(static_cast<std::size_t>(ne), 0);
+    virgin_.assign(static_cast<std::size_t>(points), PlasticState());
+    for (Index e = 0; e < ne; ++e) {
+      if (!model.material_of(e).plasticity().enabled()) continue;
+      plastic_ = true;
+      committed_[static_cast<std::size_t>(e)].assign(static_cast<std::size_t>(points),
+                                                     PlasticState());
+      const ElementType type = model.mesh().element_type();
+      const bool wanted =
+          options_.mean_dilatation == MeanDilatation::All ||
+          (options_.mean_dilatation == MeanDilatation::Auto &&
+           (type == ElementType::Quad4 || type == ElementType::Hex8));
+      averaged_[static_cast<std::size_t>(e)] =
+          wanted && points > 1 && model.stress_state() != StressState::PlaneStress;
+    }
+  }
+
   const FemModel& model_;
   const Assembler& assembler_;
-  const NonlinearOptions& options_;
+  NonlinearOptions options_;  ///< by value: see the constructor
   bool small_ = false;
   bool plastic_ = false;
   std::vector<std::vector<PlasticState>> committed_;  ///< per element; empty if elastic
