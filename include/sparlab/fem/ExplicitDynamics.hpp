@@ -97,7 +97,8 @@
 /// \f$E_{err} = T - T_0 + W_{int} + D - W_{ext} - W_c - W_m\f$, relative to the
 /// largest energy of the run so far. The plastic dissipation is W_int less
 /// the change of the stored (elastic and hardening) energy. Quasi-static
-/// validity is judged by \f$T/W_{int}\f$ after the first contact and by the
+/// validity is judged by T over the internal energy of the state (the
+/// stored energy at the start plus \f$W_{int}\f$) after the first contact and by the
 /// balance (both warned about); a balance beyond `energy_limit` stops the
 /// run, as do non-finite values and an inverted element.
 ///
@@ -190,7 +191,8 @@ struct ExplicitOptions {
   int snapshot_every = 0;          ///< keep the displacement every this many steps (0: none)
   Scalar energy_tolerance = 0.05;  ///< relative energy balance error warned about
   Scalar energy_limit = 0.5;       ///< relative energy balance error that stops the run
-  Scalar kinetic_ratio_warning = 0.1;  ///< T / W_int after the first contact warned about
+  /// T over the internal energy after the first contact warned about.
+  Scalar kinetic_ratio_warning = 0.1;
   /// Use the dedicated Hex8 kernel where it applies (false: the generic
   /// element dispatch everywhere, for comparison).
   bool dedicated_kernel = true;
@@ -270,6 +272,9 @@ struct ExplicitRecord {
   Scalar time_step = 0.0;    ///< [s]
   Scalar kinetic = 0.0;      ///< T [J]
   Scalar internal = 0.0;     ///< W_int since the start [J]
+  /// The internal energy of the state: the stored energy at the start plus
+  /// W_int (from a virgin start, W_int) [J].
+  Scalar internal_energy = 0.0;
   Scalar stored = 0.0;       ///< elastic + hardening energy of the state [J]
   Scalar plastic = 0.0;      ///< W_int - (stored - stored at the start) [J]
   Scalar contact_normal = 0.0;    ///< work of the normal contact forces on the body [J]
@@ -313,8 +318,9 @@ struct ExplicitResult {
   Scalar added_mass_fraction = 0.0;  ///< (scaled - physical) / physical
   Scalar max_mass_scale = 1.0;       ///< largest s_e
   int scaled_elements = 0;           ///< elements with s_e > 1
-  /// The largest T / W_int over the records after the first contact whose
-  /// W_int exceeds 1 % of its value at the end (0 without contact).
+  /// The largest T / internal energy over the records after the first
+  /// contact whose internal energy exceeds 1 % of its value at the end (0
+  /// without contact).
   Scalar max_kinetic_ratio = 0.0;
   Scalar max_energy_error = 0.0;     ///< largest relative |E_err|
   bool contact = false;              ///< some tool touched the body

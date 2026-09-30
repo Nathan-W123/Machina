@@ -557,9 +557,12 @@ analysis, which gives the springback.
   of the reactions, as trapezoidal sums, and `W_m` of dynamic mass scaling;
   the balance error `T - T_0 + W_int + D - W_ext - W_c - W_m` relative to the
   largest energy so far.
-* **Validity checks.** Quasi-static: the largest `T / W_int` over the records
-  after the first contact whose `W_int` exceeds 1 % of its final value
-  (`max_kinetic_ratio`, warned above `kinetic_ratio_warning`, 0.1); the
+* **Validity checks.** Quasi-static: the largest ratio of `T` to the
+  internal energy of the state - the stored energy at the step's start plus
+  `W_int`, so that a step continuing a formed part (a retract) is measured
+  against the part's energy - over the records after the first contact whose
+  internal energy exceeds 1 % of its final value (`max_kinetic_ratio`,
+  warned above `kinetic_ratio_warning`, 0.1); the
   balance error (warned above `energy_tolerance`, 0.05); the added mass. A
   run stops - the step not completed, its termination naming the time step
   and the time, the analysis keeping the last recorded state - when the
@@ -615,7 +618,7 @@ analysis, which gives the springback.
 | `history_every` | 100 | a record every N steps (and the last): the energy CSV rows and the tool force rows, the force averaged over the N steps |
 | `snapshot_every` | 0 | node snapshots every N time steps (`step_<k>_<s>_inc_<N>_nodes.csv`) |
 | `energy_tolerance`, `energy_limit` | 0.05, 0.5 | balance error warned about / stopping the run |
-| `kinetic_ratio_warning` | 0.1 | `T / W_int` after the first contact warned about |
+| `kinetic_ratio_warning` | 0.1 | `T` over the internal energy after the first contact warned about |
 
 **How to choose the tool speed and the mass scaling.** Both make the run
 cheaper and both raise the inertia forces: the tool speed `v` by `v^2`, the

@@ -100,7 +100,7 @@ std::vector<std::string> write_forming_step(const ResultWriter& writer, const Fe
                    number(r.plastic), number(r.contact_normal), number(r.contact_friction),
                    number(r.damping), number(r.external), number(r.mass_scaling),
                    number(r.error),
-                   number(r.internal > 0.0 ? r.kinetic / r.internal : 0.0)});
+                   number(r.internal_energy > 0.0 ? r.kinetic / r.internal_energy : 0.0)});
     }
     csv.close();
     files.push_back(stem + "_energy.csv");

@@ -972,8 +972,17 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
     if (inc.tools.at(0).active_nodes > 0 && inc.tools[0].force.z() > 0.0) ++pushed;
   }
   CHECK(pushed > static_cast<int>(dent.increments.size()) / 2);
-  // The lift ends with the ball off the sheet.
+  // The lift ends with the ball off the sheet. Its kinetic energy ratio is
+  // measured against the dented sheet's internal energy, not against the
+  // little work of the lift itself.
   CHECK(all.steps[1].increments.back().tools.at(0).active_nodes == 0);
+  const ExplicitResult& lift = all.steps[1].explicit_result;
+  INFO("lift: kinetic ratio " << lift.max_kinetic_ratio << ", internal work "
+                              << lift.records.back().internal << " J of an internal energy "
+                              << lift.records.back().internal_energy << " J");
+  CHECK(lift.contact);
+  CHECK(lift.records.back().internal_energy > 10.0 * std::abs(lift.records.back().internal));
+  CHECK(lift.max_kinetic_ratio < dent.explicit_result.max_kinetic_ratio + 0.1);
 
   // A restart from the end of the explicit steps releases to the same state
   // bit for bit: the handoff (displacement, velocity, plastic and friction

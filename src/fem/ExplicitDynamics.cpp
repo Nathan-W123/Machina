@@ -961,6 +961,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     r.time_step = dt;
     r.kinetic = kin;
     r.internal = w_int;
+    r.internal_energy = stored_start + w_int;
     r.stored = stored;
     r.plastic = w_int - (stored - stored_start);
     r.contact_normal = w_cn;
@@ -1340,15 +1341,17 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   res.final_time_step = dt;
   res.contact = first_contact >= 0;
 
-  // The kinetic energy ratio after the first contact.
+  // The kinetic energy ratio after the first contact, against the internal
+  // energy of the state (a run that continues a formed part - a retract -
+  // starts with its stored energy).
   if (first_contact >= 0 && !res.records.empty()) {
-    const Scalar final_internal = res.records.back().internal;
+    const Scalar final_internal = res.records.back().internal_energy;
     for (const ExplicitRecord& r : res.records) {
-      if (r.step < first_contact || !(r.internal > kRatioFloor * final_internal) ||
-          !(r.internal > 0.0)) {
+      if (r.step < first_contact || !(r.internal_energy > kRatioFloor * final_internal) ||
+          !(r.internal_energy > 0.0)) {
         continue;
       }
-      res.max_kinetic_ratio = std::max(res.max_kinetic_ratio, r.kinetic / r.internal);
+      res.max_kinetic_ratio = std::max(res.max_kinetic_ratio, r.kinetic / r.internal_energy);
     }
   }
   if (res.max_kinetic_ratio > options_.kinetic_ratio_warning) {
