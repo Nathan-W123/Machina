@@ -30,6 +30,7 @@ held-out whole parts.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from collections import OrderedDict
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -85,14 +86,33 @@ def setup_envelope(setups: Sequence[Any]) -> Dict[str, Any]:
     return {"fields": fields, "process": process, "materials": materials}
 
 
+def _setup_default(key: str) -> Any:
+    """The default of a FormingSetup field (a fresh copy of a factory's)."""
+    from ..fea.setup import FormingSetup
+
+    for f in dataclasses.fields(FormingSetup):
+        if f.name == key:
+            if f.default is not dataclasses.MISSING:
+                return f.default
+            if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+                return f.default_factory()                     # type: ignore[misc]
+    raise KeyError(key)
+
+
 def setup_mismatch(envelope: Optional[Mapping[str, Any]], setup: Any) -> List[Dict[str, Any]]:
     """The fields of `setup` outside `envelope` (see `setup_envelope`):
-    [{field, value, trained}], empty when every field was seen in training."""
+    [{field, value, trained}], empty when every field was seen in training.
+
+    A physics field the envelope does not record at all - the model was
+    trained before the field existed (e.g. `support`) - was held at the
+    field's default in every training run, so a setup is inside only with
+    that default (the entry then says so in `note`)."""
     if not envelope:
         return []
     doc = as_setup(setup).physics_dict()
+    fields = envelope.get("fields", {})
     out = []
-    for key, rule in envelope.get("fields", {}).items():
+    for key, rule in fields.items():
         v = doc.get(key)
         if "values" in rule:
             if canonical_json(v) not in {canonical_json(x) for x in rule["values"]}:
@@ -102,6 +122,14 @@ def setup_mismatch(envelope: Optional[Mapping[str, Any]], setup: Any) -> List[Di
             tol = 1e-9 * max(abs(lo), abs(hi), 1e-300)
             if not (_is_number(v) and lo - tol <= float(v) <= hi + tol):
                 out.append({"field": key, "value": v, "trained": [lo, hi]})
+    for key, v in doc.items():
+        if key in fields or key in FEATURE_SETUP_FIELDS or key in LABEL_SETUP_FIELDS:
+            continue
+        default = _setup_default(key)
+        if canonical_json(v) != canonical_json(default):
+            out.append({"field": key, "value": v, "trained": [default],
+                        "note": "not recorded by the model (it predates the field): "
+                                "trained at the default"})
     return out
 
 
@@ -552,7 +580,21 @@ def setup_envelope_union(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str
     for key in set(a.get("fields", {})) | set(b.get("fields", {})):
         ra, rb = a.get("fields", {}).get(key), b.get("fields", {}).get(key)
         if ra is None or rb is None:
-            fields[key] = ra or rb
+            # an envelope without the field predates it: its runs had the default
+            known = ra or rb
+            try:
+                default = _setup_default(key)
+            except KeyError:
+                fields[key] = known
+                continue
+            if "values" in known:
+                vals = {canonical_json(v): v for v in known["values"] + [default]}
+                fields[key] = {"values": [vals[k] for k in sorted(vals)]}
+            elif _is_number(default):
+                fields[key] = {"min": min(known["min"], default),
+                               "max": max(known["max"], default)}
+            else:
+                fields[key] = known
         elif "values" in ra or "values" in rb:
             vals = {canonical_json(v): v for v in ra.get("values", []) + rb.get("values", [])}
             fields[key] = {"values": [vals[k] for k in sorted(vals)]}

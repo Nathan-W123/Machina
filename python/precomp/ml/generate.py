@@ -131,14 +131,27 @@ class SimOutcome:
     provenance: Dict[str, Any] = field(default_factory=dict)
 
 
+def sim_job(setup: Any, commanded: HeightMap, target: Any) -> Tuple[Any, ...]:
+    """A `Simulator` job: (setup, commanded), and the target (a HeightMap, or
+    a callable making it) as a third item only when the setup has a support
+    strategy whose fixture follows it - so a simulator written for pairs
+    keeps working for every setup without support."""
+    if as_setup(setup).support == "none":
+        return (setup, commanded)
+    return (setup, commanded, target() if callable(target) else target)
+
+
 @runtime_checkable
 class Simulator(Protocol):
     """Anything that forms commanded surfaces: `source` ("sim" or "proxy")
-    and ``run(jobs) -> [SimOutcome]`` in job order, failures included."""
+    and ``run(jobs) -> [SimOutcome]`` in job order, failures included. A job
+    is (setup, commanded) or, for a setup with a support strategy,
+    (setup, commanded, target) - `target` the part its fixture is made for
+    (`precomp.fea.simulate`; `sim_job`)."""
 
     source: str
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]: ...
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]: ...
 
 
 class ProxySimulator:
@@ -278,9 +291,10 @@ class ProxySimulator:
     def __call__(self, commanded: HeightMap, setup: Any) -> HeightMap:
         return self.formed(commanded, setup)
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]:
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]:
         out = []
-        for setup, commanded in jobs:
+        for job in jobs:
+            setup, commanded = job[0], job[1]
             try:
                 if self.check_toolpath:          # a deck needs one; so does time_frac
                     from ..fea.deck import make_toolpath
@@ -319,16 +333,18 @@ class SparlabSimulator:
 
     @staticmethod
     def fidelity_of(setup: FormingSetup) -> str:
-        return (f"sparlab:{setup.element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
-                f"{setup.kinematics}:{setup.release}")
+        label = (f"sparlab:{setup.element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
+                 f"{setup.kinematics}:{setup.release}")
+        return label if setup.support == "none" else f"{label}:{setup.support}"
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]:
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]:
         from ..fea.runner import simulate_many, sparlab_version
 
         outcomes = simulate_many(jobs, self.work_dir, max_workers=self.max_workers,
                                  executor=self.executor, retry_failed=self.retry_failed)
         out = []
-        for (setup, commanded), oc in zip(jobs, outcomes):
+        for job, oc in zip(jobs, outcomes):
+            setup, commanded = job[0], job[1]
             prov: Dict[str, Any] = {"source": "sim", "fidelity": self.fidelity_of(setup),
                                     "deck_hash": oc.key, "runtime_s": oc.runtime_s,
                                     "cache_hit": oc.cache_hit}
@@ -682,7 +698,8 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                     continue
                 info = {"kind": kind, **pinfo}
             jobs.append((point, kind, cmd, info))
-    results = simulator.run([(p.setup, c) for p, _, c, _ in jobs]) if jobs else []
+    results = simulator.run([sim_job(p.setup, c, p.target) for p, _, c, _ in jobs]) \
+            if jobs else []
     uncomp: Dict[str, HeightMap] = {}
     uncomp_error: Dict[str, str] = {}
     for (point, kind, cmd, info), oc in zip(jobs, results):
@@ -731,7 +748,8 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                 fail(point, "compensated", f"compensation failed: {exc}")
                 continue
             jobs.append((point, "compensated", cmd, info))
-        results = simulator.run([(p.setup, c) for p, _, c, _ in jobs]) if jobs else []
+        results = simulator.run([sim_job(p.setup, c, p.target) for p, _, c, _ in jobs]) \
+            if jobs else []
         for (point, kind, cmd, info), oc in zip(jobs, results):
             if oc.ok:
                 dataset.append(make_sample(point, kind, cmd, oc, info))
@@ -749,7 +767,12 @@ def _check_resumed(dataset: Dataset, row: Mapping[str, Any], point: DesignPoint)
 
     sid = row["sample_id"]
     doc = read_json(dataset.root / "samples" / f"{sid}.json")
-    phys = lambda d: {k: v for k, v in dict(d).items() if k not in EXECUTION_FIELDS}  # noqa
+    def phys(d: Mapping[str, Any]) -> Dict[str, Any]:
+        # through FormingSetup, so a sample stored before a field existed
+        # compares at that field's default
+        full = FormingSetup.from_dict(dict(d)).to_dict() if d else {}
+        return {k: v for k, v in full.items() if k not in EXECUTION_FIELDS}
+
     diffs = []
     if canonical_json(doc.get("part")) != canonical_json(point.part.to_dict()):
         diffs.append("part")

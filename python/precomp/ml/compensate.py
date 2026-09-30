@@ -282,10 +282,12 @@ def verify_with_simulator(result: SurrogateCompensation, setup: Any, simulator: 
     report the improvement factor (uncompensated / compensated RMS vertical
     deviation over the part). The record states its data source and is stored
     in `result.verification`."""
+    from .generate import sim_job
+
     setup = as_setup(setup)
-    jobs = [(setup, result.compensated)]
+    jobs = [sim_job(setup, result.compensated, result.target)]
     if uncompensated:
-        jobs.append((setup, result.target))
+        jobs.append(sim_job(setup, result.target, result.target))
     outcomes = simulator.run(jobs)
     for oc in outcomes:
         if not oc.ok:
