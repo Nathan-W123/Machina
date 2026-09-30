@@ -45,6 +45,7 @@ beside the tool and removed with it in "unload". With the DSIF rim pass,
 removal) follow "unload", clamp held. The plate's opening and the rim pass
 band follow the outline of `target` (the part the fixture is made for),
 the commanded surface's when none is given.
+
 Every step constraint is `"mode": "hold"`: its DOFs stay where the step
 finds them - the clamp at the reference position, the three support nodes
 where the clamp left them, so the released part keeps its place on the

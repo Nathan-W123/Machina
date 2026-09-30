@@ -230,6 +230,10 @@ def dsif_trajectory(setup: FormingSetup, forming_surface: HeightMap, path: Toolp
     info: Dict[str, Any] = {"support_radius_m": R2, "squeeze": float(s["squeeze"]),
                             "thickness_law": s["thickness_law"],
                             "support_z_min_m": float(pts[:, 2].min()),
+                            # how far the ball's body reaches in plan while in contact
+                            # (a lower clamp frame starts at the free half-width)
+                            "support_body_reach_m": float(np.abs(pts[contact, :2]).max() + R2)
+                            if contact.any() else None,
                             "support_z_max_in_contact_m":
                                 float(pts[contact, 2].max()) if contact.any() else None}
     t = path.t
