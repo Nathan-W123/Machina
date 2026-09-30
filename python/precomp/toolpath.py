@@ -637,29 +637,229 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
     return out
 
 
-def dsif_support_path(primary: Toolpath, target: HeightMap, thickness: float,
-                      support_radius: Optional[float] = None) -> Toolpath:
-    """EXPERIMENTAL: the supporting (bottom) tool of double-sided incremental forming.
+def lift_heights(surface: HeightMap, radius: float, x: np.ndarray, y: np.ndarray, *,
+                 offset: float = 0.0, floor: Optional[np.ndarray] = None) -> np.ndarray:
+    """The highest centre heights [m] of a ball of radius `radius` under a sheet.
 
-    Each point of the primary path is offset against the local surface normal
-    by ``R1 + thickness + R2`` (R1 the primary, R2 the support radius; equal
-    radii give the ``thickness + 2R`` of the design), so the support ball
-    touches the underside of a sheet of that thickness opposite the primary
-    tool. The normal is that of the drop-cutter surface at the primary
-    centre's x-y, which equals the target's normal at the contact point for a
-    smooth target. Thinning is ignored (the sheet is taken at its initial
-    thickness); in the air the support simply stays below the primary tool.
+    The sheet's underside is ``max(surface, floor) - offset`` (`offset` the
+    vertical thickness; `floor` [m], one per point, the height below which
+    the sheet has not been pushed yet - the in-process sheet of a path whose
+    tip is at that height; None for the finished surface). At each point
+    (x, y) the ball centre may rise to
+
+        b = min over |d| <= R of [underside(x + d) - sqrt(R^2 - |d|^2)]
+
+    and no higher without entering the underside - the drop cutter of
+    `tool_center_surface` turned upside down ("lift cutter"), evaluated on
+    the offsets of the surface's grid within R of the point, the surface
+    interpolated bilinearly there (continued flat at 0 outside the grid).
+    """
+    R = require_positive("radius", radius)
+    x = np.asarray(x, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+    footprint, structure = spherical_structure(R, surface.grid.h)
+    m = footprint.shape[0] // 2
+    k = (np.arange(-m, m + 1) * surface.grid.h)
+    DX, DY = np.meshgrid(k, k, indexing="xy")
+    dx, dy, cap = DX[footprint], DY[footprint], structure[footprint]
+    out = np.empty(len(x))
+    chunk = max(1, 2_000_000 // len(dx))
+    for a in range(0, len(x), chunk):
+        b = slice(a, a + chunk)
+        zz = surface.interpolate(x[b, None] + dx[None, :], y[b, None] + dy[None, :],
+                                 masked=False, fill_value=0.0)
+        if floor is not None:
+            zz = np.maximum(zz, np.asarray(floor, dtype=float).ravel()[b, None])
+        out[b] = (zz - offset - cap[None, :]).min(axis=1)
+    return out
+
+
+def dsif_support_points(primary: Toolpath, surface: HeightMap, thickness: float,
+                        support_radius: Optional[float] = None, *, squeeze: float = 0.0,
+                        thickness_law: str = "sine", clearance: float = 2e-3) -> np.ndarray:
+    """The support (bottom) tool of double-sided incremental forming, point by
+    point with the forming tool: (n, 3) ball centres [m], row i at the same
+    pseudo-time as `primary.points[i]` (write them with `primary.t`, never
+    with a path's own arc-length time).
+
+    `surface` is the surface `primary` was made for. At a point in contact
+    the support sits opposite the forming tool along the drop-cutter normal
+    n (the target's normal at the contact point, for a smooth target): its
+    centre is ``p - (R1 + t_n + R2) n``, so the two balls hold a sheet of
+    thickness t_n between them - t_n = t cos(wall angle) = t n_z with
+    `thickness_law` "sine" (the sine law of shear spinning: the vertical
+    thickness stays t), t with "initial". That position assumes the sheet
+    around the contact already has its final shape; where it has not been
+    pushed down yet (the first revolutions, a wall still flat below the
+    tool), it would lie inside the sheet. The support is therefore never
+    raised above the lift cutter (`lift_heights`) of the in-process sheet:
+    the surface above the tip's current height, flat at that height below
+    it, vertically `thickness` thick. `squeeze` then moves it towards the
+    forming tool by squeeze t_n along n (0: the balls just touch the sheet;
+    > 0 squeezes it; < 0 leaves a gap). In the air (`AIR` points: approach,
+    retract, traverses) the support waits below the whole part - its top
+    `clearance` below the deepest point of `surface` minus `thickness`.
+    Thinning beyond the sine law and the sheet's springback are ignored.
     """
     t = require_positive("thickness", thickness)
     R1 = primary.tool_radius
     R2 = R1 if support_radius is None else require_positive("support_radius", support_radius)
-    cz = tool_center_surface(target, R1)
-    n = cz.sample(cz.normals(), primary.points[:, 0], primary.points[:, 1])
+    if thickness_law not in ("sine", "initial"):
+        raise ValueError("thickness_law must be 'sine' or 'initial'")
+    if not -1.0 <= squeeze < 1.0:
+        raise ValueError("squeeze must lie in [-1, 1)")
+    clearance = require_positive("clearance", clearance)
+    p = primary.points
+    air = primary.level == AIR
+    cz = tool_center_surface(surface, R1)
+    n = cz.sample(cz.normals(), p[:, 0], p[:, 1])
     n = np.where(np.isfinite(n), n, np.array([0.0, 0.0, 1.0]))
-    n[primary.level == AIR] = np.array([0.0, 0.0, 1.0])
+    n[air] = np.array([0.0, 0.0, 1.0])
     n /= np.linalg.norm(n, axis=1, keepdims=True)
-    pts = primary.points - (R1 + t + R2) * n
+    tn = t * n[:, 2] if thickness_law == "sine" else np.full(len(p), t)
+    touch = p - (R1 + tn + R2)[:, None] * n
+    bound = lift_heights(surface, R2, touch[:, 0], touch[:, 1], offset=t,
+                         floor=p[:, 2] - R1)
+    out = np.column_stack([touch[:, :2], np.minimum(touch[:, 2], bound)])
+    out += (squeeze * tn)[:, None] * n
+    low = -(t + R2 + clearance + max(0.0, -float(surface.z.min())))
+    out[air] = np.column_stack([p[air, :2], np.full(int(air.sum()), low)])
+    return out
+
+
+def dsif_support_path(primary: Toolpath, target: HeightMap, thickness: float,
+                      support_radius: Optional[float] = None, **kwargs: Any) -> Toolpath:
+    """The support tool of double-sided incremental forming as a `Toolpath`
+    (`dsif_support_points`; keyword arguments go there).
+
+    Its own pseudo-time runs with its own arc length, which is NOT the
+    forming tool's: to drive both tools in one analysis, write the points of
+    `dsif_support_points` with the forming tool's `t` (the deck builder
+    does, `precomp.fea.support`). Consecutive coincident points are dropped.
+    """
+    R1 = primary.tool_radius
+    R2 = R1 if support_radius is None else require_positive("support_radius", support_radius)
+    pts = dsif_support_points(primary, target, thickness, R2, **kwargs)
     meta = dict(primary.metadata)
     meta.update({"style": f"{primary.metadata.get('style', 'path')}_dsif_support",
-                 "experimental": True, "thickness": t, "primary_radius": R1})
+                 "thickness": float(thickness), "primary_radius": R1,
+                 "synchronised_with_primary": False})
     return Toolpath(pts, primary.level.copy(), R2, meta)
+
+
+def lift_cutter(underside: HeightMap, radius: float) -> HeightMap:
+    """`lift_heights` on the grid of `underside` (no floor, no offset): the
+    highest ball centre below the sheet at every node, the drop cutter of
+    the flipped surface turned back."""
+    flip = HeightMap(underside.grid, -underside.z, underside.mask)
+    return underside.with_z(-tool_center_surface(flip, radius).z,
+                            metadata={"quantity": "lift_cutter", "radius": float(radius)})
+
+
+def reach_from_below(underside: HeightMap, radius: float) -> HeightMap:
+    """What a ball of radius R pushing from below can shape of `underside`:
+    the highest point of any ball below it at every node,
+
+        O(x) = max over |x - y| <= R of [b(y) + sqrt(R^2 - |x - y|^2)],
+
+    b the lift cutter - the morphological opening of the underside from
+    below by the ball. O <= underside everywhere, with equality exactly
+    where the ball can touch it; where O is lower, the underside is a recess
+    narrower than the ball (a concave corner seen from below, a narrow raised
+    band) that the ball cannot reach into.
+    """
+    b = lift_cutter(underside, radius)
+    footprint, structure = spherical_structure(radius, underside.grid.h)
+    top = ndimage.grey_dilation(b.z, footprint=footprint, structure=structure, mode="nearest")
+    return underside.with_z(np.minimum(top, underside.z),
+                            metadata={"quantity": "reach_from_below", "radius": float(radius)})
+
+
+def signed_outline_distance(reference: HeightMap, eps: float = 1e-6) -> HeightMap:
+    """Signed distance [m] of every grid node to the outline of the part of
+    `reference` (its nodes deeper than `eps`): negative inside the part,
+    positive outside, the outline half-way between the last part node and
+    the first flange node (Euclidean distance transforms of the two)."""
+    part = reference.mask & (reference.z < -eps)
+    if not part.any():
+        raise PrecompError("the reference surface has no part (nothing below the sheet plane)")
+    h = reference.grid.h
+    d_out = ndimage.distance_transform_edt(~part) * h
+    d_in = ndimage.distance_transform_edt(part) * h
+    sd = np.where(part, -(d_in - 0.5 * h), d_out - 0.5 * h)
+    return HeightMap(reference.grid, sd, None, {"quantity": "signed_outline_distance"})
+
+
+def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thickness: float,
+                  *, inside: float = 2e-3, outside: float = 1e-3, band_spacing: float = 1e-3,
+                  spacing: float = 1e-3, clearance: float = 2e-3, direction: str = "ccw",
+                  start_angle_deg: float = 0.0) -> Toolpath:
+    """A support-tool-only pass along the rim, pushing up from below.
+
+    Closed loops at signed distances ``outside, outside - band_spacing, ...``
+    down to ``-inside`` from the outline of the part of `reference` (outside
+    first, then inwards; `signed_outline_distance`), each at the lift-cutter
+    height (`lift_heights`) of the underside of `surface` - the highest the
+    ball can rise there without entering the commanded sheet: where the
+    formed sheet sagged below the command, the ball pushes it back up to it,
+    and where the command lies above the sheet plane (a compensation that
+    raises the rim), up to that. Loops are joined by straight moves kept
+    below the lift cutter; the ball starts and ends in the air below the
+    whole part (`AIR` points, its top `clearance` below the deepest point of
+    `surface` minus `thickness`). `spacing` is the point spacing along a
+    loop [m]. Every band level must have one loop (one pocket).
+    """
+    R = require_positive("radius", radius)
+    t = require_positive("thickness", thickness)
+    spacing = require_positive("spacing", spacing)
+    band_spacing = require_positive("band_spacing", band_spacing)
+    if inside < 0 or outside < 0 or inside + outside <= 0:
+        raise ValueError("the band is empty: need inside, outside >= 0 and inside + outside > 0")
+    sd = signed_outline_distance(reference)
+    if not sd.grid.matches(surface.grid):
+        sd = sd.resample(surface.grid)
+    lift = lift_cutter(surface.with_z(surface.z - t), R)
+    levels = []
+    d = float(outside)
+    while d >= -inside - 1e-12:
+        levels.append(d)
+        d -= band_spacing
+    per_level = _ordered_loops(sd, levels, spacing, direction, False, start_angle_deg,
+                               _min_loop(surface, spacing, None))
+    pts: List[np.ndarray] = []
+    lvl: List[np.ndarray] = []
+    low = -(t + R + clearance + max(0.0, -float(surface.z.min())))
+    current: Optional[np.ndarray] = None
+    for k, (level, loops) in enumerate(per_level, start=1):
+        if len(loops) != 1:
+            raise PrecompError(f"the rim pass needs one loop per band level; the level "
+                               f"{level * 1e3:+.2f} mm from the outline has {len(loops)}")
+        xy = resample_loop(loops[0], spacing)
+        xy = np.vstack([xy, xy[:1]])
+        ring = np.column_stack([xy, lift.interpolate(xy[:, 0], xy[:, 1], masked=False,
+                                                     fill_value=low)])
+        if current is None:
+            start = np.array([ring[0, 0], ring[0, 1], low])
+            pts.append(start[None])
+            lvl.append(np.array([AIR]))
+        else:
+            dist = float(np.linalg.norm(ring[0, :2] - current[:2]))
+            m = max(1, int(math.ceil(dist / spacing)))
+            u = (np.arange(1, m) / m)[:, None]
+            link = current + u * (ring[0] - current)
+            if len(link):
+                cap = lift.interpolate(link[:, 0], link[:, 1], masked=False, fill_value=low)
+                link[:, 2] = np.minimum(link[:, 2], cap)
+                pts.append(link)
+                lvl.append(np.full(len(link), k))
+        pts.append(ring)
+        lvl.append(np.full(len(ring), k))
+        current = ring[-1]
+    end = np.array([current[0], current[1], low])
+    pts.append(end[None])
+    lvl.append(np.array([AIR]))
+    meta = {"style": "rim_pass", "band_levels_m": [float(v) for v, _ in per_level],
+            "inside": float(inside), "outside": float(outside),
+            "band_spacing": band_spacing, "spacing": spacing, "clearance": clearance,
+            "direction": direction, "thickness": t}
+    return Toolpath(np.vstack(pts), np.concatenate(lvl), R, meta)
