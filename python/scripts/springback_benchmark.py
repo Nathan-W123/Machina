@@ -57,8 +57,9 @@ the forming model is `config["solver"]` - a simulator name and the
 another step type (explicit forming) is a change of that block only.
 
 Outputs in --out/stage_n<N>/: headline.csv (per test part and method),
-summary.csv, dz_per_part.csv, ml_compensation.csv, failures.csv, design.csv,
-simulations.csv, run.json and tables.md.
+summary.csv, regions.csv, dz_per_part.csv, ml_compensation_<model>.csv,
+failures.csv, design.csv, simulations.csv, run.json and tables.md
+(benchmarks/springback/README.md describes them).
 """
 
 from __future__ import annotations
