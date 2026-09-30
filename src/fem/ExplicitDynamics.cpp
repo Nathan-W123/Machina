@@ -569,7 +569,8 @@ Vector ExplicitDynamics::internal_force(const Vector& u,
   Vector internal(u.size());
   Vector external(u.size());
   Scalar energy = 0.0;
-  force_->evaluate(u, 0.0, false, internal, external, energy);
+  // The path of an unrecorded step (the kernel's own elastic predictor).
+  force_->evaluate(u, 0.0, false, internal, external, energy, false);
   force_->set_history(kept);
   return internal;
 }
@@ -847,8 +848,15 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   Vector previous_values = values;
   Scalar stored = 0.0;
   Scalar stored_start = 0.0;
+  // The contact buffers hold every slave node: they never grow in the loop.
   std::vector<ContactNodeForce> contact_forces;
   std::vector<ContactNodeForce> contact_old;
+  {
+    std::size_t slaves = 0;
+    for (std::size_t k = 0; k < nt; ++k) slaves += contact.slave_nodes(k).size();
+    contact_forces.reserve(slaves);
+    contact_old.reserve(slaves);
+  }
   std::vector<ContactToolState> tool_state(nt);
   std::vector<Vector3> c_old(nt, Vector3::Zero());
   std::vector<Vector3> c_new(nt, Vector3::Zero());
@@ -986,6 +994,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     PenaltyContact::Saved friction;
     std::size_t records = 0, snapshots = 0;
   } saved;
+  saved.contact_forces.reserve(contact_forces.capacity());  // copies into it never allocate
   const auto checkpoint = [&]() {
     saved.u = u;
     saved.v = v;

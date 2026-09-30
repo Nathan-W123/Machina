@@ -1,0 +1,763 @@
+/// \file test_explicit.cpp
+/// \brief Explicit dynamics (ExplicitDynamics.hpp) and the explicit forming
+///        step (`form_explicit`, Forming.hpp).
+///
+/// The central-difference method on a linear model decouples in the
+/// M-orthonormal modes of the lumped mass, so a run is checked step for step
+/// against the scalar recursion of every mode, and its stability limit
+/// against the largest eigenvalue of a dense eigensolve (the element
+/// eigenvalue bound must lie above it, power iteration on it). Mass scaling
+/// is checked against its definition, the dedicated Hex8 kernel against the
+/// generic element dispatch it replaces (small and finite kinematics,
+/// elastic, J2, Hill48 and Chaboche, mean dilatation, uniform and distorted
+/// meshes), the energy balance by its order in the step and by the sign of
+/// the plastic dissipation, determinism by comparing thread counts bit for
+/// bit, and the step loop by counting its heap allocations. The explicit
+/// forming step hands its state to an implicit release exactly, and the
+/// `explicit` block of a deck is read strictly.
+#include "TestSupport.hpp"
+
+#include "sparlab/core/Exceptions.hpp"
+#include "sparlab/core/Logging.hpp"
+#include "sparlab/fem/ExplicitDynamics.hpp"
+#include "sparlab/fem/Forming.hpp"
+#include "sparlab/io/Config.hpp"
+#include "sparlab/io/FormingWriter.hpp"
+#include "sparlab/io/Json.hpp"
+#include "sparlab/io/ResultWriter.hpp"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <Eigen/Eigenvalues>
+#include <Eigen/Geometry>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <new>
+#include <random>
+#include <string>
+#include <vector>
+
+#ifdef SPARLAB_HAVE_OPENMP
+#include <omp.h>
+#endif
+
+// ---------------------------------------------------------------------------
+// Heap allocation counting (the step loop must allocate nothing). The
+// replacement operators are those of the whole test executable; they count
+// only while `g_counting` is set.
+// ---------------------------------------------------------------------------
+namespace {
+std::atomic<bool> g_counting{false};
+std::atomic<long> g_allocations{0};
+void* counted_allocation(std::size_t size) {
+  if (g_counting.load(std::memory_order_relaxed)) {
+    g_allocations.fetch_add(1, std::memory_order_relaxed);
+  }
+  void* p = std::malloc(size == 0 ? 1 : size);
+  if (p == nullptr) throw std::bad_alloc();
+  return p;
+}
+void* counted_aligned(std::size_t size, std::size_t alignment) {
+  if (g_counting.load(std::memory_order_relaxed)) {
+    g_allocations.fetch_add(1, std::memory_order_relaxed);
+  }
+  const std::size_t rounded = (std::max<std::size_t>(size, 1) + alignment - 1) / alignment *
+                              alignment;
+  void* p = std::aligned_alloc(alignment, rounded);
+  if (p == nullptr) throw std::bad_alloc();
+  return p;
+}
+}  // namespace
+
+void* operator new(std::size_t size) { return counted_allocation(size); }
+void* operator new[](std::size_t size) { return counted_allocation(size); }
+void* operator new(std::size_t size, std::align_val_t a) {
+  return counted_aligned(size, static_cast<std::size_t>(a));
+}
+void* operator new[](std::size_t size, std::align_val_t a) {
+  return counted_aligned(size, static_cast<std::size_t>(a));
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+
+using namespace sparlab;
+using namespace sparlab::testing;
+using Catch::Approx;
+using Catch::Matchers::ContainsSubstring;
+
+namespace {
+
+constexpr Scalar kInf = std::numeric_limits<Scalar>::infinity();
+
+SelectorGroup box(Scalar xmin, Scalar xmax, Scalar ymin = -kInf, Scalar ymax = kInf,
+                  Scalar zmin = -kInf, Scalar zmax = kInf, const std::string& name = "box") {
+  SelectorGroup g;
+  g.name = name;
+  Selector s;
+  s.kind = SelectorKind::Box;
+  s.xmin = xmin;
+  s.xmax = xmax;
+  s.ymin = ymin;
+  s.ymax = ymax;
+  s.zmin = zmin;
+  s.zmax = zmax;
+  g.members.push_back(s);
+  return g;
+}
+
+DisplacementConstraint clamp(const SelectorGroup& region, std::vector<int> components = {0, 1, 2},
+                             const Vector3& value = Vector3::Zero()) {
+  DisplacementConstraint c;
+  c.region = region;
+  for (int k : components) c.set(k, true, value(k));
+  return c;
+}
+
+Mesh hex_block(Index nx, Index ny, Index nz, Scalar lx, Scalar ly, Scalar lz, Scalar x0 = 0.0,
+               Scalar y0 = 0.0, Scalar z0 = 0.0) {
+  StructuredMeshSpec spec;
+  spec.nx = nx;
+  spec.ny = ny;
+  spec.nz = nz;
+  spec.lx = lx;
+  spec.ly = ly;
+  spec.lz = lz;
+  spec.x0 = x0;
+  spec.y0 = y0;
+  spec.z0 = z0;
+  return make_structured_hex_mesh(spec);
+}
+
+/// The same mesh with every node moved by up to `amount` times the smallest
+/// cell size (deterministically): no two cells alike.
+Mesh distorted(const Mesh& mesh, Scalar amount) {
+  Matrix x = mesh.coordinates();
+  const Scalar h = mesh.mean_element_size();
+  std::mt19937 rng(7);
+  std::uniform_real_distribution<Scalar> d(-1.0, 1.0);
+  for (Index j = 0; j < x.cols(); ++j) {
+    for (Index k = 0; k < x.rows(); ++k) x(k, j) += amount * h * d(rng);
+  }
+  return Mesh(x, mesh.connectivity(), mesh.element_type());
+}
+
+/// A finalised model with one load case that applies nothing (or `load`).
+FemModel finalised(Mesh mesh, const IsotropicMaterial& m,
+                   const std::vector<DisplacementConstraint>& bcs, const LoadCaseSpec* load = nullptr) {
+  FemModel model(std::move(mesh), m, 1.0, StressState::ThreeDimensional, IntegrationOptions());
+  model.constraints() = bcs;
+  if (load != nullptr) {
+    model.load_case_specs().push_back(*load);
+  } else {
+    LoadCaseSpec lc;
+    lc.name = "none";
+    lc.prescribed_displacement_only = true;
+    model.load_case_specs().push_back(lc);
+  }
+  model.finalize();
+  return model;
+}
+
+IsotropicMaterial j2_material(Scalar kinematic = 0.0, Scalar saturation = 0.0) {
+  IsotropicMaterial m(70.0e9, 0.33, 2700.0, "aluminium");
+  PlasticityParameters p;
+  p.yield_stress = 150.0e6;
+  p.hardening_modulus = 500.0e6;
+  p.kinematic_hardening_modulus = kinematic;
+  p.saturation_stress = saturation;
+  p.saturation_rate = saturation > 0.0 ? 20.0 : 0.0;
+  m.set_plasticity(p);
+  return m;
+}
+
+/// The drive of a run without tools whose model constraints hold their
+/// values.
+ExplicitDrive held_drive(const FemModel& model, Scalar duration) {
+  ExplicitDrive drive;
+  drive.duration = duration;
+  drive.fixed = model.dofs().constrained_dofs();
+  const Vector values = model.dofs().prescribed_vector();
+  drive.fixed_start.resize(static_cast<Eigen::Index>(drive.fixed.size()));
+  for (std::size_t i = 0; i < drive.fixed.size(); ++i) {
+    drive.fixed_start(static_cast<Eigen::Index>(i)) = values(drive.fixed[i]);
+  }
+  drive.fixed_end = drive.fixed_start;
+  return drive;
+}
+
+NonlinearOptions small_strain() {
+  NonlinearOptions nl;
+  nl.kinematics = Kinematics::SmallStrain;
+  return nl;
+}
+
+/// The explicit options of a test run: a fixed step, no energy stop.
+ExplicitOptions fixed_step(Scalar dt) {
+  ExplicitOptions o;
+  o.time_step = dt;
+  o.history_every = 1000000;
+  o.energy_limit = 1.0e300;
+  o.energy_tolerance = 1.0e300;
+  return o;
+}
+
+/// A linear elastic cantilever block clamped at x = 0 (lumped mass).
+FemModel cantilever_block(Index nx = 4) {
+  return finalised(hex_block(nx, 1, 1, 0.01 * static_cast<Scalar>(nx), 0.01, 0.013),
+                   default_material(), {clamp(box(-kInf, 0.0, -kInf, kInf, -kInf, kInf, "root"))});
+}
+
+struct Modes {
+  Vector omega2;
+  Matrix phi;      ///< free DOFs x modes, M-orthonormal
+  Matrix m;        ///< free-free lumped mass (diagonal)
+};
+
+Modes lumped_modes(const Assembler& assembler) {
+  const Matrix k(assembler.reduce_free_free(assembler.assemble_stiffness()));
+  const Matrix m(assembler.reduce_free_free(assembler.assemble_mass(MassType::Lumped)));
+  Eigen::GeneralizedSelfAdjointEigenSolver<Matrix> es(k, m);
+  REQUIRE(es.info() == Eigen::Success);
+  return {es.eigenvalues(), es.eigenvectors(), m};
+}
+
+Vector scatter_free(const FemModel& model, const Vector& free) {
+  Vector full = Vector::Zero(model.dofs().num_dofs());
+  const std::vector<Index>& f = model.dofs().free_dofs();
+  for (std::size_t i = 0; i < f.size(); ++i) full(f[i]) = free(static_cast<Eigen::Index>(i));
+  return full;
+}
+
+Vector gather_free(const FemModel& model, const Vector& full) {
+  const std::vector<Index>& f = model.dofs().free_dofs();
+  Vector out(static_cast<Eigen::Index>(f.size()));
+  for (std::size_t i = 0; i < f.size(); ++i) out(static_cast<Eigen::Index>(i)) = full(f[i]);
+  return out;
+}
+
+Vector random_vector(Eigen::Index n, unsigned seed, Scalar scale) {
+  std::mt19937 rng(seed);
+  std::uniform_real_distribution<Scalar> d(-1.0, 1.0);
+  Vector v(n);
+  for (Eigen::Index i = 0; i < n; ++i) v(i) = scale * d(rng);
+  return v;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// 1. The central-difference method on a linear model
+// ---------------------------------------------------------------------------
+TEST_CASE("an explicit run is the central-difference recursion of every lumped-mass mode",
+          "[explicit]") {
+  const FemModel model = cantilever_block();
+  const Assembler assembler(model);
+  const Modes modes = lumped_modes(assembler);
+  const Scalar omega_max = std::sqrt(modes.omega2.maxCoeff());
+  const Scalar dt = 0.7 * 2.0 / omega_max;
+  const int steps = 250;
+
+  // A start state with every mode in it.
+  const Eigen::Index nf = modes.phi.rows();
+  const Vector u0 = random_vector(nf, 1, 1.0e-6);
+  const Vector v0 = random_vector(nf, 2, 1.0e-2);
+  ExplicitState start;
+  start.displacement = scatter_free(model, u0);
+  start.velocity = scatter_free(model, v0);
+
+  ExplicitDynamics dyn(model, assembler, small_strain(), {}, fixed_step(dt));
+  REQUIRE(dyn.dedicated());
+  const ExplicitResult r = dyn.run(held_drive(model, steps * dt), start);
+  REQUIRE(r.completed);
+  REQUIRE(r.steps == steps);
+
+  // Every mode by the scalar recursion with half-step velocities.
+  const Vector q0 = modes.phi.transpose() * (modes.m * u0);
+  const Vector p0 = modes.phi.transpose() * (modes.m * v0);
+  Vector q(nf), p(nf);
+  for (Eigen::Index i = 0; i < nf; ++i) {
+    const Scalar w2 = modes.omega2(i);
+    Scalar qi = q0(i), vi = p0(i), ai = -w2 * qi;
+    for (int n = 0; n < steps; ++n) {
+      const Scalar vh = vi + 0.5 * dt * ai;
+      qi += dt * vh;
+      ai = -w2 * qi;
+      vi = vh + 0.5 * dt * ai;
+    }
+    q(i) = qi;
+    p(i) = vi;
+  }
+  const Vector u_ref = modes.phi * q;
+  const Vector v_ref = modes.phi * p;
+  const Vector u = gather_free(model, r.final_state.displacement);
+  const Vector v = gather_free(model, r.final_state.velocity);
+  const Scalar du = (u - u_ref).cwiseAbs().maxCoeff() / u_ref.cwiseAbs().maxCoeff();
+  const Scalar dv = (v - v_ref).cwiseAbs().maxCoeff() / v_ref.cwiseAbs().maxCoeff();
+  INFO("displacement " << du << ", velocity " << dv);
+  REQUIRE(du < 1.0e-10);
+  REQUIRE(dv < 1.0e-10);
+}
+
+TEST_CASE("the central-difference step is stable below 2/omega_max and unstable above it, "
+          "with the element bound above omega_max and power iteration on it",
+          "[explicit]") {
+  const FemModel model = cantilever_block(3);
+  const Assembler assembler(model);
+  const Modes modes = lumped_modes(assembler);
+  const Scalar omega_max = std::sqrt(modes.omega2.maxCoeff());
+  const Scalar limit = 2.0 / omega_max;
+
+  // The top mode, with a little of every other.
+  const Eigen::Index nf = modes.phi.rows();
+  const Vector u0 = modes.phi.col(nf - 1) * 1.0e-7 / modes.phi.col(nf - 1).cwiseAbs().maxCoeff() +
+                    random_vector(nf, 3, 1.0e-10);
+  ExplicitState start;
+  start.displacement = scatter_free(model, u0);
+  const int steps = 3000;
+  {
+    ExplicitDynamics dyn(model, assembler, small_strain(), {}, fixed_step(0.99 * limit));
+    const ExplicitResult r = dyn.run(held_drive(model, steps * 0.99 * limit), start);
+    REQUIRE(r.completed);
+    const Scalar growth = r.final_state.displacement.cwiseAbs().maxCoeff() / 1.0e-7;
+    INFO("growth " << growth);
+    REQUIRE(growth < 20.0);  // bounded: 1 / sqrt(1 - (omega dt / 2)^2) = 7.1
+  }
+  {
+    ExplicitOptions o = fixed_step(1.01 * limit);
+    o.energy_limit = 0.5;
+    o.energy_tolerance = 0.05;
+    o.history_every = 10;
+    ExplicitDynamics dyn(model, assembler, small_strain(), {}, o);
+    const ExplicitResult r = dyn.run(held_drive(model, steps * 1.01 * limit), start);
+    REQUIRE_FALSE(r.completed);
+    REQUIRE(r.warnings.size() >= 1);  // the fixed step beyond the limit
+    REQUIRE_THAT(r.warnings.front(), ContainsSubstring("exceeds the stability limit"));
+    // The state kept is the last valid one.
+    REQUIRE(r.final_state.displacement.allFinite());
+  }
+  // The element eigenvalue bound (Irons) lies above omega_max; power
+  // iteration (its Rayleigh quotient, without the 1.05 margin) takes the
+  // model without its constraints, whose omega_max bounds the constrained
+  // one's (interlacing) - the drive of a forming step prescribes other DOFs
+  // than the model's.
+  ExplicitOptions o;
+  o.stable_step.power_iterations = 4000;
+  ExplicitDynamics dyn(model, assembler, small_strain(), {}, o);
+  const Vector zero = Vector::Zero(model.dofs().num_dofs());
+  const Scalar element = dyn.element_time_steps(zero).minCoeff();
+  const Scalar power = dyn.power_iteration_time_step(zero);
+  const Scalar omega_power = 2.0 / power / std::sqrt(1.05);
+  const Matrix k_all(assembler.assemble_stiffness());
+  const Matrix m_all(assembler.assemble_mass(MassType::Lumped));
+  const Scalar omega_all = std::sqrt(
+      Eigen::GeneralizedSelfAdjointEigenSolver<Matrix>(k_all, m_all, Eigen::EigenvaluesOnly)
+          .eigenvalues()
+          .maxCoeff());
+  INFO("element bound " << 2.0 / element / omega_max << " omega_max, power "
+                        << omega_power / omega_all << " of the unconstrained omega_max, "
+                        << omega_all / omega_max << " omega_max");
+  REQUIRE(2.0 / element >= omega_max * (1.0 - 1.0e-12));
+  REQUIRE(omega_all >= omega_max);
+  REQUIRE(std::abs(omega_power / omega_all - 1.0) < 1.0e-3);
+}
+
+TEST_CASE("selective mass scaling reaches its target step with the added mass it reports, and "
+          "uniform scaling divides the frequencies by sqrt(s)",
+          "[explicit]") {
+  // A graded, distorted mesh: every element its own stable step.
+  Mesh graded = hex_block(6, 2, 2, 0.03, 0.01, 0.01);
+  Matrix x = graded.coordinates();
+  for (Index j = 0; j < x.cols(); ++j) x(0, j) = 0.03 * std::pow(x(0, j) / 0.03, 2.0);
+  const FemModel model =
+      finalised(distorted(Mesh(x, graded.connectivity(), ElementType::Hex8), 0.05),
+                default_material(), {clamp(box(-kInf, 1.0e-9))});
+  const Assembler assembler(model);
+  const Vector zero = Vector::Zero(model.dofs().num_dofs());
+  ExplicitOptions probe;
+  const Vector crit = ExplicitDynamics(model, assembler, small_strain(), {}, probe)
+                          .element_time_steps(zero);
+  REQUIRE(crit.maxCoeff() > 2.0 * crit.minCoeff());
+
+  const Scalar safety = 0.9;
+  const Scalar target = 1.6 * safety * crit.minCoeff();
+  ExplicitOptions o;
+  o.stable_step.safety = safety;
+  o.mass_scaling.mode = MassScalingOptions::Mode::Selective;
+  o.mass_scaling.target_time_step = target;
+  o.history_every = 1000000;
+  ExplicitDynamics dyn(model, assembler, small_strain(), {}, o);
+  const ExplicitResult r = dyn.run(held_drive(model, 20.0 * target), ExplicitState{
+                                                                          zero, {}, {}, {}});
+  REQUIRE(r.completed);
+  REQUIRE(r.time_step <= target);
+  REQUIRE(r.time_step >= target * (1.0 - 1.0e-12));
+  // The added mass: sum (s_e - 1) m_e / sum m_e, s_e = max(1, (target / (safety dt_e))^2).
+  Scalar added = 0.0, total = 0.0;
+  int scaled = 0;
+  Vector scale(model.mesh().num_elements());
+  for (Index e = 0; e < model.mesh().num_elements(); ++e) {
+    const Scalar s = std::max(1.0, std::pow(target / (safety * crit(e)), 2));
+    const Scalar m = model.mesh().element_measure(e) * 2700.0;
+    scale(e) = s;
+    added += (s - 1.0) * m;
+    total += m;
+    if (s > 1.0) ++scaled;
+  }
+  REQUIRE(scaled > 0);
+  REQUIRE(scaled < model.mesh().num_elements());
+  REQUIRE(r.scaled_elements == scaled);
+  REQUIRE(r.added_mass_fraction == Approx(added / total).epsilon(1.0e-10));
+  REQUIRE(r.physical_mass == Approx(total).epsilon(1.0e-10));
+  // Every scaled element's step is the target's (over the safety factor).
+  const Vector scaled_steps = dyn.element_time_steps(zero, &scale);
+  REQUIRE(scaled_steps.minCoeff() == Approx(target / safety).epsilon(1.0e-10));
+
+  // Uniform: one factor, omega_max / sqrt(s) by the dense eigensolve.
+  ExplicitOptions ou = o;
+  ou.mass_scaling.mode = MassScalingOptions::Mode::Uniform;
+  ExplicitDynamics uniform(model, assembler, small_strain(), {}, ou);
+  const ExplicitResult ru = uniform.run(held_drive(model, 20.0 * target), ExplicitState{
+                                                                             zero, {}, {}, {}});
+  REQUIRE(ru.completed);
+  const Scalar s = ru.max_mass_scale;
+  REQUIRE(s > 1.0);
+  REQUIRE(ru.added_mass_fraction == Approx(s - 1.0).epsilon(1.0e-10));
+  REQUIRE(ru.scaled_stable_time_step == Approx(ru.stable_time_step * std::sqrt(s)).epsilon(1e-12));
+  REQUIRE(ru.time_step == Approx(target).epsilon(1.0e-12));
+  const Vector scale_u = Vector::Constant(model.mesh().num_elements(), s);
+  const Matrix k(assembler.reduce_free_free(assembler.assemble_stiffness()));
+  const Matrix m0(assembler.reduce_free_free(assembler.assemble_mass(MassType::Lumped)));
+  const Matrix m1(assembler.reduce_free_free(assembler.assemble_mass(MassType::Lumped, &scale_u)));
+  const Scalar w0 = Eigen::GeneralizedSelfAdjointEigenSolver<Matrix>(k, m0, Eigen::EigenvaluesOnly)
+                        .eigenvalues()
+                        .maxCoeff();
+  const Scalar w1 = Eigen::GeneralizedSelfAdjointEigenSolver<Matrix>(k, m1, Eigen::EigenvaluesOnly)
+                        .eigenvalues()
+                        .maxCoeff();
+  REQUIRE(std::sqrt(w1) == Approx(std::sqrt(w0 / s)).epsilon(1.0e-10));
+}
+
+// ---------------------------------------------------------------------------
+// 2. The dedicated Hex8 kernel
+// ---------------------------------------------------------------------------
+TEST_CASE("the dedicated Hex8 kernel gives the internal forces of the element dispatch",
+          "[explicit]") {
+  IsotropicMaterial hill = j2_material();
+  {
+    PlasticityParameters p = hill.plasticity();
+    p.criterion = YieldCriterion::Hill48;
+    p.hill.r0 = 1.8;
+    p.hill.r45 = 1.3;
+    p.hill.r90 = 2.3;
+    hill.set_plasticity(p);
+  }
+  IsotropicMaterial chaboche = j2_material();
+  {
+    PlasticityParameters p = chaboche.plasticity();
+    p.num_backstresses = 2;
+    p.backstresses[0] = {20.0e9, 200.0};
+    p.backstresses[1] = {2.0e9, 10.0};
+    chaboche.set_plasticity(p);
+  }
+  struct Material {
+    std::string name;
+    IsotropicMaterial m;
+  };
+  const std::vector<Material> materials = {{"elastic", default_material(0.33)},
+                                           {"J2 isotropic", j2_material()},
+                                           {"J2 Prager + Voce", j2_material(2.0e9, 50.0e6)},
+                                           {"Hill48", hill},
+                                           {"Chaboche", chaboche}};
+  const Mesh uniform = hex_block(3, 2, 2, 0.003, 0.002, 0.001);
+  const Mesh irregular = distorted(uniform, 0.12);
+  Scalar worst = 0.0;
+  for (const Material& mat : materials) {
+    for (const Kinematics kin : {Kinematics::SmallStrain, Kinematics::Finite}) {
+      for (const MeanDilatation md : {MeanDilatation::Auto, MeanDilatation::None}) {
+        for (const bool regular : {true, false}) {
+          INFO(mat.name << (kin == Kinematics::Finite ? ", finite" : ", small strain")
+                        << (md == MeanDilatation::Auto ? ", mean dilatation" : "")
+                        << (regular ? ", uniform mesh" : ", distorted mesh"));
+          const FemModel model = finalised(regular ? uniform : irregular, mat.m,
+                                           {clamp(box(-kInf, 1.0e-9))});
+          const Assembler assembler(model);
+          NonlinearOptions nl;
+          nl.kinematics = kin;
+          nl.mean_dilatation = md;
+          ExplicitDynamics dyn(model, assembler, nl, {}, ExplicitOptions());
+          REQUIRE(dyn.dedicated());
+          const Index n = model.dofs().num_dofs();
+          // A large rotation (finite kinematics) and strains of about 1e-2:
+          // points on and inside the yield surface.
+          Vector u = random_vector(n, 11, 2.0e-6);
+          if (kin == Kinematics::Finite) {
+            const Matrix3 rot = Eigen::AngleAxisd(0.4, Vector3(1, 2, 3).normalized()).matrix();
+            for (Index node = 0; node < model.mesh().num_nodes(); ++node) {
+              const Vector3 xn = model.mesh().node(node);
+              u.segment<3>(3 * node) += (rot - Matrix3::Identity()) * xn;
+            }
+          }
+          std::vector<std::vector<PlasticState>> history;
+          if (mat.m.plasticity().enabled()) {
+            std::mt19937 rng(5);
+            std::uniform_real_distribution<Scalar> d(-1.0, 1.0);
+            history.resize(static_cast<std::size_t>(model.mesh().num_elements()));
+            for (auto& points : history) {
+              points.resize(8);
+              for (PlasticState& p : points) {
+                for (int r = 0; r < 6; ++r) p.plastic_strain(r) = 2.0e-3 * d(rng);
+                const Scalar tr = (p.plastic_strain(0) + p.plastic_strain(1) +
+                                   p.plastic_strain(2)) / 3.0;
+                for (int r = 0; r < 3; ++r) p.plastic_strain(r) -= tr;
+                p.equivalent_plastic_strain = 0.02 * (1.0 + d(rng));
+                p.loading = d(rng) > 0.0;
+                const int terms = mat.m.plasticity().kinematic_terms();
+                if (mat.m.plasticity().general()) {
+                  for (int i = 0; i < terms; ++i) {
+                    Vector6& a = p.back_stresses[static_cast<std::size_t>(i)];
+                    for (int r = 0; r < 6; ++r) a(r) = 10.0e6 * d(rng);
+                    const Scalar m = (a(0) + a(1) + a(2)) / 3.0;
+                    for (int r = 0; r < 3; ++r) a(r) -= m;
+                    p.back_stress += a;
+                  }
+                } else if (terms > 0) {
+                  for (int r = 0; r < 6; ++r) p.back_stress(r) = 10.0e6 * d(rng);
+                  const Scalar m = (p.back_stress(0) + p.back_stress(1) + p.back_stress(2)) / 3.0;
+                  for (int r = 0; r < 3; ++r) p.back_stress(r) -= m;
+                }
+              }
+            }
+          }
+          const Vector fd = dyn.internal_force(u, history, false);
+          const Vector fg = dyn.internal_force(u, history, true);
+          const Scalar diff = (fd - fg).cwiseAbs().maxCoeff() / fg.cwiseAbs().maxCoeff();
+          INFO("relative difference " << diff);
+          REQUIRE(diff < 1.0e-13);
+          worst = std::max(worst, diff);
+        }
+      }
+    }
+  }
+  WARN("largest relative difference of the dedicated kernel: " << worst);
+}
+
+TEST_CASE("other elements and kinematics take the generic element dispatch", "[explicit]") {
+  const FemModel model = finalised(hex_block(2, 1, 1, 0.002, 0.001, 0.001), j2_material(),
+                                   {clamp(box(-kInf, 1.0e-9))});
+  const Assembler assembler(model);
+  NonlinearOptions nl;
+  nl.kinematics = Kinematics::FiniteLogarithmic;
+  ExplicitDynamics log_kin(model, assembler, nl, {}, ExplicitOptions());
+  REQUIRE_FALSE(log_kin.dedicated());
+  ExplicitOptions off;
+  off.dedicated_kernel = false;
+  ExplicitDynamics generic(model, assembler, small_strain(), {}, off);
+  REQUIRE_FALSE(generic.dedicated());
+  const Vector u = random_vector(model.dofs().num_dofs(), 3, 1.0e-6);
+  REQUIRE((generic.internal_force(u, {}, false) - generic.internal_force(u, {}, true)).norm() ==
+          0.0);
+}
+
+// ---------------------------------------------------------------------------
+// 3. Energy balance
+// ---------------------------------------------------------------------------
+TEST_CASE("an undamped linear run balances its energy to second order in the step",
+          "[explicit]") {
+  const FemModel model = cantilever_block();
+  const Assembler assembler(model);
+  const Modes modes = lumped_modes(assembler);
+  const Scalar limit = 2.0 / std::sqrt(modes.omega2.maxCoeff());
+  ExplicitState start;
+  start.displacement = scatter_free(model, random_vector(modes.phi.rows(), 4, 1.0e-6));
+  const Scalar duration = 200.0 * limit;
+  std::vector<Scalar> errors;
+  for (const Scalar fraction : {0.4, 0.2, 0.1}) {
+    ExplicitOptions o = fixed_step(fraction * limit);
+    o.history_every = 1;
+    ExplicitDynamics dyn(model, assembler, small_strain(), {}, o);
+    const ExplicitResult r = dyn.run(held_drive(model, duration), start);
+    REQUIRE(r.completed);
+    errors.push_back(r.max_energy_error);
+    // The internal work of a linear model is its stored energy's change.
+    const ExplicitRecord& last = r.records.back();
+    REQUIRE(last.internal == Approx(last.stored - r.records.front().stored).epsilon(1e-9));
+    REQUIRE(std::abs(last.plastic) < 1.0e-9 * last.stored);
+  }
+  INFO("errors " << errors[0] << " " << errors[1] << " " << errors[2]);
+  REQUIRE(errors[0] < 0.1);
+  for (std::size_t i = 1; i < errors.size(); ++i) {
+    const Scalar order = std::log2(errors[i - 1] / errors[i]);
+    INFO("order " << order);
+    REQUIRE(order > 1.9);
+    REQUIRE(order < 2.1);
+  }
+}
+
+TEST_CASE("a plastic run dissipates energy and closes its balance", "[explicit]") {
+  // A bar pulled 2 % at its end (small strain), damped.
+  const Scalar length = 0.01;
+  const FemModel model =
+      finalised(hex_block(8, 1, 1, length, 0.001, 0.001), j2_material(2.0e9),
+                {clamp(box(-kInf, 1.0e-9), {0}), clamp(box(-kInf, 1.0e-9, -kInf, 1e-9), {1}),
+                 clamp(box(-kInf, 1e-9, -kInf, kInf, -kInf, 1e-9), {2}),
+                 clamp(box(length - 1e-9, kInf), {0}, Vector3(0.02 * length, 0, 0))});
+  const Assembler assembler(model);
+  ExplicitOptions o;
+  o.history_every = 20;
+  o.mass_damping = 2.0e4;
+  ExplicitDynamics dyn(model, assembler, small_strain(), {}, o);
+  ExplicitDrive drive = held_drive(model, 2.0e-4);
+  drive.fixed_start.setZero();  // from the reference, to the model's values
+  const ExplicitResult r =
+      dyn.run(drive, ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+  REQUIRE(r.completed);
+  Scalar previous = 0.0;
+  const Scalar scale = r.records.back().internal;
+  for (const ExplicitRecord& rec : r.records) {
+    INFO("step " << rec.step);
+    REQUIRE(rec.plastic >= previous - 1.0e-9 * scale);
+    previous = rec.plastic;
+  }
+  REQUIRE(r.records.back().plastic > 0.5 * scale);
+  REQUIRE(r.records.back().damping > 0.0);
+  REQUIRE(r.max_energy_error < 1.0e-2);
+  // The bar is plastic along its length.
+  REQUIRE(r.records.back().max_plastic_strain > 0.01);
+}
+
+// ---------------------------------------------------------------------------
+// 4. Determinism and allocations
+// ---------------------------------------------------------------------------
+namespace {
+
+/// A clamped plastic sheet dented by a sphere moving over it with friction
+/// (finite kinematics): every part of a forming run.
+struct DentCase {
+  FemModel model;
+  std::vector<RigidTool> tools;
+  DentCase()
+      : model(finalised(hex_block(8, 8, 2, 0.008, 0.008, 0.001, 0.0, 0.0, -0.001), j2_material(),
+                        {clamp(box(-kInf, 1e-9)), clamp(box(0.008 - 1e-9, kInf)),
+                         clamp(box(-kInf, kInf, -kInf, 1e-9)),
+                         clamp(box(-kInf, kInf, 0.008 - 1e-9, kInf))})) {
+    RigidTool t;
+    t.name = "ball";
+    t.radius = 0.002;
+    t.surface = box(-kInf, kInf, -kInf, kInf, -1e-9, kInf);
+    t.friction = 0.1;
+    t.trajectory.times = {0.0, 1.0, 2.0};
+    t.trajectory.points = {Vector3(0.003, 0.004, 0.0021), Vector3(0.003, 0.004, 0.0017),
+                           Vector3(0.005, 0.004, 0.0017)};
+    tools.push_back(t);
+  }
+  ExplicitDrive drive(Scalar speed) const {
+    ExplicitDrive d = held_drive(model, 1.0);
+    d.active = {1};
+    d.time_map = ExplicitTimeMap::tool_speed({&tools[0].trajectory}, 0.0, 2.0, speed);
+    d.duration = d.time_map.duration();
+    return d;
+  }
+};
+
+ExplicitOptions dent_options() {
+  ExplicitOptions o;
+  o.mass_scaling.mode = MassScalingOptions::Mode::Selective;
+  o.mass_scaling.target_time_step = 2.0e-7;
+  o.history_every = 50;
+  o.stable_step.update_every = 200;
+  return o;
+}
+
+}  // namespace
+
+TEST_CASE("an explicit run gives the same result, bit for bit, on any number of threads",
+          "[explicit]") {
+  const DentCase c;
+  const Assembler assembler(c.model);
+  NonlinearOptions nl;  // finite kinematics
+  std::vector<ExplicitResult> runs;
+#ifdef SPARLAB_HAVE_OPENMP
+  const int before = omp_get_max_threads();
+  for (const int threads : {1, 3}) {
+    omp_set_num_threads(threads);
+#else
+  for (int threads = 1; threads <= 2; ++threads) {
+#endif
+    ExplicitDynamics dyn(c.model, assembler, nl, c.tools, dent_options());
+    REQUIRE(dyn.dedicated());
+    runs.push_back(dyn.run(c.drive(20.0), ExplicitState{
+                                              Vector::Zero(c.model.dofs().num_dofs()), {}, {}, {}}));
+  }
+#ifdef SPARLAB_HAVE_OPENMP
+  omp_set_num_threads(before);
+#endif
+  const ExplicitResult& a = runs[0];
+  const ExplicitResult& b = runs[1];
+  REQUIRE(a.completed);
+  REQUIRE(a.contact);
+  REQUIRE(a.steps == b.steps);
+  REQUIRE(a.records.back().max_plastic_strain > 0.0);
+  REQUIRE((a.final_state.displacement - b.final_state.displacement).cwiseAbs().maxCoeff() == 0.0);
+  REQUIRE((a.final_state.velocity - b.final_state.velocity).cwiseAbs().maxCoeff() == 0.0);
+  REQUIRE(a.records.size() == b.records.size());
+  for (std::size_t i = 0; i < a.records.size(); ++i) {
+    REQUIRE(a.records[i].kinetic == b.records[i].kinetic);
+    REQUIRE(a.records[i].internal == b.records[i].internal);
+    for (std::size_t k = 0; k < a.records[i].tools.size(); ++k) {
+      REQUIRE((a.records[i].tools[k].force - b.records[i].tools[k].force).norm() == 0.0);
+    }
+  }
+}
+
+TEST_CASE("the explicit step loop allocates no memory", "[explicit]") {
+  // Runs of N and 2N steps allocate the same: nothing per step. (Records
+  // and stable-step updates allocate, so there are none in between; the
+  // end state's friction history holds one map entry per node in contact,
+  // which the runs of different length may differ in.)
+  const DentCase c;
+  const Assembler assembler(c.model);
+  NonlinearOptions nl;
+  ExplicitOptions o = dent_options();
+  o.history_every = 1000000;
+  o.stable_step.update_every = 0;
+  o.time_step = 1.0e-7;
+  ExplicitState start{Vector::Zero(c.model.dofs().num_dofs()), {}, {}, {}};
+  const auto count = [&](long steps) {
+    ExplicitDynamics dyn(c.model, assembler, nl, c.tools, o);
+    ExplicitDrive d = c.drive(20.0);
+    d.duration = static_cast<Scalar>(steps) * o.time_step;
+    g_allocations = 0;
+    g_counting = true;
+    // (Silent: the log lines' lengths differ with the step count.)
+    const log::Level level = log::level();
+    log::set_level(log::Level::Silent);
+    const ExplicitResult r = dyn.run(d, start);
+    g_counting = false;
+    log::set_level(level);
+    REQUIRE(r.completed);
+    REQUIRE(r.steps == steps);
+    if (steps >= 400) REQUIRE(r.contact);
+    long entries = 0;
+    for (const auto& tool : r.final_state.friction) entries += static_cast<long>(tool.size());
+    return g_allocations.load() - entries;
+  };
+  (void)count(50);  // warm-up (thread pools)
+  const long a = count(400);
+  const long b = count(800);
+  INFO("allocations " << a << " and " << b << " (less the friction history entries)");
+  REQUIRE(a == b);
+}

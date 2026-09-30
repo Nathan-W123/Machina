@@ -56,8 +56,8 @@
 /// elastic element stiffness at the current configuration and the element's
 /// lumped (scaled) mass - by Irons' theorem an upper bound of the assembled
 /// system's; `PowerIteration` estimates \f$\omega_{max}\f$ of the assembled
-/// \f$M^{-1}K\f$ (Rayleigh quotient, times 1.05) - tighter, for the whole
-/// model only; `ElementLength` takes \f$L_e/c_e\f$ with
+/// \f$M^{-1}K\f$ without constraints (Rayleigh quotient, times 1.05; the
+/// constraints can only lower it) - tighter, for the whole model only; `ElementLength` takes \f$L_e/c_e\f$ with
 /// \f$L_e = V_e/A_{max}\f$ and the dilatational wave speed
 /// \f$c_e = \sqrt{(\lambda + 2\mu)/(s_e\rho)}\f$ - the conventional estimate,
 /// not a bound. With finite kinematics the estimate is repeated every
@@ -345,9 +345,10 @@ class ExplicitDynamics {
   ExplicitResult run(const ExplicitDrive& drive, const ExplicitState& start);
 
   /// The internal forces at u from the history (empty: virgin) by the
-  /// kernel the runs use, or by the generic element dispatch
-  /// (`generic` true) - for the tests that compare them. The history is not
-  /// changed.
+  /// kernel the runs use (as at a step that records nothing: the dedicated
+  /// kernel's elastic predictor where it applies), or by the generic element
+  /// dispatch (`generic` true) - for the tests that compare them. The
+  /// history is not changed.
   Vector internal_force(const Vector& u, const std::vector<std::vector<PlasticState>>& history,
                         bool generic) const;
 
@@ -355,7 +356,8 @@ class ExplicitDynamics {
   /// displacement u with the mass scale `scale` (null: 1) - no safety,
   /// damping or contact [s].
   Vector element_time_steps(const Vector& u, const Vector* scale = nullptr) const;
-  /// 2 / omega_max of the assembled system at u by power iteration [s].
+  /// 2 / omega_max of the assembled, unconstrained system at u by power
+  /// iteration (the Rayleigh quotient times 1.05) [s].
   Scalar power_iteration_time_step(const Vector& u, const Vector* scale = nullptr) const;
 
   /// True when the dedicated Hex8 kernel applies to the model and options.
