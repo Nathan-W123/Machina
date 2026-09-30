@@ -1314,6 +1314,48 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
   CHECK(release.iterations <= static_cast<int>(release.increments.size()));
 }
 
+TEST_CASE("an implicit release straight after a moving explicit step ramps out the inertia "
+          "forces it hands on",
+          "[explicit][forming]") {
+  // The dent and the lift, then the release at once - no settle: the
+  // explicit end state still moves, and its inertia and damping forces are
+  // part of the release's start imbalance, which it ramps out with the
+  // rest. The lift continues a stressed part: its kinetic energy is
+  // measured against the part's elastic energy.
+  const DentCase c;
+  const Assembler assembler(c.model);
+  FormingOptions o = dent_forming(c);
+  o.steps = {o.steps[0], o.steps[1], o.steps[3]};
+  const FormingResult r = FormingAnalysis(c.model, assembler, o).run();
+  REQUIRE(r.completed);
+  const FormingStepResult& lift = r.steps[1];
+  const FormingStepResult& release = r.steps[2];
+  REQUIRE(lift.explicit_result.records.back().kinetic > 0.0);  // still moving
+  INFO("start imbalance " << release.start_imbalance << " N, reference force "
+                          << release.reference_force << " N; " << release.iterations
+                          << " iterations in " << release.increments.size() << " increments");
+  CHECK(release.start_imbalance > 1.0e-6 * release.reference_force);
+  CHECK(release.start_imbalance < 0.1 * release.reference_force);
+  CHECK(release.cuts == 0);
+  CHECK(release.iterations <= 4 * static_cast<int>(release.increments.size()));
+  // The kinetic energy ratios: against the internal energy (the dent, from
+  // a virgin sheet) and the elastic energy (the lift), the unfiltered peak
+  // at least the warned ratio.
+  const ExplicitResult& dent = r.steps[0].explicit_result;
+  const ExplicitResult& up = lift.explicit_result;
+  CHECK(dent.kinetic_ratio_basis == "internal energy");
+  CHECK(up.kinetic_ratio_basis == "elastic energy");
+  CHECK(dent.peak_kinetic_ratio >= dent.max_kinetic_ratio);
+  CHECK(up.peak_kinetic_ratio >= up.max_kinetic_ratio);
+  Scalar peak = 0.0;
+  for (const ExplicitRecord& rec : up.records) {
+    REQUIRE(rec.elastic > 0.0);
+    REQUIRE(rec.elastic < rec.stored);
+    peak = std::max(peak, rec.kinetic / rec.elastic);
+  }
+  CHECK(up.peak_kinetic_ratio == peak);
+}
+
 namespace {
 
 const char* kExplicitForming = R"({
