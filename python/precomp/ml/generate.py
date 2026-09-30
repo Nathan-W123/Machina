@@ -131,14 +131,27 @@ class SimOutcome:
     provenance: Dict[str, Any] = field(default_factory=dict)
 
 
+def sim_job(setup: Any, commanded: HeightMap, target: Any) -> Tuple[Any, ...]:
+    """A `Simulator` job: (setup, commanded), and the target (a HeightMap, or
+    a callable making it) as a third item only when the setup has a support
+    strategy whose fixture follows it - so a simulator written for pairs
+    keeps working for every setup without support."""
+    if as_setup(setup).support == "none":
+        return (setup, commanded)
+    return (setup, commanded, target() if callable(target) else target)
+
+
 @runtime_checkable
 class Simulator(Protocol):
     """Anything that forms commanded surfaces: `source` ("sim" or "proxy")
-    and ``run(jobs) -> [SimOutcome]`` in job order, failures included."""
+    and ``run(jobs) -> [SimOutcome]`` in job order, failures included. A job
+    is (setup, commanded) or, for a setup with a support strategy,
+    (setup, commanded, target) - `target` the part its fixture is made for
+    (`precomp.fea.simulate`; `sim_job`)."""
 
     source: str
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]: ...
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]: ...
 
 
 class ProxySimulator:
@@ -164,6 +177,11 @@ class ProxySimulator:
     the commanded shape (so displacement adjustment on it is non-trivial) and
     on every process and material descriptor that matters to it. Every
     sample, metric and plot made from it is labelled "proxy - not physics".
+    It knows single-point forming only: as a simulator or a model it refuses
+    a setup with support from below (`FormingSetup.support`) rather than give
+    single-point numbers under the supported setup's name; as a prior
+    (`prior_deviation`) it gives single-point forming's dz for any setup, a
+    crude estimate the residual learner corrects.
 
     `run` (the `Simulator` protocol) also builds the setup's tool path of
     every job, as the deck builder does, and fails the job without one;
@@ -203,10 +221,18 @@ class ProxySimulator:
         self.params = ProxyParams(**state["params"])
         self.check_toolpath = bool(state.get("check_toolpath", True))
 
-    def deviation(self, commanded: HeightMap, setup: Any) -> np.ndarray:
-        """(ny, nx) dz [m] of forming `commanded` with `setup`."""
+    def deviation(self, commanded: HeightMap, setup: Any, *,
+                  any_support: bool = False) -> np.ndarray:
+        """(ny, nx) dz [m] of forming `commanded` with `setup` (single-point
+        forming; PrecompError for a setup with a support unless
+        `any_support`)."""
         p = self.params
         s = as_setup(setup)
+        if s.support != "none" and not any_support:
+            raise PrecompError(
+                f"the proxy has no model of support from below (support {s.support!r}); its "
+                "dz would be single-point forming's under the supported setup's name - "
+                "simulate with sparlab_form (SparlabSimulator)")
         m = s.material
         g = commanded.grid
         h = g.h
@@ -269,7 +295,7 @@ class ProxySimulator:
 
     # protocols: a prior (models.ResidualModel), a FieldModel, a Simulator
     def prior_deviation(self, commanded: HeightMap, setup: Any) -> np.ndarray:
-        return self.deviation(commanded, setup)
+        return self.deviation(commanded, setup, any_support=True)
 
     def predict_deviation(self, commanded: HeightMap, setup: Any
                           ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
@@ -278,9 +304,10 @@ class ProxySimulator:
     def __call__(self, commanded: HeightMap, setup: Any) -> HeightMap:
         return self.formed(commanded, setup)
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]:
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]:
         out = []
-        for setup, commanded in jobs:
+        for job in jobs:
+            setup, commanded = job[0], job[1]
             try:
                 if self.check_toolpath:          # a deck needs one; so does time_frac
                     from ..fea.deck import make_toolpath
@@ -319,16 +346,18 @@ class SparlabSimulator:
 
     @staticmethod
     def fidelity_of(setup: FormingSetup) -> str:
-        return (f"sparlab:{setup.element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
-                f"{setup.kinematics}:{setup.release}")
+        label = (f"sparlab:{setup.element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
+                 f"{setup.kinematics}:{setup.release}")
+        return label if setup.support == "none" else f"{label}:{setup.support}"
 
-    def run(self, jobs: Sequence[Tuple[FormingSetup, HeightMap]]) -> List[SimOutcome]:
+    def run(self, jobs: Sequence[Tuple[Any, ...]]) -> List[SimOutcome]:
         from ..fea.runner import simulate_many, sparlab_version
 
         outcomes = simulate_many(jobs, self.work_dir, max_workers=self.max_workers,
                                  executor=self.executor, retry_failed=self.retry_failed)
         out = []
-        for (setup, commanded), oc in zip(jobs, outcomes):
+        for job, oc in zip(jobs, outcomes):
+            setup, commanded = job[0], job[1]
             prov: Dict[str, Any] = {"source": "sim", "fidelity": self.fidelity_of(setup),
                                     "deck_hash": oc.key, "runtime_s": oc.runtime_s,
                                     "cache_hit": oc.cache_hit}
@@ -682,7 +711,8 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                     continue
                 info = {"kind": kind, **pinfo}
             jobs.append((point, kind, cmd, info))
-    results = simulator.run([(p.setup, c) for p, _, c, _ in jobs]) if jobs else []
+    results = simulator.run([sim_job(p.setup, c, p.target) for p, _, c, _ in jobs]) \
+            if jobs else []
     uncomp: Dict[str, HeightMap] = {}
     uncomp_error: Dict[str, str] = {}
     for (point, kind, cmd, info), oc in zip(jobs, results):
@@ -731,7 +761,8 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                 fail(point, "compensated", f"compensation failed: {exc}")
                 continue
             jobs.append((point, "compensated", cmd, info))
-        results = simulator.run([(p.setup, c) for p, _, c, _ in jobs]) if jobs else []
+        results = simulator.run([sim_job(p.setup, c, p.target) for p, _, c, _ in jobs]) \
+            if jobs else []
         for (point, kind, cmd, info), oc in zip(jobs, results):
             if oc.ok:
                 dataset.append(make_sample(point, kind, cmd, oc, info))
@@ -749,7 +780,12 @@ def _check_resumed(dataset: Dataset, row: Mapping[str, Any], point: DesignPoint)
 
     sid = row["sample_id"]
     doc = read_json(dataset.root / "samples" / f"{sid}.json")
-    phys = lambda d: {k: v for k, v in dict(d).items() if k not in EXECUTION_FIELDS}  # noqa
+    def phys(d: Mapping[str, Any]) -> Dict[str, Any]:
+        # through FormingSetup, so a sample stored before a field existed
+        # compares at that field's default
+        full = FormingSetup.from_dict(dict(d)).to_dict() if d else {}
+        return {k: v for k, v in full.items() if k not in EXECUTION_FIELDS}
+
     diffs = []
     if canonical_json(doc.get("part")) != canonical_json(point.part.to_dict()):
         diffs.append("part")

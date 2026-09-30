@@ -225,6 +225,10 @@ sigma_f(0.2) / E, t, R, step-down and friction from the setup:
 It gives dz of 0.15-2.4 mm on the default five-material design, depends on the commanded
 shape (so DA on it is not trivial), and has local and global structure. It is
 labelled `proxy - not physics` in every sample, table, manifest and report.
+It knows single-point forming only: as a simulator or a model it refuses a
+setup with support from below (`FormingSetup.support`; a failed job for
+`run`) rather than give single-point numbers under the supported setup's
+name; as a `ResidualModel` prior it gives single-point dz for any setup.
 
 ## Models
 
@@ -276,7 +280,13 @@ material and five process parameters the held-out error fell from 0.14 to
   prior's value as an extra feature column `prior_dz`; the prior is anything
   with `prior_deviation(commanded, setup)`: a coarse SparLab run
   (`FEAPrior(work_dir, {"element_size": 5e-3, "layers": 1})`, needing the
-  executable whenever evaluated) or a closed-form estimate. The prior - its
+  executable whenever evaluated) or a closed-form estimate. A prior that
+  takes `target=` (`FEAPrior` does) gets the part a support's fixture is
+  made for - each training sample's target, and at prediction the target
+  given to `predict_deviation(commanded, setup, target)` (as
+  `SurrogatePredictor`, `precomp.api.predict` and `compensate` pass it) - so
+  it simulates a compensated command on the same backing plate or rim pass
+  band as the label runs; without it, on the command's own outline. The prior - its
   class, settings and data source, e.g. `proxy - not physics` for
   `--prior proxy` - is recorded in `training["prior"]`, the manifest and
   `describe()`: a model trained on SparLab data around a proxy prior says so.
@@ -378,12 +388,18 @@ first), then the largest contributions to the Mahalanobis distance.
 
 **Setup fields.** Every `FormingSetup` field that no feature describes -
 blank and clamp, mesh, element, tool path style, spacing and direction,
-contact, increment, release, kinematics, solver - is recorded from the
-training setups (a range for numbers, the set of values otherwise); a query
-outside puts the part outside the envelope, with `setup.<field>` first among
-the reasons and the details in `setup_mismatch`. (A setup whose tool path
-cannot form the part at all - a spiral on several pockets - raises instead:
-the features need the path.)
+contact, increment, release, kinematics, solver, the rim support and its
+settings (`support`, `support_settings`; `docs/precomp.md`, "Rim support") -
+is recorded from the training setups (a range for numbers, the set of
+values otherwise); a query outside puts the part outside the envelope, with
+`setup.<field>` first among the reasons and the details in `setup_mismatch`.
+A model trained on single-point forming therefore refuses a backing plate
+or DSIF, and one trained on a support refuses another; a support setting
+that spells out its default counts as that default. A field the model
+does not record at all was added after it was trained: its runs had the
+field's default, so any other value is outside (the mismatch says so). (A
+setup whose tool path cannot form the part at all - a spiral on several
+pockets - raises instead: the features need the path.)
 
 **What it detects.** New **descriptors**, not new family names. Leaving each
 family out in turn (see [Results](#results-on-proxy-data)), only freeform -

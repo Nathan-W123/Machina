@@ -167,8 +167,9 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
     setup = _load_setup(args.setup)
     commanded = _load_map(args.commanded)
+    target = _load_map(args.target) if args.target else None
     res = simulate(setup, commanded, args.work_dir, cache=not args.no_cache,
-                   retry_failed=args.retry_failed)
+                   retry_failed=args.retry_failed, target=target)
     step = int(args.step) if args.step.lstrip("-").isdigit() else args.step
     formed = res.formed_surface(step, grid=commanded.grid)
     if args.out:
@@ -279,9 +280,17 @@ def cmd_scan_update(args: argparse.Namespace) -> int:
 
     target = _load_map(args.target)
     commanded = _load_map(args.commanded)
+    kw = {}
+    if args.setup:
+        from .fea.support import command_upper_bound, compensation_masks
+
+        setup = _load_setup(args.setup)
+        if setup.support != "none":
+            kw["upper_bound"] = command_upper_bound(setup, target)
+        kw["hold_mask"], kw["adjust_mask"] = compensation_masks(setup, target)
     new, report = update_from_scan(commanded, args.scan, target, alpha=args.alpha,
                                    scale=args.scale, align_mode=args.align,
-                                   fixture=args.fixture, smoothing=args.smoothing)
+                                   fixture=args.fixture, smoothing=args.smoothing, **kw)
     new.save(args.out)
     print(canonical_json(to_jsonable(report)), end="")
     return 0
@@ -375,6 +384,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--setup", required=True)
     s.add_argument("--commanded", required=True, help="height map .npz")
     s.add_argument("--work-dir", required=True, help="run cache directory")
+    s.add_argument("--target", help="height map .npz of the part a support's fixture is made "
+                                    "for (the backing plate's opening and the rim pass band "
+                                    "follow its outline; default: the commanded surface)")
     s.add_argument("--step", default="-1", help="step whose surface to write (index or name)")
     s.add_argument("--out", help="formed surface .npz")
     s.add_argument("--no-cache", action="store_true")
@@ -427,6 +439,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--smoothing", type=float)
     s.add_argument("--align", choices=["rigid", "translation_z", "none"], default="rigid")
     s.add_argument("--fixture", choices=["all", "flange"], default="flange")
+    s.add_argument("--setup", help="FormingSetup JSON of the next run: with a DSIF rim pass "
+                                   "the flange strip it sweeps is adjusted and the command "
+                                   "may rise above the sheet plane where it reaches")
     s.add_argument("--out", required=True, help="new commanded surface .npz")
     s.set_defaults(func=cmd_scan_update)
 

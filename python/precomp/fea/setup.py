@@ -5,6 +5,14 @@ record exactly how every sample was simulated. Fields that change the physics
 go into the deck and hence into the content hash of a run; the fields that
 only change how the run is executed (`executable`, `timeout`, `threads`) do
 not.
+
+`support` selects how the sheet is supported from below while it is formed
+(`SUPPORTS`; the geometry is `precomp.fea.support`): "none" (single-point
+incremental forming, the default), "backing_plate" (a rigid plate under the
+sheet outside an opening around the part) or "dsif" (a second, support tool
+under the sheet, double-sided incremental forming). `support_settings` holds
+that strategy's parameters (`SUPPORT_SETTINGS`); keys left out take the
+defaults of `resolved_support`.
 """
 
 from __future__ import annotations
@@ -44,6 +52,45 @@ NEWTON_KEYS = ("max_iterations", "residual_tolerance", "displacement_tolerance",
                "line_search", "max_cuts", "max_increments")
 #: ... and those that go into the `forming` block itself.
 FORMING_SOLVER_KEYS = ("friction_tangent", "solver", "mean_dilatation")
+
+#: Rim-support strategies (`FormingSetup.support`; `precomp.fea.support`).
+SUPPORTS = ("none", "backing_plate", "dsif")
+
+#: The `support_settings` keys of each strategy and their defaults; None
+#: means "taken from the setup" (see `FormingSetup.resolved_support`).
+#:
+#: backing_plate
+#:   clearance [m] - the plate's opening is the part's outline (on the target
+#:       the fixture is made for) grown by this; the plate carries the bottom
+#:       faces wholly outside it (on the mesh, up to one element more).
+#:   friction [-] - Coulomb coefficient sheet / plate (default: `friction`).
+#:   penalty [-] - penalty scale of the plate contact (default: the tool's).
+#: dsif
+#:   radius [m] - the support ball's radius (default: `tool_radius`).
+#:   squeeze [-] - how far the support is pushed towards the forming tool,
+#:       as a fraction of the local sheet thickness: the gap between the
+#:       two balls along the surface normal is (1 - squeeze) t_n. 0 (the
+#:       default) makes them just touch a sheet of thickness t_n.
+#:   thickness_law - t_n: "sine" (t cos(wall angle), the sine law; the
+#:       default) or "initial" (t).
+#:   friction [-], penalty [-] - of the support contact (defaults as above).
+#:   clearance [m] - how far below the part the support waits while the
+#:       forming tool is in the air (default 2 mm).
+#:   rim_pass (bool) - after forming, the support alone traces the rim band
+#:       from below, pushing the sheet up to the commanded surface
+#:       (`precomp.fea.support`, "rim pass"); off by default.
+#:   rim_inside, rim_outside [m] - the band the rim pass sweeps: from this far
+#:       inside the part's outline to this far outside it (defaults 2 mm, 1 mm).
+#:   rim_spacing [m] - distance between its loops (default 1 mm).
+#:   rim_max_raise [m] - the highest a command may rise above the sheet plane
+#:       in the band the rim pass realises (default 2 mm).
+SUPPORT_SETTINGS: Dict[str, Dict[str, Any]] = {
+    "none": {},
+    "backing_plate": {"clearance": 1.0e-3, "friction": None, "penalty": None},
+    "dsif": {"radius": None, "squeeze": 0.0, "thickness_law": "sine", "friction": None,
+             "penalty": None, "clearance": 2.0e-3, "rim_pass": False, "rim_inside": 2.0e-3,
+             "rim_outside": 1.0e-3, "rim_spacing": 1.0e-3, "rim_max_raise": 2.0e-3},
+}
 
 
 def repository_root() -> Optional[Path]:
@@ -101,6 +148,10 @@ class FormingSetup:
           `forming.newton` block (max_iterations, residual_tolerance,
           displacement_tolerance, line_search, max_cuts, max_increments) and
           friction_tangent, solver, mean_dilatation of the `forming` block.
+    Support (see the module docstring)
+      support : "none" | "backing_plate" | "dsif" (`SUPPORTS`).
+      support_settings : that strategy's parameters (`SUPPORT_SETTINGS`);
+          a key of another strategy is refused.
     Execution (not part of the physics hash)
       executable : path of sparlab_form; None means $PRECOMP_SPARLAB_FORM,
           else build/bin/sparlab_form relative to the working directory or
@@ -126,6 +177,8 @@ class FormingSetup:
     release: str = "321"
     kinematics: str = "finite_logarithmic"
     solver: Dict[str, Any] = field(default_factory=dict)
+    support: str = "none"
+    support_settings: Dict[str, Any] = field(default_factory=dict)
     name: str = "spif"
     executable: Optional[str] = None
     timeout: float = 24 * 3600.0
@@ -167,6 +220,7 @@ class FormingSetup:
             raise ValueError("clamp_margin must be at least one element_size")
         if 2 * self.clamp_margin >= self.blank_size:
             raise ValueError("the clamped frame covers the whole blank")
+        self.resolved_support()                 # validates support and its settings
 
     # -- derived -----------------------------------------------------------
     @property
@@ -184,6 +238,53 @@ class FormingSetup:
     def free_half_width(self) -> float:
         """Half-width of the unclamped window [m]: meshed_blank_size / 2 - clamp_margin."""
         return 0.5 * self.meshed_blank_size - self.clamp_margin
+
+    def resolved_support(self) -> Dict[str, Any]:
+        """The support strategy's settings with every default filled in
+        (`SUPPORT_SETTINGS`; friction and penalty from the forming tool's,
+        the dsif radius the tool radius). Raises ValueError for an unknown
+        strategy, a key it does not take or a value out of range."""
+        if self.support not in SUPPORTS:
+            raise ValueError(f"support must be one of {', '.join(SUPPORTS)}; got "
+                             f"{self.support!r}")
+        defaults = SUPPORT_SETTINGS[self.support]
+        if not isinstance(self.support_settings, dict):
+            raise ValueError("support_settings must be a dict")
+        unknown = sorted(set(self.support_settings) - set(defaults))
+        if unknown:
+            takes = ", ".join(defaults) if defaults else "no settings"
+            raise ValueError(f"support_settings: {unknown} are not settings of support "
+                             f"{self.support!r} (it takes {takes})")
+        out = dict(defaults)
+        out.update(self.support_settings)
+        if self.support == "none":
+            return out
+        if out.get("friction") is None:
+            out["friction"] = float(self.friction)
+        if out.get("penalty") is None:
+            out["penalty"] = float(self.contact.get("penalty", 10.0))
+        require_nonnegative("support_settings['friction']", out["friction"])
+        require_positive("support_settings['penalty']", out["penalty"])
+        if self.support == "backing_plate":
+            require_nonnegative("support_settings['clearance']", out["clearance"])
+            return out
+        if out.get("radius") is None:
+            out["radius"] = float(self.tool_radius)
+        for key in ("radius", "clearance", "rim_spacing", "rim_max_raise"):
+            require_positive(f"support_settings[{key!r}]", out[key])
+        for key in ("rim_inside", "rim_outside"):
+            require_nonnegative(f"support_settings[{key!r}]", out[key])
+        sq = float(out["squeeze"])
+        if not -1.0 <= sq < 1.0:
+            raise ValueError("support_settings['squeeze'] must lie in [-1, 1) (a fraction of "
+                             f"the sheet thickness); got {out['squeeze']!r}")
+        if out["thickness_law"] not in ("sine", "initial"):
+            raise ValueError("support_settings['thickness_law'] must be 'sine' or 'initial'")
+        if not isinstance(out["rim_pass"], bool):
+            raise ValueError("support_settings['rim_pass'] must be true or false")
+        if out["rim_inside"] + out["rim_outside"] <= 0.0:
+            raise ValueError("the rim pass band is empty (rim_inside + rim_outside = 0)")
+        return out
 
     def resolved_executable(self) -> Path:
         """The sparlab_form executable this setup runs (see the class docstring).
@@ -216,6 +317,7 @@ class FormingSetup:
         doc["material"] = self.material.to_dict()
         doc["contact"] = dict(self.contact)
         doc["solver"] = dict(self.solver)
+        doc["support_settings"] = dict(self.support_settings)
         return doc
 
     def physics_dict(self) -> Dict[str, Any]:

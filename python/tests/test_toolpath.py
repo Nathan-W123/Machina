@@ -5,8 +5,10 @@ import pandas as pd
 import pytest
 
 from precomp.geometry import Freeform, Grid, HeightMap, TruncatedCone, zeros
-from precomp.toolpath import (AIR, Toolpath, contour_toolpath, dsif_support_path, max_gouge,
-                              spherical_structure, spiral_toolpath, tool_center_surface)
+from precomp.toolpath import (AIR, Toolpath, contour_toolpath, dsif_support_path,
+                              dsif_support_points, lift_at_points, lift_heights, max_gouge,
+                              rim_pass_path, signed_outline_distance, spherical_structure,
+                              spiral_toolpath, swept_ball_top, tool_center_surface)
 
 R = 0.005
 
@@ -151,15 +153,150 @@ def test_csv_exports_round_trip(tmp_path, small_cone):
     assert np.allclose(path.at(np.array([0.0, 1.0])), path.points[[0, -1]])
 
 
-def test_dsif_support_tool_sits_below_the_sheet(small_cone):
-    target = small_cone.heightmap(Grid.centered(0.1, 5e-4))
-    path = contour_toolpath(target, R, 1e-3, 2e-3)
-    t = 1e-3
-    support = dsif_support_path(path, target, thickness=t, support_radius=0.004)
-    d = np.linalg.norm(support.points - path.points, axis=1)
-    assert np.allclose(d, R + t + 0.004)
-    assert support.metadata["experimental"] is True
-    assert np.all(support.points[:, 2] < path.points[:, 2])
+def test_dsif_support_moves_with_the_tool_opposite_it_and_never_inside_the_sheet():
+    """The support ball of DSIF: one centre per point of the forming path
+    (the same pseudo-time); opposite the tool along the surface normal with
+    the sine-law gap where the sheet is already formed; never inside the
+    in-process sheet (the first revolution starts on a flat sheet); below
+    the whole part in the air."""
+    t, R2 = 1e-3, 0.004
+    target = TruncatedCone(0.012, 40.0, 0.006, 0.002, 0.002).heightmap(Grid.centered(0.06, 2.5e-4))
+    path = spiral_toolpath(target, R, 1e-3, 1e-3)
+    pts = dsif_support_points(path, target, t, R2)
+    assert pts.shape == path.points.shape
+    air = path.level == AIR
+    contact = ~air
+    # in the air: below the deepest point, clear by the clearance
+    assert np.all(pts[air, 2] + R2 <= -target.depth - t - 2e-3 + 1e-12)
+    # never inside the in-process sheet (the surface above the tip's height,
+    # flat at it below; the underside t lower), nor the finished one (to the
+    # 1 um the last level keeps above the floor) ...
+    xy = pts[contact, :2].T
+    now = lift_heights(target, R2, *xy, offset=t, floor=path.points[contact, 2] - R)
+    assert np.all(pts[contact, 2] <= now + 1e-12)
+    assert np.all(pts[contact, 2] <= lift_heights(target, R2, *xy, offset=t) + 2e-6)
+    # ... nor inside the flat sheet at the first contact
+    first = np.flatnonzero(contact)[0]
+    assert pts[first, 2] + R2 <= -t + 1e-9
+    # where the sheet is formed (the last revolutions) the balls hold the
+    # sine-law thickness t cos(theta) between them, along the normal
+    d = np.linalg.norm(path.points - pts, axis=1)
+    cz = tool_center_surface(target, R)
+    nz = cz.sample(cz.normals(), path.points[:, 0], path.points[:, 1])[:, 2]
+    late = contact & (path.points[:, 2] - R < -0.004)
+    assert late.sum() > 50
+    gap = d[late] - R - R2
+    assert np.median(np.abs(gap - t * nz[late])) < 1e-6
+    assert np.all(gap >= t * nz[late] - 1e-9)          # never squeezed more than asked
+    # squeeze moves it towards the tool by squeeze t_n (where it is opposite)
+    sq = dsif_support_points(path, target, t, R2, squeeze=0.2)
+    d2 = np.linalg.norm(path.points - sq, axis=1)
+    opposite = np.abs(gap - t * nz[late]) < 1e-6
+    assert opposite.sum() > 0.5 * late.sum()
+    assert np.allclose((d[late] - d2[late])[opposite], 0.2 * t * nz[late][opposite], atol=2e-6)
+    # the Toolpath wrapper keeps the points (its own time is not the tool's)
+    wrapped = dsif_support_path(path, target, thickness=t, support_radius=R2)
+    assert wrapped.metadata["synchronised_with_primary"] is False
+    assert np.all(wrapped.points[:, 2] < path.points[:len(wrapped.points), 2].max())
+    with pytest.raises(ValueError):
+        dsif_support_points(path, target, t, R2, thickness_law="thin")
+
+
+def test_rim_pass_traces_the_band_from_below_outside_in():
+    t, R2 = 1e-3, 0.004
+    target = TruncatedCone(0.012, 40.0, 0.004, 0.002, 0.002).heightmap(Grid.centered(0.06, 2.5e-4))
+    rim = rim_pass_path(target, target, R2, t, inside=2e-3, outside=1e-3, band_spacing=1e-3,
+                        spacing=1e-3)
+    assert rim.metadata["band_levels_m"] == pytest.approx([1e-3, 0.0, -1e-3, -2e-3])
+    assert rim.level[0] == AIR and rim.level[-1] == AIR
+    on = rim.level != AIR
+    # every loop point touches the commanded underside from below at a node
+    # and has no node of it inside the ball (checked node by node)
+    X, Y = target.grid.mesh()
+    under = target.z - t
+    loops = rim.level[on]
+    clearance = []
+    for cx, cy, cz in rim.points[on]:
+        d2 = (X - cx) ** 2 + (Y - cy) ** 2
+        near = d2 <= R2 * R2
+        clearance.append((under[near] - (cz + np.sqrt(R2 * R2 - d2[near]))).min())
+    clearance = np.array(clearance)
+    assert clearance.min() >= -1e-12              # no node inside any ball ...
+    assert np.all(np.abs(clearance[loops == 1]) < 1e-12)   # ... and the loops touch
+    assert np.median(np.abs(clearance)) < 1e-12    # (links between loops may stay lower)
+    b = lift_at_points(target.with_z(under), R2, rim.points[on, 0], rim.points[on, 1])
+    assert np.all(rim.points[on, 2] <= b + 1e-15)
+    first = rim.points[on][loops == 1]
+    # the lattice lift of the interpolated surface (lift_heights) agrees to a few um
+    assert np.median(np.abs(first[:, 2] - lift_heights(target, R2, *first[:, :2].T,
+                                                       offset=t))) < 5e-6
+    # outside in: the loops shrink, around the part's axis
+    radii = [np.median(np.hypot(*rim.points[on][loops == k][:, :2].T)) for k in (1, 2, 3, 4)]
+    assert all(a > b_ for a, b_ in zip(radii, radii[1:]))
+    sd = signed_outline_distance(target)
+    edge = np.median(np.abs(sd.interpolate(first[:, 0], first[:, 1]) - 1e-3))
+    assert edge < 2.5e-4
+    # a raised command lifts the ball with it
+    raised = target.with_z(np.where(sd.z < 0, target.z + 5e-4, target.z))
+    up = rim_pass_path(raised, target, R2, t, inside=2e-3, outside=1e-3, band_spacing=1e-3,
+                       spacing=1e-3)
+    assert up.points[up.level == 3, 2].mean() > rim.points[rim.level == 3, 2].mean() + 1e-4
+
+
+def test_swept_ball_top_is_the_upper_envelope_of_the_balls_along_the_path():
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    Rb = 2e-3
+    # one position: the ball's cap over its footprint, -inf beyond it
+    top = swept_ball_top(np.array([[1e-3, -5e-4, -3e-3]]), Rb, g)
+    d2 = (X - 1e-3) ** 2 + (Y + 5e-4) ** 2
+    inside = d2 <= Rb * Rb
+    assert np.allclose(top[inside], -3e-3 + np.sqrt(Rb * Rb - d2[inside]), atol=1e-15)
+    assert np.all(np.isneginf(top[~inside]))
+    # a straight move: the half cylinder over it (to max_step^2 / (8 R)), and
+    # the balls at both ends
+    a, b = np.array([-4e-3, 0.0, -2e-3]), np.array([4e-3, 0.0, -2e-3])
+    top = swept_ball_top(np.vstack([a, b]), Rb, g)
+    mid = (np.abs(X) <= 4e-3) & (np.abs(Y) < Rb)
+    exact = -2e-3 + np.sqrt(Rb * Rb - Y[mid] ** 2)
+    assert np.all(top[mid] <= exact + 1e-15)
+    assert np.all(top[mid] >= exact - (0.25 * g.h) ** 2 / (8 * Rb) - 1e-15)
+    assert np.all(np.isneginf(top[np.abs(Y) > Rb + 1e-12]))
+    # a rising move reaches its highest end
+    up = swept_ball_top(np.vstack([a, b + [0.0, 0.0, 1e-3]]), Rb, g)
+    assert up.max() == pytest.approx(-1e-3 + Rb)
+    with pytest.raises(ValueError):
+        swept_ball_top(np.zeros((0, 3)), Rb, g)
+
+
+def test_lift_at_points_is_exact_over_nodes_and_stable_under_its_own_sweep():
+    """The ball at the lift height of a point touches the underside at a
+    node and holds no node inside it; cutting the underside down to what a
+    set of such balls sweeps (a surface that stood higher) leaves every one
+    of them where it was - the property that makes the rim pass reach the
+    command it was made for (precomp.fea.support.command_upper_bound)."""
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    Rb = 1.5e-3
+    under = HeightMap(g, 1e-3 * np.exp(-(X ** 2 + Y ** 2) / (2 * 0.003 ** 2)) - 1e-3)
+    on_node = lift_at_points(under, Rb, [0.0], [0.0])
+    assert on_node[0] == pytest.approx(under.z[g.shape[0] // 2, g.shape[1] // 2] - Rb, abs=1e-15)
+    flat = HeightMap(g, np.full(g.shape, -1e-3))
+    p = np.array([1.1e-4, -3.7e-4])
+    b = lift_at_points(flat, Rb, [p[0]], [p[1]])[0]
+    near = (X - p[0]) ** 2 + (Y - p[1]) ** 2 <= Rb * Rb
+    assert np.isclose(b + np.sqrt(Rb * Rb - ((X - p[0]) ** 2 + (Y - p[1]) ** 2)[near]),
+                      -1e-3, atol=1e-15).any()                           # touches a node
+    assert np.isinf(lift_at_points(flat, Rb, [1.0], [1.0])[0])           # no node within R
+    # a ring of balls under a raised underside, then the underside cut to their sweep
+    ang = np.linspace(0.0, 2 * np.pi, 60)
+    xy = np.column_stack([3e-3 * np.cos(ang), 3e-3 * np.sin(ang)])
+    raised = under.with_z(under.z + 4e-4 * (np.hypot(X, Y) < 3.5e-3))
+    z0 = lift_at_points(raised, Rb, *xy.T)
+    top = swept_ball_top(np.column_stack([xy, z0]), Rb, g)
+    cut = raised.with_z(np.minimum(raised.z, np.where(np.isfinite(top), top, raised.z)))
+    assert (cut.z < raised.z - 1e-5).any()                               # it did cut
+    assert np.allclose(lift_at_points(cut, Rb, *xy.T), z0, rtol=0.0, atol=1e-15)
 
 
 def test_flat_target_is_refused():

@@ -79,10 +79,17 @@ def test_every_deck_precomp_writes_passes_strict_config(tmp_path):
         "clamped_only": base.replace(release="clamped_only"),
         "spiral_frictionless": base.replace(toolpath_style="spiral", friction=0.0),
         "tet4": base.replace(element="tet4", layers=1),
+        "backing_plate": base.replace(support="backing_plate",
+                                      support_settings={"clearance": 1e-3, "friction": 0.05}),
+        "backing_plate_tet4": base.replace(element="tet4", layers=1, support="backing_plate"),
+        "dsif": base.replace(support="dsif", support_settings={"squeeze": 0.1}),
+        "dsif_rim_pass": base.replace(support="dsif", support_settings={"rim_pass": True}),
+        "dsif_clamped_only": base.replace(support="dsif", release="clamped_only",
+                                          support_settings={"rim_pass": True}),
     }
     target = TruncatedCone(0.01, 45.0, 0.002, 0.002, 0.002).heightmap(Grid.centered(0.04, 5e-4))
     for name, setup in variants.items():
-        deck = build_deck(setup, target, tmp_path / name)
+        deck = build_deck(setup, target, tmp_path / name, target=target)
         deck_accepted(deck, tmp_path / f"{name}_out")
     # and a key it does not read is refused, naming it
     doc = json.loads((tmp_path / "hill48_log" / "deck.json").read_text())
@@ -240,3 +247,74 @@ def test_small_cone_runs_through_sparlab_form(tmp_path):
     assert 0.0 < formed.depth < 2 * target.depth
     f = res.forming_forces()
     assert np.all(np.isfinite(f["f"])) and (f["fz"] >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Support from below: the tiny SPIF's part on a backing plate and with a DSIF
+# support tool, each run end to end
+# ---------------------------------------------------------------------------
+def _tiny_supported(tmp_path, support, settings):
+    setup = FormingSetup(get_material("AA5754-O"), blank_size=0.024, clamp_margin=2.5e-3,
+                         element_size=2.0e-3, layers=2, thickness=1e-3, tool_radius=3e-3,
+                         step_down=1e-3, toolpath_style="spiral", toolpath_spacing=1e-3,
+                         max_tool_travel=5e-4, friction=0.1, executable=EXE, timeout=900.0,
+                         support=support, support_settings=settings)
+    target = TruncatedCone(0.005, 45.0, TINY_DEPTH, 1e-3, 1e-3).heightmap(
+        Grid.centered(0.024, 2.5e-4))
+    path = spiral_toolpath(target, setup.tool_radius, setup.step_down,
+                           setup.toolpath_spacing, final_loop=False)
+    start = time.perf_counter()
+    res = simulate(setup, target, tmp_path / "w", toolpath=path, target=target)
+    return setup, target, res, time.perf_counter() - start
+
+
+def test_a_backing_plate_holds_the_sheet_up_and_comes_off_before_the_release(tmp_path):
+    setup, target, res, wall = _tiny_supported(tmp_path, "backing_plate", {"clearance": 5e-4})
+    assert wall < 180.0
+    assert res.completed and res.step_names == ["form", "unload", "release"]
+    f = res.forming_forces()
+    plate = f[f["tool"] == "plate"]
+    tool = f[f["tool"] == "tool"]
+    assert (plate["step"] == 1).all() and len(plate) == len(tool)   # "form" only
+    # the sheet pushes the plate down (the plate holds it up), never pulls it
+    assert (plate["fz"] <= 1e-9).all() and plate["fz"].min() < -1.0
+    assert (plate["max_penetration_m"] < 1e-5).all()
+    # the plate carries only nodes outside the opening, and none sinks below it
+    deck = json.loads((res.directory / "config.json").read_text())
+    ids = deck["forming"]["tools"][1]["surface"]["node_ids"]
+    form = res.step("form")
+    assert np.allclose(form.reference[ids, 2], -setup.thickness)
+    assert form.current[ids, 2].min() > -setup.thickness - 1e-5
+    # in the solver's own mesh the ids are the bottom nodes precomp meant (the
+    # structured numbering), each farther than the clearance outside the outline
+    from precomp.fea.support import bottom_node_grid, outline_distance, plate_nodes
+
+    assert ids == plate_nodes(setup, target)[0]
+    _, X, Y = bottom_node_grid(setup)
+    assert np.allclose(form.reference[ids, 0], X.ravel()[ids], rtol=0.0, atol=1e-12)
+    assert np.allclose(form.reference[ids, 1], Y.ravel()[ids], rtol=0.0, atol=1e-12)
+    assert outline_distance(target, *form.reference[ids, :2].T).min() > 5e-4
+    steps = {s["name"]: s for s in res.summary["steps"]}
+    assert steps["release"]["reaction_norm_N"] < 1e-6 * steps["release"]["reference_force_N"]
+
+
+def test_a_dsif_support_pushes_up_opposite_the_tool(tmp_path):
+    setup, target, res, wall = _tiny_supported(tmp_path, "dsif", {"rim_pass": True})
+    assert wall < 300.0
+    assert res.completed
+    assert res.step_names == ["form", "unload", "rim_pass", "rim_unload", "release"]
+    f = res.forming_forces()
+    tool, sup = f[f["tool"] == "tool"], f[f["tool"] == "support"]
+    assert set(tool["step"]) == {1} and set(sup["step"]) == {1, 3}
+    # the support touches the sheet (on this 1 mm deep part it sits under
+    # the still flat sheet beside the tool most of the time: a light touch)
+    both = sup[(sup["step"] == 1) & (sup["active_nodes"] > 0)]
+    assert len(both) > 0 and both["fz"].min() < -1.0
+    assert (sup["fz"] <= 1e-9).all() and (tool["fz"] >= -1e-9).all()   # squeezed from both sides
+    assert (f["max_penetration_m"] < 1e-5).all()
+    rim = sup[sup["step"] == 3]
+    assert (rim["active_nodes"] > 0).any() and rim["fz"].min() < -1.0   # the rim pass pushes up
+    steps = {s["name"]: s for s in res.summary["steps"]}
+    assert steps["release"]["reaction_norm_N"] < 1e-6 * steps["release"]["reference_force_N"]
+    formed = res.formed_surface(grid=target.grid)
+    assert 0.5 * TINY_DEPTH < formed.depth < 1.5 * TINY_DEPTH

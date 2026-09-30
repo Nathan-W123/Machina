@@ -30,13 +30,14 @@ held-out whole parts.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from collections import OrderedDict
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .._util import PrecompError, canonical_json
+from .._util import PrecompError, call_with_target, canonical_json
 from ..geometry.heightmap import HeightMap
 from .dataset import Sample, build_table, source_label
 from .features import (DEFAULT_CONFIG, PRIOR_FEATURE, FeatureConfig, FeatureMaps, as_setup,
@@ -60,15 +61,39 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
 
 
+def explicit_support_settings(settings: Mapping[str, Any], support: str) -> Dict[str, Any]:
+    """`support_settings` without the keys that only spell out their default
+    (`precomp.fea.setup.SUPPORT_SETTINGS` of `support`): {} and
+    {"clearance": 1e-3} are the same backing plate."""
+    from ..fea.setup import SUPPORT_SETTINGS
+
+    defaults = SUPPORT_SETTINGS.get(support, {})
+    return {k: v for k, v in dict(settings or {}).items()
+            if not (k in defaults and defaults[k] is not None
+                    and canonical_json(v) == canonical_json(defaults[k]))}
+
+
+def _value_key(key: str, value: Any, doc: Mapping[str, Any]) -> str:
+    """The canonical text a setup field's value is compared by: a support
+    setting that spells out its default counts as the default."""
+    if key == "support_settings":
+        value = explicit_support_settings(value, doc.get("support", "none"))
+    return canonical_json(value)
+
+
 def setup_envelope(setups: Sequence[Any]) -> Dict[str, Any]:
     """What the training setups held: for every physics field of
     `FormingSetup` that no feature describes (blank, clamp, mesh, element,
     tool path style / spacing / direction, contact, increment, release,
-    kinematics, solver) its range (numbers) or its set of values; plus the
-    ranges of the process fields and the material names, for reference."""
+    kinematics, solver, support and its settings - these without the keys
+    that spell out a default, `explicit_support_settings`) its range
+    (numbers) or its set of values; plus the ranges of the process fields
+    and the material names, for reference."""
     docs = [as_setup(x).physics_dict() for x in setups]
     if not docs:
         raise ValueError("no setups")
+    for d in docs:
+        d["support_settings"] = explicit_support_settings(d["support_settings"], d["support"])
     fields: Dict[str, Any] = {}
     for key in docs[0]:
         if key in FEATURE_SETUP_FIELDS or key in LABEL_SETUP_FIELDS:
@@ -85,23 +110,50 @@ def setup_envelope(setups: Sequence[Any]) -> Dict[str, Any]:
     return {"fields": fields, "process": process, "materials": materials}
 
 
+def _setup_default(key: str) -> Any:
+    """The default of a FormingSetup field (a fresh copy of a factory's)."""
+    from ..fea.setup import FormingSetup
+
+    for f in dataclasses.fields(FormingSetup):
+        if f.name == key:
+            if f.default is not dataclasses.MISSING:
+                return f.default
+            if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+                return f.default_factory()                     # type: ignore[misc]
+    raise KeyError(key)
+
+
 def setup_mismatch(envelope: Optional[Mapping[str, Any]], setup: Any) -> List[Dict[str, Any]]:
     """The fields of `setup` outside `envelope` (see `setup_envelope`):
-    [{field, value, trained}], empty when every field was seen in training."""
+    [{field, value, trained}], empty when every field was seen in training.
+
+    A physics field the envelope does not record at all - the model was
+    trained before the field existed (e.g. `support`) - was held at the
+    field's default in every training run, so a setup is inside only with
+    that default (the entry then says so in `note`)."""
     if not envelope:
         return []
     doc = as_setup(setup).physics_dict()
+    fields = envelope.get("fields", {})
     out = []
-    for key, rule in envelope.get("fields", {}).items():
+    for key, rule in fields.items():
         v = doc.get(key)
         if "values" in rule:
-            if canonical_json(v) not in {canonical_json(x) for x in rule["values"]}:
+            if _value_key(key, v, doc) not in {_value_key(key, x, doc) for x in rule["values"]}:
                 out.append({"field": key, "value": v, "trained": rule["values"]})
         else:
             lo, hi = rule["min"], rule["max"]
             tol = 1e-9 * max(abs(lo), abs(hi), 1e-300)
             if not (_is_number(v) and lo - tol <= float(v) <= hi + tol):
                 out.append({"field": key, "value": v, "trained": [lo, hi]})
+    for key, v in doc.items():
+        if key in fields or key in FEATURE_SETUP_FIELDS or key in LABEL_SETUP_FIELDS:
+            continue
+        default = _setup_default(key)
+        if canonical_json(v) != canonical_json(default):
+            out.append({"field": key, "value": v, "trained": [default],
+                        "note": "not recorded by the model (it predates the field): "
+                                "trained at the default"})
     return out
 
 
@@ -139,12 +191,18 @@ def describe_prior(prior: Any) -> Dict[str, Any]:
     return d
 
 
-def _key(commanded: HeightMap, setup: Any) -> str:
+def _key(commanded: HeightMap, setup: Any, target: Optional[HeightMap] = None) -> str:
     h = hashlib.sha256()
     h.update(np.ascontiguousarray(commanded.z).tobytes())
     h.update(np.ascontiguousarray(commanded.mask).tobytes())
     h.update(canonical_json(commanded.grid.to_dict()).encode())
     h.update(canonical_json(as_setup(setup).physics_dict()).encode())
+    if target is not None and as_setup(setup).support != "none":
+        # the fixture a support is made for changes what the FE prior simulates
+        h.update(b"target")
+        h.update(np.ascontiguousarray(target.z).tobytes())
+        h.update(np.ascontiguousarray(target.mask).tobytes())
+        h.update(canonical_json(target.grid.to_dict()).encode())
     return h.hexdigest()
 
 
@@ -252,38 +310,46 @@ class DeviationSurrogate:
         return self._cached("maps:" + _key(commanded, setup),
                             lambda: feature_maps(commanded, setup, None, self.features))
 
-    def _point_matrix(self, commanded: HeightMap, setup: Any) -> np.ndarray:
+    def _point_matrix(self, commanded: HeightMap, setup: Any,
+                      target: Optional[HeightMap] = None) -> np.ndarray:
         X = self.feature_maps(commanded, setup).gather(None)
         prior = model_prior(self.model)
         if prior is not None:
-            p = np.asarray(prior.prior_deviation(commanded, as_setup(setup)), float)
+            p = np.asarray(call_with_target(prior.prior_deviation, commanded, as_setup(setup),
+                                            target=target), float)
             if p.shape != commanded.grid.shape or not np.all(np.isfinite(p)):
                 raise PrecompError("the model's prior returned a field of the wrong shape or "
                                    "non-finite values")
             X = np.column_stack([X, p.ravel()])
         return X
 
-    def predict_deviation(self, commanded: HeightMap, setup: Any
+    def predict_deviation(self, commanded: HeightMap, setup: Any,
+                          target: Optional[HeightMap] = None
                           ) -> Tuple[np.ndarray, np.ndarray]:
-        """(mean, std) of dz [m], (ny, nx), at every node of the commanded grid."""
+        """(mean, std) of dz [m], (ny, nx), at every node of the commanded grid.
+        `target`: the part a support's fixture is made for, which a model's
+        FE prior simulates with (`models.FEAPrior`; None: the commanded
+        surface's outline)."""
         def make():
             if self.kind == "field":
                 mu, sd = self.model.predict_field(commanded, setup)
                 return np.asarray(mu, float), np.asarray(sd, float)
-            X = self._point_matrix(commanded, setup)
+            X = self._point_matrix(commanded, setup, target)
             mu, sd = self.model.predict(X)
             shape = commanded.grid.shape
             return np.asarray(mu, float).reshape(shape), np.asarray(sd, float).reshape(shape)
-        mu, sd = self._cached("pred:" + _key(commanded, setup), make)
+        mu, sd = self._cached("pred:" + _key(commanded, setup, target), make)
         return mu.copy(), sd.copy()
 
-    def predict_interval(self, commanded: HeightMap, setup: Any, level: float = 0.9
+    def predict_interval(self, commanded: HeightMap, setup: Any, level: float = 0.9,
+                         target: Optional[HeightMap] = None
                          ) -> Tuple[np.ndarray, np.ndarray]:
-        """Conformal (lower, upper) bounds of dz [m] at coverage `level`."""
+        """Conformal (lower, upper) bounds of dz [m] at coverage `level`
+        (`target` as for `predict_deviation`)."""
         if self.calibrator is None or not self.calibrator.fitted:
             raise PrecompError("this surrogate has no conformal calibration; train it with "
                                "calibration samples")
-        mu, sd = self.predict_deviation(commanded, setup)
+        mu, sd = self.predict_deviation(commanded, setup, target)
         region = self.feature_maps(commanded, setup).region if self.calibrator.mondrian \
             else None
         return self.calibrator.intervals(mu, sd, level, region)
@@ -367,7 +433,7 @@ def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
     rng = np.random.default_rng(seed)
     for s in samples:
         try:
-            mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
+            mu, sd = surrogate.predict_deviation(s.commanded, s.setup, s.target)
             fm = surrogate.feature_maps(s.commanded, s.setup)
         except (ValueError, PrecompError) as exc:
             raise PrecompError(f"sample {s.sample_id}: {exc}") from exc
@@ -552,7 +618,21 @@ def setup_envelope_union(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str
     for key in set(a.get("fields", {})) | set(b.get("fields", {})):
         ra, rb = a.get("fields", {}).get(key), b.get("fields", {}).get(key)
         if ra is None or rb is None:
-            fields[key] = ra or rb
+            # an envelope without the field predates it: its runs had the default
+            known = ra or rb
+            try:
+                default = _setup_default(key)
+            except KeyError:
+                fields[key] = known
+                continue
+            if "values" in known:
+                vals = {canonical_json(v): v for v in known["values"] + [default]}
+                fields[key] = {"values": [vals[k] for k in sorted(vals)]}
+            elif _is_number(default):
+                fields[key] = {"min": min(known["min"], default),
+                               "max": max(known["max"], default)}
+            else:
+                fields[key] = known
         elif "values" in ra or "values" in rb:
             vals = {canonical_json(v): v for v in ra.get("values", []) + rb.get("values", [])}
             fields[key] = {"values": [vals[k] for k in sorted(vals)]}
@@ -571,4 +651,4 @@ def setup_envelope_union(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str
 
 __all__ = ["DeviationSurrogate", "train_surrogate", "transfer_surrogate", "calibrate",
            "fit_envelope", "model_prior", "setup_envelope", "setup_mismatch", "seen_ids",
-           "describe_prior", "SURROGATE_FORMAT"]
+           "describe_prior", "explicit_support_settings", "SURROGATE_FORMAT"]

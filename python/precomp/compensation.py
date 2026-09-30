@@ -20,10 +20,16 @@ Every update here is conditioned the same way:
   over the adjusted region so the flange does not leak into it;
 * the hold region (by default the target's flange) is kept at the target
   height, z = 0: the tool never presses there;
-* the commanded surface is kept at z <= 0 (SPIF only pushes the sheet down);
+* the commanded surface is kept at z <= 0 (SPIF only pushes the sheet down),
+  or below `upper_bound`, the highest command the setup's tools can realise
+  node by node: a support that pushes the sheet up from below (the DSIF rim
+  pass, `precomp.fea.support.command_upper_bound`) lets the command rise
+  above the sheet plane in the band it sweeps, and nowhere else;
 * a formability projection: the smallest surface above the commanded one
   whose slope nowhere exceeds `max_wall_angle_deg` (`limit_wall_angle`). It
-  only ever raises the surface - it never cuts deeper than asked.
+  only ever raises the surface - it never cuts deeper than asked. It is the
+  forming tool's limit and applies to the command below the sheet plane; a
+  command above it (the support's) is kept as it is.
 
 All heights are in metres, angles in degrees where named `_deg`.
 """
@@ -39,7 +45,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.interpolate import griddata
 
-from ._util import PathLike, PrecompError
+from ._util import PathLike, PrecompError, call_with_target
 from .geometry.heightmap import HeightMap
 from .geometry.parts import MAX_WALL_ANGLE_DEG
 from .metrology import (align, flange_mask, metrics, part_mask, read_point_cloud,
@@ -146,13 +152,38 @@ def smooth_update(update: np.ndarray, region: np.ndarray, sigma: float, h: float
     return np.where(region, out, 0.0)
 
 
+UpperBound = Union[float, np.ndarray, Callable[[np.ndarray], np.ndarray]]
+
+
+def _upper(upper_bound: Optional[UpperBound], shape: Tuple[int, int],
+           z: Optional[np.ndarray] = None) -> Union[float, np.ndarray]:
+    if upper_bound is None:
+        return 0.0
+    if callable(upper_bound):
+        upper_bound = upper_bound(np.zeros(shape) if z is None else z)
+    ub = np.asarray(upper_bound, dtype=float)
+    if ub.ndim and ub.shape != shape:
+        raise ValueError(f"upper_bound has shape {ub.shape}, the grid needs {shape}")
+    if not np.all(np.isfinite(ub)) or np.any(ub < 0.0):
+        raise ValueError("upper_bound must be finite and >= 0 (the sheet plane is always "
+                         "reachable: the tool need not touch)")
+    return ub
+
+
 def _condition(commanded: HeightMap, z_new: np.ndarray, hold: np.ndarray, target: HeightMap,
-               max_wall_angle_deg: Optional[float]) -> HeightMap:
+               max_wall_angle_deg: Optional[float],
+               upper_bound: Optional[UpperBound] = None) -> HeightMap:
     z = np.where(hold, target.z, z_new)
-    z = np.minimum(z, 0.0)
+    z = np.minimum(z, _upper(upper_bound, z.shape, z))
     hm = commanded.with_z(z)
     if max_wall_angle_deg is not None:
-        hm = limit_wall_angle(hm, max_wall_angle_deg)
+        if not (z > 0.0).any():
+            hm = limit_wall_angle(hm, max_wall_angle_deg)
+        else:
+            # the forming tool's limit, on its part of the command (below the
+            # plane); the part above it is the support's and stays as it is
+            below = limit_wall_angle(hm.with_z(np.minimum(z, 0.0)), max_wall_angle_deg)
+            hm = below.with_z(np.where(z > 0.0, z, below.z))
     return hm
 
 
@@ -223,6 +254,7 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
                             hold_mask: Optional[np.ndarray] = None,
                             adjust_mask: Optional[np.ndarray] = None,
                             max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
+                            upper_bound: Optional[UpperBound] = None,
                             tolerance: Optional[float] = None,
                             initial: Optional[HeightMap] = None,
                             callback: Optional[Callable[[int, HeightMap, HeightMap, HeightMap],
@@ -243,6 +275,12 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
         z >= -1 um). adjust_mask : nodes updated and measured (default: the
         part, z < -1 um).
     max_wall_angle_deg : formability limit, or None for no projection.
+    upper_bound : the highest command per node [m]: (ny, nx), a number
+        >= 0, or a function of the proposed heights returning (ny, nx);
+        None keeps the command at the sheet plane, z <= 0 (a tool pressing
+        from above). A support that pushes up gives it with
+        `precomp.fea.support.command_upper_bound(setup, target)` (and its
+        masks with `compensation_masks`).
     tolerance : stop when the RMS error over the adjusted region is <= this [m].
     initial : the first commanded surface (default: the target).
     callback : called as callback(k, commanded, formed, error) after each
@@ -279,7 +317,7 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
         if callback is not None:
             callback(k, c, f, err)
         z_new = _apply_update(c, target, err, adjust, alpha, direction, smoothing)
-        proposed = _condition(c, z_new, hold, target, max_wall_angle_deg)
+        proposed = _condition(c, z_new, hold, target, max_wall_angle_deg, upper_bound)
         entry["update_rms_m"] = float(np.sqrt(np.mean((proposed.z - c.z)[adjust] ** 2)))
         history.append(entry)
         if tolerance is not None and m["rms"] <= tolerance:
@@ -299,7 +337,11 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
                      align_mode: str = "rigid", fixture: str = "flange",
                      smoothing: Optional[float] = None, direction: str = "vertical",
                      max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
-                     max_gap: Optional[float] = None) -> Tuple[HeightMap, Dict[str, Any]]:
+                     max_gap: Optional[float] = None,
+                     upper_bound: Optional[UpperBound] = None,
+                     hold_mask: Optional[np.ndarray] = None,
+                     adjust_mask: Optional[np.ndarray] = None
+                     ) -> Tuple[HeightMap, Dict[str, Any]]:
     """One shop-floor DA step from a measured part.
 
     The part was formed with `commanded` and measured as `scan` (a point
@@ -309,7 +351,11 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
     part, "all" on everything), gridded on the target grid (nodes farther
     than `max_gap` [m], default 3 grid spacings, from any scan point are
     left without data) and the DA update ``c - alpha (scan - target)`` is
-    applied where the scan has data, conditioned as in the module docstring.
+    applied where the scan has data, conditioned as in the module docstring
+    (`upper_bound`, `hold_mask` and `adjust_mask` as for
+    `displacement_adjustment`: by default the flange is held and the part
+    adjusted; a setup with a rim pass adjusts the flange strip it sweeps,
+    `precomp.fea.support.compensation_masks`).
 
     Returns (new commanded surface, report) with the alignment summary, the
     scan's error metrics over the part and the share of the part covered.
@@ -328,13 +374,17 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
         aligned = al.apply(pts)
         gap = 3.0 * target.grid.h if max_gap is None else max_gap
         measured = HeightMap.from_points(aligned, target.grid, max_gap=gap)
-    adjust = part_mask(target) & ~flange_mask(target)
+    adjust = part_mask(target) & ~flange_mask(target) if adjust_mask is None \
+        else np.asarray(adjust_mask, dtype=bool)
+    hold = flange_mask(target) if hold_mask is None else np.asarray(hold_mask, dtype=bool)
+    for name, m in (("hold_mask", hold), ("adjust_mask", adjust)):
+        if m.shape != target.grid.shape:
+            raise ValueError(f"{name} has shape {m.shape}, the target grid {target.grid.shape}")
     err = error_field(measured, target, direction)
     report["scan_error"] = metrics(err, adjust)
     report["coverage"] = float(np.mean(err.mask[adjust]))
-    hold = flange_mask(target)
     z_new = _apply_update(commanded, target, err, adjust, alpha, direction, smoothing)
-    new = _condition(commanded, z_new, hold, target, max_wall_angle_deg)
+    new = _condition(commanded, z_new, hold, target, max_wall_angle_deg, upper_bound)
     new.metadata["compensation"] = {"method": "update_from_scan", "alpha": alpha,
                                     "direction": direction, "smoothing_m": smoothing}
     return new, report
@@ -350,7 +400,9 @@ class FieldModel(Protocol):
     ``predict_deviation(commanded, setup) -> (mean, std)``: the vertical
     deviation dz = z_formed - z_commanded [m] on the commanded grid, as
     (ny, nx) arrays; `std` [m] may be None when the model has no uncertainty.
-    `precomp.ml` models are adapted to this protocol.
+    `precomp.ml` models are adapted to this protocol. A model may also take
+    ``target=`` (the part a support's fixture is made for); the predictors
+    pass it only to a model that does (`precomp._util.call_with_target`).
     """
 
     def predict_deviation(self, commanded: HeightMap, setup: Any
@@ -363,21 +415,27 @@ class FEAPredictor:
     Each call runs (or fetches from the cache in `work_dir`) the simulation of
     the commanded surface with `setup` and returns the formed surface of
     `step` (default the last: after release) on the commanded grid. The
-    results of all calls are kept in `results`.
+    results of all calls are kept in `results`. `target` is the part the
+    fixture is made for: a setup with a support (`FormingSetup.support`)
+    builds the backing plate's opening and the rim pass band from its
+    outline, the same for every commanded iterate (without it, from each
+    command's own outline, which moves as DA changes the rim).
     """
 
     def __init__(self, setup: Any, work_dir: PathLike, *, step: Union[int, str] = -1,
-                 cache: bool = True):
+                 cache: bool = True, target: Optional[HeightMap] = None):
         self.setup = setup
         self.work_dir = Path(work_dir)
         self.step = step
         self.cache = cache
+        self.target = target
         self.results: List[Any] = []
 
     def __call__(self, commanded: HeightMap) -> HeightMap:
         from .fea.runner import simulate
 
-        res = simulate(self.setup, commanded, self.work_dir, cache=self.cache)
+        res = simulate(self.setup, commanded, self.work_dir, cache=self.cache,
+                       target=self.target)
         self.results.append(res)
         return res.formed_surface(self.step, grid=commanded.grid)
 
@@ -387,17 +445,22 @@ class SurrogatePredictor:
 
     `model` follows `FieldModel`. `__call__` returns the mean prediction;
     `predict_with_uncertainty` also returns the model's std [m] (or None).
+    `target`, the part a support's fixture is made for, goes to a model
+    whose `predict_deviation` takes it (a precomp.ml model whose FE prior
+    simulates with that fixture, as its training runs did).
     """
 
-    def __init__(self, model: FieldModel, setup: Any):
+    def __init__(self, model: FieldModel, setup: Any, target: Optional[HeightMap] = None):
         if not hasattr(model, "predict_deviation"):
             raise TypeError("the model must implement predict_deviation(commanded, setup)")
         self.model = model
         self.setup = setup
+        self.target = target
 
     def predict_with_uncertainty(self, commanded: HeightMap
                                  ) -> Tuple[HeightMap, Optional[np.ndarray]]:
-        mean, std = self.model.predict_deviation(commanded, self.setup)
+        mean, std = call_with_target(self.model.predict_deviation, commanded, self.setup,
+                                     target=self.target)
         mean = np.asarray(mean, dtype=float)
         if mean.shape != commanded.grid.shape:
             raise PrecompError(f"the model returned a deviation of shape {mean.shape}, "
@@ -416,19 +479,23 @@ class CompositePredictor:
 
     formed = base(commanded) + residual.predict_deviation(commanded, setup)
     mean: the residual model learns what the base (e.g. a coarse simulation or
-    a closed-form estimate) gets wrong.
+    a closed-form estimate) gets wrong. `target` goes to the residual as for
+    `SurrogatePredictor`.
     """
 
-    def __init__(self, base: Predictor, residual: FieldModel, setup: Any):
+    def __init__(self, base: Predictor, residual: FieldModel, setup: Any,
+                 target: Optional[HeightMap] = None):
         self.base = base
         self.residual = residual
         self.setup = setup
+        self.target = target
 
     def __call__(self, commanded: HeightMap) -> HeightMap:
         f = self.base(commanded)
         if not f.grid.matches(commanded.grid):
             f = f.resample(commanded.grid)
-        mean, _ = self.residual.predict_deviation(commanded, self.setup)
+        mean, _ = call_with_target(self.residual.predict_deviation, commanded, self.setup,
+                                   target=self.target)
         out = f.with_z(f.z + np.asarray(mean, dtype=float))
         out.metadata["source"] = "composite"
         return out
