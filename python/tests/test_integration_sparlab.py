@@ -285,6 +285,15 @@ def test_a_backing_plate_holds_the_sheet_up_and_comes_off_before_the_release(tmp
     form = res.step("form")
     assert np.allclose(form.reference[ids, 2], -setup.thickness)
     assert form.current[ids, 2].min() > -setup.thickness - 1e-5
+    # in the solver's own mesh the ids are the bottom nodes precomp meant (the
+    # structured numbering), each farther than the clearance outside the outline
+    from precomp.fea.support import bottom_node_grid, outline_distance, plate_nodes
+
+    assert ids == plate_nodes(setup, target)[0]
+    _, X, Y = bottom_node_grid(setup)
+    assert np.allclose(form.reference[ids, 0], X.ravel()[ids], rtol=0.0, atol=1e-12)
+    assert np.allclose(form.reference[ids, 1], Y.ravel()[ids], rtol=0.0, atol=1e-12)
+    assert outline_distance(target, *form.reference[ids, :2].T).min() > 5e-4
     steps = {s["name"]: s for s in res.summary["steps"]}
     assert steps["release"]["reaction_norm_N"] < 1e-6 * steps["release"]["reference_force_N"]
 
