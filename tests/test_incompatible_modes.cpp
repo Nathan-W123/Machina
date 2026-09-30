@@ -502,6 +502,36 @@ TEST_CASE("a free thermal expansion is stress-free with incompatible modes, unif
   }
 }
 
+TEST_CASE("the strain at a point of an incompatible-mode Hex8 includes the modes' thermal part "
+          "when given the temperature",
+          "[incompatible][thermal]") {
+  // A clamped-free distorted element under a temperature varying across it:
+  // the modes take part of the thermal strain, so the total strain at a
+  // point depends on the temperature field, and the stress there is D
+  // (strain - thermal strain) with that strain.
+  IsotropicMaterial material(200.0e9, 0.3, 7850.0, "hot");
+  material.set_thermal(1.2e-5, 20.0, 50.0);
+  const FemModel model(Mesh(distorted_hex_coords(), {0, 1, 2, 3, 4, 5, 6, 7}, ElementType::Hex8),
+                       material, 1.0, StressState::ThreeDimensional, incompatible_options());
+  const Matrix x = model.mesh().element_coordinates(0);
+  Vector temperature(8);
+  for (int a = 0; a < 8; ++a) temperature(a) = 20.0 + 300.0 * x(2, a) * x(2, a) + 80.0 * x(0, a);
+  Vector u(24);
+  for (int a = 0; a < 8; ++a) u.segment<3>(3 * a) = 1.0e-4 * Vector3(x(0, a) * x(2, a), 0.0, 0.0);
+  const NaturalPoint point{0.3, -0.5, 0.6};
+  const Vector with = element_strain_at(model, 0, point, u, &temperature);
+  const Vector without = element_strain_at(model, 0, point, u);
+  const Vector ue = model.dofs().gather(model.mesh().element_nodes(0), 8, u);
+  const Vector expected = linear_point_strain(
+      model, 0, point, ue, linear_internal_parameters(model, 0, ue, &temperature));
+  REQUIRE((with - expected).cwiseAbs().maxCoeff() <= 1.0e-15 * expected.cwiseAbs().maxCoeff());
+  REQUIRE((with - without).cwiseAbs().maxCoeff() > 1.0e-3 * with.cwiseAbs().maxCoeff());
+  const Vector stress = element_stress_at(model, 0, point, u, 1.0, &temperature);
+  const Vector hooke = model.constitutive_of(0) *
+                       (with - element_thermal_strain(model, 0, point, temperature));
+  REQUIRE((stress - hooke).cwiseAbs().maxCoeff() <= 1.0e-12 * hooke.cwiseAbs().maxCoeff());
+}
+
 TEST_CASE("the non-linear small-strain solution with incompatible modes equals the linear one",
           "[incompatible][nonlinear]") {
   SolidCantileverCase c;

@@ -74,9 +74,14 @@ void principal_stresses(const Vector& voigt_stress, Scalar& s1, Scalar& s2);
 /// Principal stresses (descending) of a 6-component Voigt vector.
 Vector3 principal_stresses_3d(const Vector& voigt_stress);
 
-/// Strain at one parametric point of one element.
+/// Total strain at one parametric point of one element.
+/// \param temperature optional nodal temperatures [K]: an element with
+///        internal modes (the incompatible-mode Hex8) relaxes the thermal
+///        strain through them, so its total strain depends on the
+///        temperature field; without it, that part is left out. Elements
+///        without internal modes ignore it.
 Vector element_strain_at(const FemModel& model, Index element, const NaturalPoint& point,
-                         const Vector& displacement);
+                         const Vector& displacement, const Vector* temperature = nullptr);
 
 /// Stress at one parametric point of one element (macroscopic, scaled).
 /// \param temperature optional nodal temperatures [K] (thermal strain).
