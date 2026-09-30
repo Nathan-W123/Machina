@@ -154,6 +154,12 @@ methods differ in the deeper part: one FE-DA step over-corrects it (bias
 with no bias, and the MLP's shot lands in between (0.330, +0.05). The
 ranking of the methods is decided there, on 13-21 % of the squared error.
 
+Support from below attacks the sag itself (`benchmarks/support_cone`, the
+smallest test cone, simulated the same way): a backing plate with a 1 mm
+clearance takes truncated_cone-s2026-0000 from 0.767 to 0.370 mm RMS
+before any compensation (upper-band bias -1.15 to -0.54 mm), a DSIF
+support ball to 0.275-0.357 mm depending on its gap.
+
 ## Cost
 
 | | |
