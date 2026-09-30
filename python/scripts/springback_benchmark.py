@@ -241,7 +241,7 @@ def stage_generate(ds, points, cfg, sim, chunk: int) -> List[Dict[str, Any]]:
     todo = [(p, groups["test" if split_of(p.point_id, cfg) == "test" else "train"])
             for p in points]
     # the test parts first: their DA and the baseline need them whatever the size
-    todo.sort(key=lambda pk: (len(pk[1]), pk[0].point_id))
+    todo.sort(key=lambda pk: (split_of(pk[0].point_id, cfg) != "test", pk[0].point_id))
     have = set(ds.ids())
     for start in range(0, len(todo), chunk):
         part = todo[start:start + chunk]
