@@ -1,8 +1,9 @@
 name: build-and-verify
 
-# Three jobs, each answering one question:
-#   build-and-test   does it compile warning-clean on GCC and Clang, and do the
-#                    tests pass?
+# Four jobs, each answering one question:
+#   build-and-test   does it compile warning-clean on GCC and Clang, with and
+#                    without SuiteSparse, do the tests pass, and does the
+#                    incremental-forming smoke deck run through sparlab_form?
 #   verify           do the verification and validation studies still meet their
 #                    documented tolerances?
 #   benchmark        does a full topology-optimisation benchmark still run end to
@@ -10,6 +11,9 @@ name: build-and-verify
 #                    the robust formulation and the overhang filter too - and do
 #                    displacements, buckling load factors and large-deflection
 #                    states still agree with scikit-fem?
+#   python           does the precomp package (springback pre-compensation)
+#                    install, and do its tests pass - the integration tests
+#                    against a sparlab_form built in the job included?
 #
 # The verify job is the one that can catch a numerical regression, so it uploads
 # its summary either way.
@@ -26,13 +30,22 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: build and test (${{ matrix.compiler }}, ${{ matrix.build_type }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         compiler: [gcc, clang]
         build_type: [Release, Debug]
+        # ON requires SuiteSparse (CHOLMOD / UMFPACK) and fails the configure
+        # without it; OFF builds the forming analysis on Eigen's
+        # factorisations alone, and does not install SuiteSparse, so a
+        # dependency on it that slipped past the CMake option is caught.
+        cholmod: ["ON"]
+        include:
+          - compiler: gcc
+            build_type: Release
+            cholmod: "OFF"
+    name: build and test (${{ matrix.compiler }}, ${{ matrix.build_type }}, SuiteSparse ${{ matrix.cholmod }})
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +53,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ninja-build libeigen3-dev catch2
+          if [ "${{ matrix.cholmod }}" = "ON" ]; then
+            sudo apt-get install -y libsuitesparse-dev
+          fi
 
       - name: Select compiler
         run: |
@@ -55,6 +71,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DSPARLAB_WITH_CHOLMOD=${{ matrix.cholmod }} \
             -DSPARLAB_WARNINGS_AS_ERRORS=ON
 
       - name: Build
@@ -65,6 +82,32 @@ jobs:
         # configuration most likely to catch an indexing mistake.
         run: ctest --test-dir build --output-on-failure -j "$(nproc)"
 
+      - name: Forming smoke deck (sparlab_form)
+        # The single-point incremental-forming smoke case of docs/forming.md
+        # (40 x 40 x 1 mm sheet, 20 x 20 x 2 Hex8, two contours to 2 mm, then
+        # the release): one to a few minutes, depending on the runner. Release
+        # builds only - the Debug build's Eigen assertions make it slow, and
+        # its tests already exercise the same code. sparlab_form exits
+        # non-zero if a step stops; the summary must also say so, and the
+        # factorisations must be the ones the build asked for.
+        if: matrix.build_type == 'Release'
+        run: |
+          ./build/bin/sparlab_form --version
+          ./build/bin/sparlab_form --config configs/forming/spif_smoke.json \
+                                   --output results/spif_smoke --no-vtk \
+                                   --strict-config --threads 2
+          python3 - "${{ matrix.cholmod }}" <<'EOF'
+          import json, sys
+          s = json.load(open("results/spif_smoke/summary.json"))
+          assert s["completed"], s["termination"]
+          assert all(step["completed"] for step in s["steps"]), s["steps"]
+          want = sys.argv[1] == "ON"
+          assert bool(s["timing"]["suitesparse"]) == want, s["timing"]["suitesparse"]
+          print("smoke deck:", s["timing"]["increments"], "increments,",
+                s["timing"]["iterations"], "iterations,", round(s["runtime_s"], 1), "s;",
+                "SuiteSparse" if want else "Eigen")
+          EOF
+
   verify:
     name: verification and validation
     runs-on: ubuntu-latest
@@ -74,7 +117,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ninja-build libeigen3-dev catch2
+          sudo apt-get install -y ninja-build libeigen3-dev catch2 libsuitesparse-dev
 
       - name: Build
         run: |
@@ -102,7 +145,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ninja-build libeigen3-dev catch2
+          sudo apt-get install -y ninja-build libeigen3-dev catch2 libsuitesparse-dev
           python3 -m pip install --quiet numpy pandas matplotlib pillow scikit-fem
 
       - name: Build
@@ -344,3 +387,60 @@ jobs:
         with:
           name: ci-figures
           path: ci-figures/
+
+  python:
+    name: precomp (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Python pyproject.toml allows. torch is not installed:
+        # the neural-model tests skip without it (pytest.importorskip), which
+        # keeps the job light and checks that they skip cleanly.
+        python: ["3.10"]
+    env:
+      # The tests cap their own threads at two; the solver runs on one.
+      OMP_NUM_THREADS: "2"
+      PRECOMP_SPARLAB_FORM: ${{ github.workspace }}/build/bin/sparlab_form
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build libeigen3-dev libsuitesparse-dev
+
+      - name: Build sparlab_form
+        # Only the forming executable the integration tests drive; the C++
+        # tests run in build-and-test.
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DSPARLAB_BUILD_TESTS=OFF
+          cmake --build build --target sparlab_form -j "$(nproc)"
+          "$PRECOMP_SPARLAB_FORM" --version
+
+      - name: Install precomp
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+          precomp --help > /dev/null
+          precomp part --list
+
+      - name: Test
+        # -rs lists every skip with its reason. The integration tests with the
+        # real sparlab_form skip when the executable is missing; here it was
+        # just built, so such a skip is a failure of the job.
+        run: |
+          set -o pipefail
+          python -m pytest python/tests -q -rs 2>&1 | tee pytest.log
+          if grep -q "is not built" pytest.log; then
+            echo "::error::the sparlab_form integration tests were skipped"
+            exit 1
+          fi
