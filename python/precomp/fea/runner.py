@@ -193,7 +193,8 @@ def cache_entry(work_dir: PathLike, key: str) -> Path:
 
 def simulate(setup: FormingSetup, commanded: HeightMap, work_dir: PathLike, *,
              cache: bool = True, retry_failed: bool = False,
-             toolpath: Optional[Toolpath] = None) -> FormingResult:
+             toolpath: Optional[Toolpath] = None,
+             target: Optional[HeightMap] = None) -> FormingResult:
     """Simulate forming `commanded` with `setup`, through the run cache in `work_dir`.
 
     With `cache` an identical earlier run is returned without running (its
@@ -201,14 +202,16 @@ def simulate(setup: FormingSetup, commanded: HeightMap, work_dir: PathLike, *,
     replaces the entry. A failure is recorded in the entry and raised as
     FormingError; later calls raise the recorded failure again unless
     `retry_failed`. The result's provenance holds the content hash (`key`),
-    the solver version, the runtime and the cache directory.
+    the solver version, the runtime and the cache directory. `target`: the
+    part the fixture is made for (`build_deck`; only a support strategy
+    reads it).
     """
     exe = setup.resolved_executable()
     version = sparlab_version(exe)
     work = Path(work_dir).resolve()
     staging = work / "staging" / uuid.uuid4().hex
     try:
-        build_deck(setup, commanded, staging, toolpath=toolpath)
+        build_deck(setup, commanded, staging, toolpath=toolpath, target=target)
         key = deck_hash(staging, version)
         final = cache_entry(work, key)
         prov = {"key": key, "sparlab_version": version, "executable": str(exe),
@@ -269,12 +272,13 @@ class SimulationOutcome:
                                              "runtime_s": self.runtime_s})
 
 
-def _simulate_job(args: Tuple[int, Dict[str, Any], HeightMap, str, bool, bool]
-                  ) -> SimulationOutcome:
-    index, setup_doc, commanded, work_dir, cache, retry_failed = args
+def _simulate_job(args: Tuple[int, Dict[str, Any], HeightMap, str, bool, bool,
+                              Optional[HeightMap]]) -> SimulationOutcome:
+    index, setup_doc, commanded, work_dir, cache, retry_failed, target = args
     try:
         setup = FormingSetup.from_dict(setup_doc)
-        res = simulate(setup, commanded, work_dir, cache=cache, retry_failed=retry_failed)
+        res = simulate(setup, commanded, work_dir, cache=cache, retry_failed=retry_failed,
+                       target=target)
         p = res.provenance
         return SimulationOutcome(index, True, str(res.directory), p.get("key"), None,
                                  bool(p.get("cache_hit")), p.get("runtime_s"))
@@ -286,10 +290,12 @@ def _simulate_job(args: Tuple[int, Dict[str, Any], HeightMap, str, bool, bool]
         return SimulationOutcome(index, False, None, None, f"{type(exc).__name__}: {exc}")
 
 
-def simulate_many(jobs: Sequence[Tuple[FormingSetup, HeightMap]], work_dir: PathLike, *,
+def simulate_many(jobs: Sequence[Tuple[Any, ...]], work_dir: PathLike, *,
                   max_workers: Optional[int] = None, executor: str = "process",
                   cache: bool = True, retry_failed: bool = False) -> List[SimulationOutcome]:
-    """Run many (setup, commanded) jobs in parallel through the cache.
+    """Run many (setup, commanded) - or (setup, commanded, target), `target`
+    the part a support's fixture is made for (`simulate`) - jobs in
+    parallel through the cache.
 
     `executor` is "process" (a `ProcessPoolExecutor`: the deck building and
     tool-path generation in Python run in parallel too), "thread" or
@@ -297,8 +303,14 @@ def simulate_many(jobs: Sequence[Tuple[FormingSetup, HeightMap]], work_dir: Path
     job is recorded with its reason and never dropped. `max_workers` defaults
     to the CPU count; each solver run uses the setup's `threads`.
     """
-    payload = [(i, setup.to_dict(), cmd, str(Path(work_dir).resolve()), cache, retry_failed)
-               for i, (setup, cmd) in enumerate(jobs)]
+    payload = []
+    for i, job in enumerate(jobs):
+        if len(job) not in (2, 3):
+            raise ValueError("a job is (setup, commanded) or (setup, commanded, target)")
+        setup, cmd = job[0], job[1]
+        target = job[2] if len(job) == 3 else None
+        payload.append((i, setup.to_dict(), cmd, str(Path(work_dir).resolve()), cache,
+                        retry_failed, target))
     if executor == "serial" or len(payload) <= 1:
         return [_simulate_job(p) for p in payload]
     if executor == "process":

@@ -1,0 +1,365 @@
+"""Rim support: the backing plate, the DSIF support tool and its rim pass in
+the deck, the setup field, the commands a support can realise, and what a
+trained model makes of a setup with another support.
+
+Every run here is the test double (fake_sparlab_form.py); the real solver
+runs these decks in test_integration_sparlab.py.
+"""
+
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from precomp import PrecompError
+from precomp._util import canonical_json, read_json, sha256_bytes
+from precomp.compensation import FEAPredictor, displacement_adjustment
+from precomp.fea import FormingSetup, build_deck, deck_document, deck_hash, load_result, simulate
+from precomp.fea.support import (PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL, bottom_node_grid,
+                                 check_command, command_upper_bound, compensation_masks,
+                                 part_distance, plate_nodes, rim_band)
+from precomp.geometry import Grid, HeightMap, TruncatedCone
+from precomp.materials import get_material
+from precomp.metrology import flange_mask, part_mask
+from precomp.toolpath import AIR, reach_from_below, signed_outline_distance
+
+T = 1e-3
+
+
+@pytest.fixture
+def base(fake_solver):
+    """A 40 mm blank with 2 mm elements (21 x 21 nodes per layer), the
+    springback benchmark's process, run by the fake solver."""
+    return FormingSetup(get_material("AA5754-O"), blank_size=0.04, clamp_margin=0.005,
+                        element_size=2e-3, layers=2, thickness=T, tool_radius=4e-3,
+                        step_down=1e-3, toolpath_spacing=1e-3, executable=str(fake_solver))
+
+
+@pytest.fixture
+def cone():
+    return TruncatedCone(0.007, 40.0, 0.003, 0.001, 0.002).heightmap(Grid.centered(0.04, 2.5e-4))
+
+
+def forming(deck_dir):
+    return read_json(deck_dir / "deck.json")["forming"]
+
+
+# ---------------------------------------------------------------------------
+# The setup field
+# ---------------------------------------------------------------------------
+def test_support_is_a_setup_field_with_validated_settings(base):
+    assert base.support == "none" and base.support_settings == {}
+    assert base.physics_dict()["support"] == "none"
+    plate = base.replace(support="backing_plate", support_settings={"clearance": 2e-3})
+    back = FormingSetup.from_dict(json.loads(json.dumps(plate.to_dict())))
+    assert back == plate and back.physics_dict()["support_settings"] == {"clearance": 2e-3}
+    r = plate.resolved_support()
+    assert r == {"clearance": 2e-3, "friction": base.friction, "penalty": 10.0}
+    d = base.replace(support="dsif").resolved_support()
+    assert d["radius"] == base.tool_radius and d["squeeze"] == 0.0 and d["rim_pass"] is False
+    assert d["thickness_law"] == "sine"
+    # an old setup document (no support fields) reads as "none"
+    old = base.to_dict()
+    del old["support"], old["support_settings"]
+    assert FormingSetup.from_dict(old) == base
+    for bad, match in [({"support": "die"}, "support must be one of"),
+                       ({"support_settings": {"clearance": 1e-3}}, "not settings of support"),
+                       ({"support": "backing_plate", "support_settings": {"squeeze": 0.1}},
+                        "not settings"),
+                       ({"support": "backing_plate", "support_settings": {"clearance": -1.0}},
+                        "clearance"),
+                       ({"support": "dsif", "support_settings": {"squeeze": 1.0}}, "squeeze"),
+                       ({"support": "dsif", "support_settings": {"rim_pass": 1}}, "rim_pass"),
+                       ({"support": "dsif", "support_settings": {"thickness_law": "x"}},
+                        "thickness_law"),
+                       ({"support": "dsif", "support_settings": {"radius": 0.0}}, "radius")]:
+        with pytest.raises(ValueError, match=match):
+            base.replace(**bad)
+
+
+# ---------------------------------------------------------------------------
+# No support: the deck and its hash are what they were
+# ---------------------------------------------------------------------------
+def test_without_support_the_deck_and_its_hash_are_unchanged(tmp_path, base, cone):
+    d = build_deck(base, cone, tmp_path / "d", target=cone)
+    fm = forming(d)
+    assert [t["name"] for t in fm["tools"]] == ["tool"]
+    assert [s["name"] for s in fm["steps"]] == ["form", "unload", "release"]
+    assert not (d / SUPPORT_PATH_FILE).exists()
+    assert "support" not in read_json(d / "precomp_deck.json")
+    # the content hash is the one of before: deck, toolpath.csv, version
+    doc = read_json(d / "deck.json")
+    old = sha256_bytes(canonical_json(doc).encode(), (d / "toolpath.csv").read_bytes(), b"v")
+    assert deck_hash(d, "v") == old
+    assert deck_document(base) == deck_document(base, support=None)
+    with pytest.raises(PrecompError, match="plan"):
+        deck_document(base.replace(support="dsif"))
+
+
+# ---------------------------------------------------------------------------
+# Backing plate
+# ---------------------------------------------------------------------------
+def test_the_backing_plate_carries_the_bottom_faces_outside_the_opening(tmp_path, base, cone):
+    setup = base.replace(support="backing_plate", support_settings={"clearance": 1e-3})
+    d = build_deck(setup, cone, tmp_path / "plate", target=cone)
+    fm = forming(d)
+    assert [t["name"] for t in fm["tools"]] == ["tool", PLATE_TOOL]
+    plate = fm["tools"][1]
+    assert plate["shape"] == "plane" and plate["normal"] == [0.0, 0.0, 1.0]
+    assert plate["trajectory"]["points"] == [[0.0, 0.0, -T], [0.0, 0.0, -T]]
+    assert plate["friction"] == setup.friction and plate["penalty"] == 10.0
+    steps = {s["name"]: s for s in fm["steps"]}
+    assert steps["form"]["tools"] == ["tool", PLATE_TOOL]
+    assert steps["unload"]["tools"] == [] and steps["release"]["tools"] == []
+    ids = plate["surface"]["node_ids"]
+    grid_ids, X, Y = bottom_node_grid(setup)
+    n = setup.elements_per_side
+    assert grid_ids.max() == (n + 1) ** 2 - 1 and set(ids) <= set(grid_ids.ravel())
+    listed = np.isin(grid_ids, ids)
+    dist = part_distance(cone, X, Y)
+    assert np.all(dist[listed] > 1e-3)                       # outside the opening ...
+    # ... and every node outside it whose cell is wholly outside is listed
+    out = dist > 1e-3
+    cell = out[:-1, :-1] & out[1:, :-1] & out[:-1, 1:] & out[1:, 1:]
+    assert listed[:-1, :-1][cell].all() and listed[1:, 1:][cell].all()
+    assert not listed[dist < 1e-3].any()
+    info = read_json(d / "precomp_deck.json")["support"]
+    assert info["plate"]["realised_clearance_m"] >= 1e-3
+    assert info["plate"]["realised_clearance_m"] < 1e-3 + setup.element_size * np.sqrt(2)
+    assert info["outline_from"] == "target"
+    # a wider clearance carries fewer faces
+    assert len(plate_nodes(setup, cone, 3e-3)[0]) < len(ids)
+
+
+def test_the_plate_follows_the_target_not_the_compensated_command(tmp_path, base, cone):
+    """Fixed hardware: a command whose rim DA raised to the sheet plane
+    (outline shrunk) keeps the plate made for the target."""
+    setup = base.replace(support="backing_plate", support_settings={"clearance": 1e-3})
+    sd = signed_outline_distance(cone).z
+    clipped = cone.with_z(np.where(sd > -1.5e-3, 0.0, cone.z))
+    a = forming(build_deck(setup, clipped, tmp_path / "a", target=cone))["tools"][1]
+    b = forming(build_deck(setup, cone, tmp_path / "b", target=cone))["tools"][1]
+    c = forming(build_deck(setup, clipped, tmp_path / "c"))["tools"][1]
+    assert a["surface"] == b["surface"]
+    assert len(c["surface"]["node_ids"]) > len(b["surface"]["node_ids"])
+
+
+def test_the_plate_node_ids_follow_the_structured_numbering(tmp_path, base, cone, counter):
+    """The ids the deck lists are, in the mesh the solver writes, bottom
+    nodes outside the opening (the numbering of StructuredMesh.hpp)."""
+    setup = base.replace(support="backing_plate")
+    res = simulate(setup, cone, tmp_path / "w", target=cone)
+    mesh = json.loads((res.directory / "mesh.json").read_text())
+    nodes = np.asarray(mesh["nodes_m"])
+    ids = res.summary and read_json(res.directory / "config.json")["forming"]["tools"][1][
+        "surface"]["node_ids"]
+    assert np.allclose(nodes[ids, 2], -T)
+    assert np.all(part_distance(cone, nodes[ids, 0], nodes[ids, 1]) > 1e-3)
+    assert res.step_names == ["form", "unload", "release"]
+    f = res.forming_forces()
+    assert set(f["tool"]) == {"tool", PLATE_TOOL}
+
+
+# ---------------------------------------------------------------------------
+# DSIF
+# ---------------------------------------------------------------------------
+def test_dsif_drives_both_tools_on_one_pseudo_time(tmp_path, base, cone):
+    setup = base.replace(support="dsif")
+    d = build_deck(setup, cone, tmp_path / "dsif", target=cone)
+    fm = forming(d)
+    assert [t["name"] for t in fm["tools"]] == ["tool", SUPPORT_TOOL]
+    sup = fm["tools"][1]
+    assert sup["shape"] == "sphere" and sup["radius"] == setup.tool_radius
+    assert sup["trajectory"] == {"file": SUPPORT_PATH_FILE}
+    box = sup["surface"]["box"]
+    assert box["zmax"] == -T and fm["tools"][0]["surface"]["box"]["zmin"] == 0.0  # disjoint
+    steps = {s["name"]: s for s in fm["steps"]}
+    assert steps["form"]["tools"] == ["tool", SUPPORT_TOOL]
+    assert steps["unload"]["tools"] == []                           # both removed
+    tool = pd.read_csv(d / "toolpath.csv")
+    support = pd.read_csv(d / SUPPORT_PATH_FILE)
+    assert np.array_equal(tool["t"].to_numpy(), support["t"].to_numpy())   # synchronised
+    # the support is under the sheet all along: its top never above the flat
+    # sheet's underside (no command rises above the plane here)
+    assert np.all(support["z"] + setup.tool_radius <= -T + 1e-12)
+    # the hash covers the support's trajectory
+    h = deck_hash(d, "v")
+    d2 = build_deck(setup.replace(support_settings={"squeeze": 0.1}), cone, tmp_path / "sq",
+                    target=cone)
+    assert read_json(d2 / "deck.json") == read_json(d / "deck.json")
+    assert deck_hash(d2, "v") != h
+
+
+def test_the_dsif_rim_pass_runs_after_unload_and_is_removed_before_the_release(tmp_path, base,
+                                                                               cone, counter):
+    setup = base.replace(support="dsif", support_settings={"rim_pass": True})
+    d = build_deck(setup, cone, tmp_path / "rim", target=cone)
+    steps = forming(d)["steps"]
+    assert [s["name"] for s in steps] == ["form", "unload", "rim_pass", "rim_unload", "release"]
+    rim = steps[2]
+    assert rim["type"] == "form" and rim["tools"] == [SUPPORT_TOOL]
+    assert rim["time"][0] == 2.0 and 2.0 < rim["time"][1] <= 3.0
+    assert steps[3]["tools"] == [] and steps[4]["tools"] == []
+    sup = pd.read_csv(d / SUPPORT_PATH_FILE)
+    assert np.all(np.diff(sup["t"]) > 0) and sup["t"].iloc[-1] == pytest.approx(3.0)
+    tool = pd.read_csv(d / "toolpath.csv")
+    assert np.array_equal(sup["t"].to_numpy()[:len(tool)], tool["t"].to_numpy())
+    band = sup[(sup["t"] >= 2.0) & (sup["t"] <= rim["time"][1])]
+    assert band["z"].max() + setup.tool_radius <= -T + 1e-9   # pushes up to the underside
+    info = read_json(d / "precomp_deck.json")["support"]["dsif"]["rim_pass"]
+    assert info["band_levels_m"] == pytest.approx([1e-3, 0.0, -1e-3, -2e-3])
+    res = simulate(setup, cone, tmp_path / "w", target=cone)
+    assert res.step_names == ["form", "unload", "rim_pass", "rim_unload", "release"]
+    f = res.forming_forces()
+    assert set(f[f["step"] == 3]["tool"]) == {SUPPORT_TOOL}
+
+
+def test_a_rim_pass_reaching_the_clamp_is_refused(tmp_path, base, cone):
+    wide = base.replace(support="dsif", support_settings={"rim_pass": True,
+                                                           "rim_outside": 8e-3})
+    with pytest.raises(PrecompError, match="rim pass reaches"):
+        build_deck(wide, cone, tmp_path / "d", target=cone)
+
+
+# ---------------------------------------------------------------------------
+# Commands above the sheet plane
+# ---------------------------------------------------------------------------
+def test_only_the_rim_pass_realises_a_command_above_the_sheet_plane(tmp_path, base, cone):
+    rim = base.replace(support="dsif", support_settings={"rim_pass": True,
+                                                          "rim_max_raise": 1e-3,
+                                                          "radius": 1.5e-3})
+    band, strip = rim_band(rim, cone)
+    sd = signed_outline_distance(cone).z
+    assert np.array_equal(band, part_mask(cone) & (sd >= -2e-3))
+    assert np.array_equal(strip, flange_mask(cone) & (sd <= 1e-3))
+    for s in (base, base.replace(support="backing_plate"), base.replace(support="dsif")):
+        assert not command_upper_bound(s, cone)(cone.z + 1e-3).any()
+        assert not rim_band(s, cone)[0].any()
+    # a bump over band and strip: seen from below the rim is a corner, which
+    # the ball cannot fill - the bound cuts the command to what it reaches
+    bump = 4e-4 * np.clip(1.0 - np.abs(sd + 0.5e-3) / 1.5e-3, 0.0, None)
+    asked = cone.with_z(cone.z + bump)
+    bound = command_upper_bound(rim, cone)
+    ub = bound(asked.z)
+    assert np.all(ub[~(band | strip)] == 0.0) and ub.max() <= 1e-3
+    raised = asked.with_z(np.minimum(asked.z, ub))
+    assert raised.z.max() > 1.5e-4 and (raised.z < asked.z - 1e-5).any()
+    assert np.allclose(np.minimum(raised.z, bound(raised.z)), raised.z)   # a fixed point
+    check_command(rim, raised, cone)                               # realisable
+    with pytest.raises(PrecompError, match="too high"):
+        check_command(rim, asked, cone)
+    with pytest.raises(PrecompError, match="pass the target"):
+        check_command(rim, raised, None)
+    for s in (base, base.replace(support="backing_plate"), base.replace(support="dsif")):
+        with pytest.raises(PrecompError, match="rises above what the tools can realise"):
+            build_deck(s, raised, tmp_path / s.support, target=cone)
+    with pytest.raises(PrecompError, match="too high"):             # above rim_max_raise
+        check_command(rim, cone.with_z(np.where(band, 1.5e-3, cone.z)), cone)
+    # a raised ring narrower than the ball: out of its reach from below
+    narrow = cone.with_z(np.where(band & (sd > -0.5e-3), 5e-4, cone.z))
+    with pytest.raises(PrecompError, match="too high"):
+        check_command(rim.replace(support_settings={"rim_pass": True, "radius": 4e-3}),
+                      narrow, cone)
+    # the forming tool's path is made for the part below the plane only; the
+    # rim pass follows the raised command
+    d = build_deck(rim, raised, tmp_path / "ok", target=cone)
+    d0 = build_deck(rim, raised.with_z(np.minimum(raised.z, 0.0)), tmp_path / "ok0",
+                    target=cone)
+    assert (d / "toolpath.csv").read_bytes() == (d0 / "toolpath.csv").read_bytes()
+    up, flat = (pd.read_csv(x / SUPPORT_PATH_FILE) for x in (d, d0))
+    assert up["z"][up["t"] >= 2].max() > flat["z"][flat["t"] >= 2].max() + 1e-4
+
+
+def test_reach_from_below_is_the_underside_where_the_ball_fits():
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    wide = HeightMap(g, 1e-3 * np.exp(-(X ** 2 + Y ** 2) / (2 * 0.004 ** 2)))
+    assert np.allclose(reach_from_below(wide, 1e-3).z, wide.z, atol=1e-6)
+    narrow = HeightMap(g, np.where(np.abs(X) < 5e-4, 1e-3, 0.0))
+    r = reach_from_below(narrow, 4e-3).z
+    assert np.all(r <= narrow.z + 1e-15)
+    assert r[np.abs(X) < 2.5e-4].max() < 1e-4                     # the slot is out of reach
+    assert np.allclose(r[np.abs(X) > 3e-3], 0.0)
+
+
+def _sagging_predictor(target):
+    """formed = commanded - a sag of up to 1 mm around the outline (a
+    stand-in for the simulated rim sag)."""
+    sd = signed_outline_distance(target).z
+    sag = 1e-3 * np.exp(-((sd + 5e-4) / 1.5e-3) ** 2)
+
+    def predict(c):
+        return c.with_z(c.z - sag)
+    return predict
+
+
+def test_displacement_adjustment_rises_above_the_plane_only_where_the_support_can(base, cone):
+    rim = base.replace(support="dsif", support_settings={"rim_pass": True,
+                                                          "rim_max_raise": 2e-3,
+                                                          "radius": 1.5e-3})
+    pred = _sagging_predictor(cone)
+    plain = displacement_adjustment(cone, pred, iterations=1)
+    assert plain.proposed.z.max() <= 0.0                         # SPIF: z <= 0
+    bound = command_upper_bound(rim, cone)
+    hold, adjust = compensation_masks(rim, cone)
+    band, strip = rim_band(rim, cone)
+    assert np.array_equal(adjust, part_mask(cone) | strip)
+    assert np.array_equal(hold, flange_mask(cone) & ~strip)
+    up = displacement_adjustment(cone, pred, iterations=1, upper_bound=bound, hold_mask=hold,
+                                 adjust_mask=adjust)
+    z = up.proposed.z
+    assert z.max() > 3e-4                                        # the rim is raised ...
+    assert np.all(z <= bound(z) + 1e-6)                          # ... as far as realisable
+    assert np.all(z[~(band | strip)] <= 0.0)
+    assert np.all(z[hold] == 0.0)                                # the rest of the flange held
+    check_command(rim, up.proposed, cone)
+    # with a big ball the same update is cut to what the ball reaches
+    big = rim.replace(support_settings={"rim_pass": True, "radius": 4e-3,
+                                        "rim_max_raise": 2e-3})
+    cut = displacement_adjustment(cone, pred, iterations=1,
+                                  upper_bound=command_upper_bound(big, cone),
+                                  hold_mask=hold, adjust_mask=adjust).proposed.z
+    assert cut[band | strip].max() < z[band | strip].max()
+    check_command(big, up.proposed.with_z(cut), cone)
+    with pytest.raises(ValueError, match="upper_bound"):
+        displacement_adjustment(cone, pred, iterations=1, upper_bound=-1.0)
+
+
+def test_fea_prediction_forms_every_iterate_on_the_targets_fixture(tmp_path, base, cone,
+                                                                   counter):
+    setup = base.replace(support="dsif", support_settings={"rim_pass": True})
+    pred = FEAPredictor(setup, tmp_path / "w", target=cone)
+    hold, adjust = compensation_masks(setup, cone)
+    da = displacement_adjustment(cone, pred, iterations=2, hold_mask=hold, adjust_mask=adjust,
+                                 upper_bound=command_upper_bound(setup, cone))
+    assert len(pred.results) == 2
+    for res in pred.results:
+        prov = read_json(res.directory.parent / "precomp_deck.json")
+        assert prov["support"]["outline_from"] == "target"
+    assert da.history[0]["error"]["rms"] > 0
+
+
+# ---------------------------------------------------------------------------
+# A trained model and another support
+# ---------------------------------------------------------------------------
+def test_a_model_refuses_a_setup_with_a_support_it_was_not_trained_on(base):
+    from precomp.ml.surrogate import setup_envelope, setup_envelope_union, setup_mismatch
+
+    env = setup_envelope([base, base.replace(step_down=2e-3)])
+    assert env["fields"]["support"] == {"values": ["none"]}
+    assert setup_mismatch(env, base) == []
+    dsif = base.replace(support="dsif")
+    fields = [m["field"] for m in setup_mismatch(env, dsif)]
+    assert fields == ["support"]
+    plate = base.replace(support="backing_plate")
+    assert {m["field"] for m in setup_mismatch(setup_envelope([plate]), plate.replace(
+        support_settings={"clearance": 2e-3}))} == {"support_settings"}
+    # a model trained before the field existed was trained without support
+    old = json.loads(json.dumps(env))
+    del old["fields"]["support"], old["fields"]["support_settings"]
+    assert setup_mismatch(old, base) == []
+    miss = setup_mismatch(old, dsif)
+    assert [m["field"] for m in miss] == ["support"] and "predates" in miss[0]["note"]
+    union = setup_envelope_union(old, setup_envelope([dsif]))
+    assert union["fields"]["support"] == {"values": ["dsif", "none"]}

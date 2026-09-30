@@ -35,6 +35,16 @@ in contact with the part, clamp held: the shape under the tool), "unload"
 springback in the fixture) and, with release "321", "release" (the clamp
 replaced by the 3-2-1 support - the free springback). The final retract of
 the trajectory is not simulated: the "unload" step takes the tool away.
+
+Support (`FormingSetup.support`, `precomp.fea.support`): a backing plate
+("plate", a still plane under the sheet outside an opening around the part)
+or a DSIF support ball ("support", under the sheet, its trajectory
+`support_path.csv` on the forming tool's pseudo-time) is active in "form"
+beside the tool and removed with it in "unload". With the DSIF rim pass,
+"rim_pass" (the support alone, pseudo-time from 2) and "rim_unload" (its
+removal) follow "unload", clamp held. The plate's opening and the rim pass
+band follow the outline of `target` (the part the fixture is made for),
+the commanded surface's when none is given.
 Every step constraint is `"mode": "hold"`: its DOFs stay where the step
 finds them - the clamp at the reference position, the three support nodes
 where the clamp left them, so the released part keeps its place on the
@@ -56,6 +66,7 @@ from .._util import (PathLike, PrecompError, canonical_json, read_json, sha256_b
 from ..geometry.heightmap import HeightMap
 from ..toolpath import AIR, Toolpath, contour_toolpath, spiral_toolpath
 from .setup import CONTACT_KEYS, FORMING_SOLVER_KEYS, NEWTON_KEYS, FormingSetup
+from .support import RIM_PASS_WINDOW, SUPPORT_TOOL, SupportPlan, check_command, plan_support
 
 DECK_FILE = "deck.json"
 TOOLPATH_FILE = "toolpath.csv"
@@ -64,14 +75,26 @@ PROVENANCE_FILE = "precomp_deck.json"
 TOOL_NAME = "tool"
 
 
+def forming_surface(commanded: HeightMap) -> HeightMap:
+    """The surface the forming tool's path is made for: the command where it
+    lies below the sheet plane, the plane where it rises above it. The tool
+    presses from above and cannot lift the sheet; only a support's rim pass
+    realises a command above the plane (`precomp.fea.support`)."""
+    if not (commanded.z > 0.0).any():
+        return commanded
+    return commanded.with_z(np.minimum(commanded.z, 0.0))
+
+
 def make_toolpath(setup: FormingSetup, commanded: HeightMap) -> Toolpath:
     """The tool path the setup prescribes for `commanded` (style, step-down,
-    spacing, direction and tool radius from the setup)."""
+    spacing, direction and tool radius from the setup), made for its part
+    below the sheet plane (`forming_surface`)."""
     kwargs = dict(direction=setup.toolpath_direction)
+    surface = forming_surface(commanded)
     if setup.toolpath_style == "spiral":
-        return spiral_toolpath(commanded, setup.tool_radius, setup.step_down,
+        return spiral_toolpath(surface, setup.tool_radius, setup.step_down,
                                setup.toolpath_spacing, **kwargs)
-    return contour_toolpath(commanded, setup.tool_radius, setup.step_down,
+    return contour_toolpath(surface, setup.tool_radius, setup.step_down,
                             setup.toolpath_spacing, **kwargs)
 
 
@@ -111,11 +134,17 @@ def form_end(path: Toolpath) -> float:
 
 
 def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE,
-                  t_form_end: float = 1.0) -> Dict[str, Any]:
+                  t_form_end: float = 1.0,
+                  support: Optional[SupportPlan] = None) -> Dict[str, Any]:
     """The deck's `forming` object (docs/forming.md, section 2): the
-    kinematics, one spherical tool, the ordered steps (see the module
-    docstring; "form" runs from t = 0 to `t_form_end`), the Newton settings
-    of `setup.solver` and the output."""
+    kinematics, the spherical tool (and the support's tools, `support`), the
+    ordered steps (see the module docstring; "form" runs from t = 0 to
+    `t_form_end`), the Newton settings of `setup.solver` and the output."""
+    if support is None:
+        if setup.support != "none":
+            raise PrecompError(f"support {setup.support!r} needs its plan "
+                               "(precomp.fea.support.plan_support); build_deck makes it")
+        support = SupportPlan()
     e = setup.free_half_width
     surface = {"name": "tool_side", "box": {"zmin": 0.0, "xmin": -e, "xmax": e,
                                             "ymin": -e, "ymax": e}}
@@ -126,16 +155,25 @@ def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE,
     tool["trajectory"] = {"file": toolpath_file}
     clamp = clamp_condition(setup)
     steps: List[Dict[str, Any]] = [
-        {"name": "form", "type": "form", "tools": [TOOL_NAME], "time": [0.0, float(t_form_end)],
+        {"name": "form", "type": "form", "tools": [TOOL_NAME] + list(support.form_tools),
+         "time": [0.0, float(t_form_end)],
          "max_tool_travel": float(setup.max_tool_travel), "boundary_conditions": [clamp]},
         {"name": "unload", "type": "release", "tools": [], "boundary_conditions": [clamp]},
     ]
+    if support.rim_pass_end is not None:
+        steps += [
+            {"name": "rim_pass", "type": "form", "tools": [SUPPORT_TOOL],
+             "time": [float(RIM_PASS_WINDOW[0]), float(support.rim_pass_end)],
+             "max_tool_travel": float(setup.max_tool_travel), "boundary_conditions": [clamp]},
+            {"name": "rim_unload", "type": "release", "tools": [],
+             "boundary_conditions": [clamp]},
+        ]
     if setup.release == "321":
         steps.append({"name": "release", "type": "release", "tools": [],
                       "boundary_conditions": support_321(setup)})
     block: Dict[str, Any] = {"kinematics": setup.kinematics}
     block.update({k: setup.solver[k] for k in FORMING_SOLVER_KEYS if k in setup.solver})
-    block["tools"] = [tool]
+    block["tools"] = [tool] + [dict(t) for t in support.tools]
     block["steps"] = steps
     newton = {k: setup.solver[k] for k in NEWTON_KEYS if k in setup.solver}
     if newton:
@@ -144,16 +182,18 @@ def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE,
     return block
 
 
-def deck_document(setup: FormingSetup, t_form_end: float = 1.0) -> Dict[str, Any]:
+def deck_document(setup: FormingSetup, t_form_end: float = 1.0,
+                  support: Optional[SupportPlan] = None) -> Dict[str, Any]:
     """The full deck.json content for `setup`; the commanded shape enters
     through the trajectory file and the end of the "form" step, `t_form_end`
-    (`form_end` of the tool path)."""
+    (`form_end` of the tool path), and the support's plan (`support`, needed
+    unless the setup has none)."""
     n = setup.elements_per_side
     L = setup.meshed_blank_size
     mesh_type = "structured_hex" if setup.element == "hex8" else "structured_tet"
     return {
         "name": setup.name,
-        "description": (f"Single-point incremental forming of a {setup.material.name} blank, "
+        "description": (f"{_PROCESS[setup.support]} of a {setup.material.name} blank, "
                         f"written by precomp {__version__}"),
         "units": "SI",
         "mesh": {"type": mesh_type, "nx": n, "ny": n, "nz": setup.layers,
@@ -161,8 +201,13 @@ def deck_document(setup: FormingSetup, t_form_end: float = 1.0) -> Dict[str, Any
                  "x0": -0.5 * L, "y0": -0.5 * L, "z0": -setup.thickness},
         "material": setup.material.to_sparlab(),
         "model": {"stress_state": "three_dimensional"},
-        "forming": forming_block(setup, t_form_end=t_form_end),
+        "forming": forming_block(setup, t_form_end=t_form_end, support=support),
     }
+
+
+_PROCESS = {"none": "Single-point incremental forming",
+            "backing_plate": "Single-point incremental forming on a backing plate",
+            "dsif": "Double-sided incremental forming"}
 
 
 def check_toolpath(setup: FormingSetup, path: Toolpath) -> None:
@@ -179,41 +224,68 @@ def check_toolpath(setup: FormingSetup, path: Toolpath) -> None:
 
 
 def build_deck(setup: FormingSetup, commanded: HeightMap, out_dir: PathLike,
-               toolpath: Optional[Toolpath] = None) -> Path:
+               toolpath: Optional[Toolpath] = None,
+               target: Optional[HeightMap] = None) -> Path:
     """Write the deck for forming `commanded` with `setup` into `out_dir`.
 
-    The tool path is generated from `commanded` with the setup's path
-    settings unless given. Returns the directory. Raises PrecompError when
-    the path would reach the clamp.
+    The tool path is generated from `commanded` (its part below the sheet
+    plane, `forming_surface`) with the setup's path settings unless given.
+    `target` is the part the fixture is made for: with a support strategy
+    the backing plate's opening and the rim pass band follow its outline -
+    fixed hardware, the same for every compensated command of that part
+    (None: the commanded surface's outline). Returns the directory. Raises
+    PrecompError when a path would reach the clamp, or when the command
+    rises above the sheet plane where no tool can push it
+    (`precomp.fea.support.check_command`).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    check_command(setup, commanded, target)
     path = toolpath if toolpath is not None else make_toolpath(setup, commanded)
     if abs(path.tool_radius - setup.tool_radius) > 1e-12:
         raise PrecompError("the tool path was made for a different tool radius")
     check_toolpath(setup, path)
-    write_json(out / DECK_FILE, deck_document(setup, form_end(path)))
+    plan = plan_support(setup, commanded, forming_surface(commanded), path, target)
+    write_json(out / DECK_FILE, deck_document(setup, form_end(path), plan))
     path.to_sparlab_csv(out / TOOLPATH_FILE)
+    for name, text in plan.files.items():
+        (out / name).write_text(text, encoding="ascii")
     commanded.save(out / COMMANDED_FILE)
-    write_json(out / PROVENANCE_FILE, {
+    prov = {
         "precomp_version": __version__,
         "setup": setup.to_dict(),
         "commanded_grid": commanded.grid.to_dict(),
         "commanded_metadata": to_jsonable(commanded.metadata),
         "toolpath": path.summary(),
         "toolpath_metadata": to_jsonable(path.metadata),
-    })
+    }
+    if setup.support != "none":
+        prov["support"] = to_jsonable(plan.info)
+    write_json(out / PROVENANCE_FILE, prov)
+    return out
+
+
+def trajectory_files(deck: Dict[str, Any]) -> List[str]:
+    """The trajectory files the deck's tools read, in tool order (each once)."""
+    out: List[str] = []
+    for tool in deck.get("forming", {}).get("tools", []):
+        name = tool.get("trajectory", {}).get("file")
+        if name and name not in out:
+            out.append(name)
     return out
 
 
 def deck_hash(deck_dir: PathLike, solver_version: str) -> str:
     """Content hash of a deck: SHA-256 of the canonical deck JSON, the
-    trajectory CSV and the solver's `--version` text. Two decks with the same
+    trajectory CSVs its tools read (in tool order: `toolpath.csv`, then a
+    support's) and the solver's `--version` text. Two decks with the same
     hash are the same run."""
     d = Path(deck_dir)
     try:
-        deck = canonical_json(read_json(d / DECK_FILE)).encode("utf-8")
-        trajectory = (d / TOOLPATH_FILE).read_bytes()
+        doc = read_json(d / DECK_FILE)
+        deck = canonical_json(doc).encode("utf-8")
+        files = trajectory_files(doc) or [TOOLPATH_FILE]
+        trajectories = [(d / name).read_bytes() for name in files]
     except FileNotFoundError as exc:
         raise PrecompError(f"{d} is not a complete deck directory: {exc}") from exc
-    return sha256_bytes(deck, trajectory, solver_version.strip().encode("utf-8"))
+    return sha256_bytes(deck, *trajectories, solver_version.strip().encode("utf-8"))
