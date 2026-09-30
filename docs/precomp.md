@@ -20,8 +20,9 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 153 tests (42 for precomp.ml), ~2.5 min; the 6 integration
-                                     # tests (~3 min of it) skip without build/bin/sparlab_form
+python3 -m pytest python/tests -q    # 153 tests (42 for precomp.ml), ~4 min on one core; the 6
+                                     # integration tests (~2.5 min of it) skip without
+                                     # build/bin/sparlab_form
 ```
 
 Python 3.10 or newer; numpy, scipy, pandas, scikit-learn, joblib, contourpy
