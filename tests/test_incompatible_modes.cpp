@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #if defined(SPARLAB_HAVE_OPENMP)
@@ -1401,5 +1402,100 @@ TEST_CASE("under large compression the finite incompatible-mode Hex8 develops a 
     INFO("in-plane stretch " << in_plane << ", thickness stretch " << thickness);
     REQUIRE(smallest(model, Vector3(in_plane, in_plane, thickness), biaxial_held) > 0.0);
     if (i == 50) REQUIRE(thickness < 0.5);
+  }
+}
+
+TEST_CASE("under plastic compression the incompatible-mode Hex8 develops its hourglass mode the "
+          "sooner the less the material hardens",
+          "[incompatible][nonlinear][stability][plasticity]") {
+  // The hourglass instability of the test above on an elastoplastic cube
+  // (J2, E = 70 GPa, yield stress 100 MPa, logarithmic strains) in
+  // homogeneous uniaxial compression along x, the lateral stretch found per
+  // increment of 0.01 so that the faces y = 1 and z = 1 carry no force, the
+  // plastic state committed each increment. A plastic tangent keeps little
+  // deviatoric stiffness against the geometric term of the stress, so the
+  // onset depends on the hardening.
+  const auto run = [](Scalar hardening, ElementFormulation f, Scalar stop) {
+    IsotropicMaterial m(70.0e9, 0.3, 2700.0, "aluminium");
+    PlasticityParameters p;
+    p.yield_stress = 100.0e6;
+    p.hardening_modulus = hardening;
+    m.set_plasticity(p);
+    IntegrationOptions o;
+    o.formulation = f;
+    const FemModel model(Mesh(unit_box_coords(), {0, 1, 2, 3, 4, 5, 6, 7}, ElementType::Hex8), m,
+                         1.0, StressState::ThreeDimensional, o);
+    const Matrix x = unit_box_coords();
+    bool held[8][3] = {};
+    for (int a = 0; a < 8; ++a) held[a][0] = true;
+    held[0][1] = held[0][2] = held[3][2] = true;
+    std::vector<PlasticState> committed(static_cast<std::size_t>(elastoplastic_points(model)));
+    Vector alpha;
+    Scalar lateral = 1.0;
+    std::vector<std::pair<Scalar, Scalar>> path;  // (axial stretch, smallest eigenvalue)
+    for (int i = 1; 1.0 - 0.01 * i >= stop - 1.0e-12; ++i) {
+      const Scalar axial = 1.0 - 0.01 * i;
+      const auto element = [&](Scalar l, bool tangent) {
+        Vector ue(24);
+        for (int a = 0; a < 8; ++a) {
+          ue.segment<3>(3 * a) =
+              Vector3(axial - 1.0, l - 1.0, l - 1.0).cwiseProduct(Vector3(x.col(a)));
+        }
+        return elastoplastic_element(model, 0, ue, committed, false, nullptr, 0.0, tangent,
+                                     Kinematics::FiniteLogarithmic, &alpha);
+      };
+      // The lateral force: f_y on the face y = 1.
+      const auto lateral_force = [&](const ElastoplasticElement& el) {
+        Scalar sum = 0.0;
+        for (int a = 0; a < 8; ++a) {
+          if (x(1, a) > 0.5) sum += el.internal_force(3 * a + 1);
+        }
+        return sum;
+      };
+      // Secant iteration on the lateral stretch.
+      Scalar l0 = lateral;
+      Scalar f0 = lateral_force(element(l0, false));
+      Scalar l1 = lateral + 0.005;
+      for (int it = 0; it < 40; ++it) {
+        const Scalar f1 = lateral_force(element(l1, false));
+        if (std::abs(f1) <= 1.0e-4 || f1 == f0) break;
+        const Scalar next = l1 - f1 * (l1 - l0) / (f1 - f0);
+        l0 = l1;
+        f0 = f1;
+        l1 = next;
+      }
+      lateral = l1;
+      const ElastoplasticElement el = element(lateral, true);
+      REQUIRE(std::abs(lateral_force(el)) <= 1.0e-3);  // [N], of 1e8 N
+      committed = el.states;
+      alpha = el.internal;
+      path.emplace_back(axial, reduced_smallest_eigenvalue(el.tangent, held));
+    }
+    return path;
+  };
+  // Measured: the smallest eigenvalue of the incompatible-mode element
+  // passes zero between the stretches 0.80 and 0.79 without hardening
+  // (7.8e-6 and -5.3e-6 of the largest; about 21 % compression, with the
+  // plastic strain about 0.23), between 0.62 and 0.61 with H = 300 MPa
+  // (1.0e-4 and -3.9e-6), against 0.66 to 0.65 for the neo-Hookean cube
+  // above. Before that it is 20 (no hardening) or 3 times smaller than that
+  // of the standard element, which stays at 3.1e-3 to 7.0e-3 down to 0.55.
+  struct Onset {
+    Scalar hardening;  // [Pa]
+    Scalar stable;     // the smallest stretch still stable
+  };
+  for (const Onset& c : {Onset{0.0, 0.80}, Onset{300.0e6, 0.62}}) {
+    const auto modes = run(c.hardening, ElementFormulation::IncompatibleModes, 0.55);
+    const auto standard = run(c.hardening, ElementFormulation::Standard, 0.55);
+    REQUIRE(modes.size() == standard.size());
+    for (std::size_t i = 0; i < modes.size(); ++i) {
+      const Scalar axial = modes[i].first;
+      INFO("H = " << c.hardening << " Pa, stretch " << axial << ": " << modes[i].second
+                  << " (standard " << standard[i].second << ")");
+      REQUIRE(standard[i].second > 3.0e-3);
+      REQUIRE(modes[i].second < standard[i].second);
+      if (axial >= c.stable - 1.0e-12) REQUIRE(modes[i].second > 0.0);
+      if (axial <= c.stable - 0.01 + 1.0e-12) REQUIRE(modes[i].second < 0.0);
+    }
   }
 }

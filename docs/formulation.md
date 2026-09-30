@@ -374,11 +374,20 @@ material and the compatible element are stable (Wriggers and Reese 1996,
 a neo-Hookean unit cube (`nu = 0.3`) in homogeneous uniaxial compression,
 the condensed tangent of the compression test loses definiteness between
 the stretches 0.66 and 0.65 in a spurious hourglass mode, while the
-standard Hex8's stays positive definite to 0.3 (unit test). The thinning of
-a sheet under equibiaxial stretch - tensile stress - stays stable to a
-thickness stretch below 0.5. Springback (small elastic strains) is far from
-it; a formed part in large in-plane compression (a flange, a wrinkle) is
-not, and should be checked against the standard element there.
+standard Hex8's stays positive definite to 0.3 (unit test). A plastic
+material hourglasses much sooner, since its tangent keeps little deviatoric
+stiffness against the geometric stress term: a J2 cube (`E = 70 GPa`,
+`sigma_y = 100 MPa`, logarithmic strains) loses definiteness between the
+stretches 0.80 and 0.79 without hardening (about 21 % compression, plastic
+strain 0.23) and between 0.62 and 0.61 with `H = 300 MPa`; before that its
+smallest eigenvalue is 3 (hardening) to 20 (none) times below the standard
+element's (unit test). The onset thus depends on the hardening left, which
+saturating (Voce) hardening runs out of in forming. The thinning of a sheet
+under equibiaxial stretch - tensile stress - stays stable to a thickness
+stretch below 0.5. Springback (small elastic strains) is far from it; a
+formed part in in-plane compression of some 20 % (a flange, a wrinkle, a
+tool's contact zone) is not, and should be checked against the standard
+element there.
 
 **Limits.** The Taylor-corrected modes are exact in pure bending on
 affine cells (boxes, parallelepipeds) and lose much of their effect on

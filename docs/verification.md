@@ -2188,10 +2188,16 @@ invariant:
 * *stability*: a neo-Hookean cube in uniaxial compression - the tangent of
   the compression test loses definiteness between the stretches 0.66 and
   0.65 (hourglassing), the standard Hex8's stays positive to 0.3; equibiaxial
-  thinning to a thickness stretch below 0.5 stays stable;
+  thinning to a thickness stretch below 0.5 stays stable; a J2 cube
+  (logarithmic strains) in uniaxial compression, the lateral faces free,
+  between 0.80 and 0.79 without hardening and between 0.62 and 0.61 with
+  `H = 300 MPa`, always below the standard element's smallest eigenvalue;
+* *strain recovery*: the strain at a point includes the modes' thermal part
+  when given the temperature, and the stress there is `D (strain - thermal
+  strain)`;
 * *configuration*: the deck keys, the refusals (unknown formulation, 8 or -1
   thickness points, an unknown direction, a Tet or plane mesh, mean
-  dilatation `all`).
+  dilatation `all`, a one-point in-plane or thickness rule with the modes).
 
 **Slender cantilever** (`--study im-cantilever`). `L = 1 m`, `h = 0.1 m` (one
 element), `b = 0.05 m` (one element), `E = 70 GPa`, clamped root face, a

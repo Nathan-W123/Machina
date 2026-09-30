@@ -213,10 +213,15 @@ is within 1 % of Kirchhoff (`docs/verification.md`, section 27). Its limits:
   solid-shell element (Hauptmann and Schweizerhof 1998, Schwarze and Reese
   2009) and no EAS-21, which would be the next step for curved thin walls;
 * the finite-deformation element loses stability in a spurious hourglass
-  mode under large compression (a neo-Hookean cube in uniaxial compression
-  below a stretch of about 0.65, where the standard Hex8 is stable;
-  Wriggers and Reese 1996) - far beyond springback, but not beyond a
-  compressed flange;
+  mode under compression, where the standard Hex8 is stable (Wriggers and
+  Reese 1996): a neo-Hookean cube below a uniaxial stretch of about 0.65,
+  a J2 cube much sooner the less it hardens - at about 21 % compression
+  without hardening, 39 % with `H = 300 MPa` (`E = 70 GPa`, `sigma_y =
+  100 MPa`), which saturating hardening in forming approaches; beyond
+  springback, but not beyond a compressed flange or a tool's contact zone;
+* the local iteration of the modes can fail under logarithmic strains far
+  from the solution (the global Newton's trial states of a hard increment),
+  and the step is then cut: on the smoke deck see `docs/forming.md`;
 * Hex8 only: no incompatible-mode Q4 (Q6) and no Tet counterpart; not
   combined with mean dilatation (the modes relax the plastic isochoric
   constraint themselves: `auto` leaves them without it, `all` is refused);
