@@ -48,6 +48,7 @@
 #include "sparlab/fem/NonlinearStatic.hpp"
 #include "sparlab/material/Plasticity.hpp"
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -81,6 +82,11 @@ class ExplicitInternalForce {
   ///         kinematics) an element inverts.
   void evaluate(const Vector& u, Scalar lambda, bool commit, Vector& internal, Vector& external,
                 Scalar& energy, bool want_energy = true);
+  /// The elastic strain energy [J] of the last evaluation with
+  /// `want_energy` (the dedicated kernel: the stored energy less the
+  /// hardening energy); NaN with the generic dispatch, which does not
+  /// separate it.
+  Scalar elastic_energy() const { return elastic_; }
 
   /// The internal force by the generic dispatch at u from `history`
   /// (empty: virgin), with nothing stored.
@@ -176,6 +182,8 @@ class ExplicitInternalForce {
   std::vector<PlasticState> full_saved_;
   std::vector<Scalar> element_force_;   ///< ne x 24
   std::vector<Scalar> element_energy_;  ///< ne
+  std::vector<Scalar> element_elastic_; ///< ne: their elastic parts
+  Scalar elastic_ = std::numeric_limits<Scalar>::quiet_NaN();
   std::vector<Index> incidence_ptr_;    ///< per node, into incidence_
   std::vector<Index> incidence_;        ///< offsets e * 24 + 3 a, ascending element
   Vector dead_;                         ///< the load case's loads at lambda = 1

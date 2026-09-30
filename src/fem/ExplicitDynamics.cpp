@@ -929,6 +929,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   Vector previous_values = values;
   Scalar stored = 0.0;
   Scalar stored_start = 0.0;
+  Scalar elastic = 0.0;  // elastic strain energy at the last recorded step
   // The contact buffers hold every slave node: they never grow in the loop.
   std::vector<ContactNodeForce> contact_forces;
   std::vector<ContactNodeForce> contact_old;
@@ -989,6 +990,13 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     throw ConfigError(std::string("the explicit start state cannot be evaluated: ") + ex.what());
   }
   stored_start = stored;
+  elastic = force_->elastic_energy();
+  // A step that continues a stressed part (a retract) measures its kinetic
+  // energy against the elastic energy of the state: its internal energy
+  // holds the hardening energy of the whole forming history.
+  const bool stressed_start = stored_start > 0.0;
+  const bool elastic_basis = stressed_start && std::isfinite(elastic);
+  res.kinetic_ratio_basis = elastic_basis ? "elastic energy" : "internal energy";
   centres(0.0, c_old);
   try {
     contact_step(0.0, dt);
@@ -1036,6 +1044,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     r.internal = w_int;
     r.internal_energy = stored_start + w_int;
     r.stored = stored;
+    r.elastic = elastic;
     r.plastic = w_int - (stored - stored_start);
     r.contact_normal = w_cn;
     r.contact_friction = w_ct;
@@ -1072,6 +1081,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   struct Checkpoint {
     Vector u, v, a, f_int, f_ext, fc, reactions;
     Scalar tau = 0, tau_base = 0, dt = 0, stored = 0;
+    Scalar elastic = 0;
     Scalar max_penetration_ratio = 0;
     long step = 0, since_base = 0;
     Scalar w_int = 0, w_ext = 0, w_cn = 0, w_ct = 0, w_damp = 0, w_mass = 0, kin = 0;
@@ -1093,6 +1103,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     saved.tau_base = tau_base;
     saved.dt = dt;
     saved.stored = stored;
+    saved.elastic = elastic;
     saved.max_penetration_ratio = res.max_penetration_ratio;
     saved.step = step;
     saved.since_base = since_base;
@@ -1122,6 +1133,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     tau_base = saved.tau_base;
     dt = saved.dt;
     stored = saved.stored;
+    elastic = saved.elastic;
     res.max_penetration_ratio = saved.max_penetration_ratio;
     step = saved.step;
     since_base = saved.since_base;
@@ -1197,6 +1209,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
       ScopedTimer st(timing, "internal_force");
       const bool recorded = (step + 1) % options_.history_every == 0 || done;
       force_->evaluate(u, ramp(tau_new), true, f_int, f_ext, stored, recorded);
+      if (recorded) elastic = force_->elastic_energy();
     } catch (const SolverError& ex) {
       stop(ex.what());
       break;
@@ -1424,23 +1437,30 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   res.final_time_step = dt;
   res.contact = first_contact >= 0;
 
-  // The kinetic energy ratio after the first contact, against the internal
-  // energy of the state (a run that continues a formed part - a retract -
-  // starts with its stored energy).
+  // The kinetic energy ratio after the first contact: against the internal
+  // energy of a virgin start, the elastic energy of a stressed one (a
+  // retract). The warned ratio skips the records whose reference energy is
+  // below 1 % of its final value (the first touch of a flat sheet); the
+  // peak over all of them is reported beside it.
   if (first_contact >= 0 && !res.records.empty()) {
-    const Scalar final_internal = res.records.back().internal_energy;
+    const auto reference = [&](const ExplicitRecord& r) {
+      return elastic_basis ? r.elastic : r.internal_energy;
+    };
+    const Scalar final_reference = reference(res.records.back());
     for (const ExplicitRecord& r : res.records) {
-      if (r.step < first_contact || !(r.internal_energy > kRatioFloor * final_internal) ||
-          !(r.internal_energy > 0.0)) {
-        continue;
+      const Scalar e = reference(r);
+      if (r.step < first_contact || !(e > 0.0)) continue;
+      const Scalar ratio = r.kinetic / e;
+      res.peak_kinetic_ratio = std::max(res.peak_kinetic_ratio, ratio);
+      if (e > kRatioFloor * final_reference) {
+        res.max_kinetic_ratio = std::max(res.max_kinetic_ratio, ratio);
       }
-      res.max_kinetic_ratio = std::max(res.max_kinetic_ratio, r.kinetic / r.internal_energy);
     }
   }
   if (res.max_kinetic_ratio > options_.kinetic_ratio_warning) {
     std::ostringstream os;
-    os << "the kinetic energy reached " << res.max_kinetic_ratio
-       << " of the internal work after the first contact (warning above "
+    os << "the kinetic energy reached " << res.max_kinetic_ratio << " of the "
+       << res.kinetic_ratio_basis << " after the first contact (warning above "
        << options_.kinetic_ratio_warning
        << "): the run is not quasi-static - slow the tool or reduce the mass scaling";
     res.warnings.push_back(os.str());
@@ -1479,8 +1499,9 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   timing.add("total", wall.elapsed_seconds());
   log::info("explicit run ", res.completed ? "completed" : "STOPPED", ": ", step, " steps, ",
             wall.elapsed_seconds(), " s (", wall.elapsed_seconds() / std::max<long>(step, 1) * 1e3,
-            " ms a step), kinetic/internal ", res.max_kinetic_ratio,
-            ", penetration/thickness ", res.max_penetration_ratio, ", energy error ",
+            " ms a step), kinetic/internal ", res.max_kinetic_ratio, " (peak ",
+            res.peak_kinetic_ratio, "), penetration/thickness ", res.max_penetration_ratio,
+            ", energy error ",
             res.max_energy_error, ", added mass ", 100.0 * res.added_mass_fraction, " %");
   return res;
 }

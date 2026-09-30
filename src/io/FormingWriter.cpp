@@ -91,16 +91,20 @@ std::vector<std::string> write_forming_step(const ResultWriter& writer, const Fe
     // The energy history of an explicit step (ExplicitDynamics.hpp).
     CsvWriter csv(writer.file(stem + "_energy.csv"),
                   {"step", "t_s", "pseudo_t_s", "time_step_s", "kinetic_J", "internal_work_J",
-                   "stored_J", "plastic_dissipation_J", "contact_normal_work_J",
+                   "stored_J", "elastic_J", "plastic_dissipation_J", "contact_normal_work_J",
                    "contact_friction_work_J", "damping_J", "external_work_J",
-                   "mass_scaling_work_J", "energy_error_J", "kinetic_internal_ratio"});
+                   "mass_scaling_work_J", "energy_error_J", "kinetic_ratio"});
+    // The kinetic energy over the step's reference energy (its
+    // kinetic_ratio_basis in summary.json), unfiltered.
+    const bool elastic_basis = s.explicit_result.kinetic_ratio_basis == "elastic energy";
     for (const ExplicitRecord& r : s.explicit_result.records) {
+      const Scalar reference = elastic_basis ? r.elastic : r.internal_energy;
       csv.raw_row({std::to_string(r.step), number(r.time), number(r.pseudo_time),
                    number(r.time_step), number(r.kinetic), number(r.internal), number(r.stored),
-                   number(r.plastic), number(r.contact_normal), number(r.contact_friction),
-                   number(r.damping), number(r.external), number(r.mass_scaling),
-                   number(r.error),
-                   number(r.internal_energy > 0.0 ? r.kinetic / r.internal_energy : 0.0)});
+                   number(r.elastic), number(r.plastic), number(r.contact_normal),
+                   number(r.contact_friction), number(r.damping), number(r.external),
+                   number(r.mass_scaling), number(r.error),
+                   number(reference > 0.0 ? r.kinetic / reference : 0.0)});
     }
     csv.close();
     files.push_back(stem + "_energy.csv");
@@ -272,6 +276,8 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
       je.set("contact_stiffness", num(eo.contact_stiffness));
       je.set("contact", json::Value::make_bool(er.contact));
       je.set("max_kinetic_ratio", num(er.max_kinetic_ratio));
+      je.set("peak_kinetic_ratio", num(er.peak_kinetic_ratio));
+      je.set("kinetic_ratio_basis", str(er.kinetic_ratio_basis));
       je.set("kinetic_ratio_warning", num(eo.kinetic_ratio_warning));
       je.set("max_penetration_ratio", num(er.max_penetration_ratio));
       je.set("penetration_warning", num(eo.penetration_warning));

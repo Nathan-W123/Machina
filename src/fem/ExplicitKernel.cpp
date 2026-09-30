@@ -172,6 +172,7 @@ struct ElementJob {
   bool commit = false;
   bool want_energy = false;
   PointLog* logs = nullptr;  ///< logarithmic: kP of them (scratch)
+  Scalar* elastic = nullptr; ///< with want_energy: the element's elastic energy
 };
 
 /// The element's nodal forces, node-major (out[3 a + i]), and its stored
@@ -292,6 +293,7 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
         for (int r = 0; r < 6; ++r) product += e[r][q] * s[r][q];
         energy += w[q] * (0.5 * product);
       }
+      *job.elastic = energy;
     }
     for (int q = 0; q < kP; ++q) need_return[q] = false;
   } else if (pr.radial && !job.want_energy && job.full == nullptr) {
@@ -369,6 +371,15 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
           plastic_return(*job.material, job.state, strain, committed, 0.0, false);
       for (int r = 0; r < 6; ++r) s[r][q] = ret.stress(r);
       energy += w[q] * ret.energy;
+      if (job.want_energy) {
+        // The elastic part, 1/2 sigma : (eps - eps_p) (isotropic linear
+        // elasticity in the strain measure; engineering shears).
+        Scalar product = 0.0;
+        for (int r = 0; r < 6; ++r) {
+          product += ret.stress(r) * (e[r][q] - ret.state.plastic_strain(r));
+        }
+        *job.elastic += w[q] * (0.5 * product);
+      }
       if (!job.commit || !job.plastic) continue;
       if (job.full != nullptr) {
         job.full[q] = ret.state;
@@ -644,6 +655,7 @@ void ExplicitInternalForce::build_dedicated() {
   }
   element_force_.assign(static_cast<std::size_t>(ne_) * 24, 0.0);
   element_energy_.assign(static_cast<std::size_t>(ne_), 0.0);
+  element_elastic_.assign(static_cast<std::size_t>(ne_), 0.0);
   // Node -> (element, local node), ascending element (the order in which
   // NonlinearSystem's serial assembly adds the element forces).
   incidence_ptr_.assign(static_cast<std::size_t>(nn_) + 1, 0);
@@ -789,6 +801,7 @@ void ExplicitInternalForce::evaluate(const Vector& u, Scalar lambda, bool commit
   internal = std::move(ev.internal);
   external = std::move(ev.external);
   energy = ev.energy;
+  elastic_ = std::numeric_limits<Scalar>::quiet_NaN();
   if (commit) system_->commit(ev);
 }
 
@@ -899,6 +912,8 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
       job.averaged = averaged_[ue] != 0;
       job.commit = commit;
       job.want_energy = want_energy;
+      element_elastic_[ue] = 0.0;
+      job.elastic = &element_elastic_[ue];
       if (job.plastic) {
         const auto slot = static_cast<std::size_t>(slot_[ue]);
         if (compact_) {
@@ -947,6 +962,8 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
   energy = 0.0;
   if (want_energy) {
     for (Scalar v : element_energy_) energy += v;
+    elastic_ = 0.0;
+    for (Scalar v : element_elastic_) elastic_ += v;
   }
   if (external.size() != dead_.size()) external.resize(dead_.size());
   external.noalias() = lambda * dead_;

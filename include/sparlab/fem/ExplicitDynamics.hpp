@@ -104,10 +104,16 @@
 /// \f$E_{err} = T - T_0 + W_{int} + D - W_{ext} - W_c - W_m\f$, relative to the
 /// largest energy of the run so far. The plastic dissipation is W_int less
 /// the change of the stored (elastic and hardening) energy. Quasi-static
-/// validity is judged by T over the internal energy of the state (the
-/// stored energy at the start plus \f$W_{int}\f$) after the first contact and by the
-/// balance (both warned about); a balance beyond `energy_limit` stops the
-/// run, as do non-finite values and an inverted element.
+/// validity is judged by the ratio of T to an energy of the state after
+/// the first contact and by the balance (both warned about): from a virgin
+/// start, the internal energy \f$W_{int}\f$; for a step that continues a
+/// stressed part (a retract), the elastic strain energy of the state (the
+/// dedicated kernel; the generic dispatch gives only the stored energy,
+/// elastic plus hardening, and falls back to it). The warned ratio skips the
+/// records whose energy is below 1 % of its final value; the unfiltered
+/// peak - the plunge into a flat sheet - is reported beside it. A balance
+/// beyond `energy_limit` stops the run, as do non-finite values and an
+/// inverted element.
 ///
 /// **Internal forces.** A dedicated kernel for Hex8 (finite, logarithmic -
 /// elastoplastic elements only - or small-strain kinematics; elastic, or
@@ -288,6 +294,9 @@ struct ExplicitRecord {
   /// W_int (from a virgin start, W_int) [J].
   Scalar internal_energy = 0.0;
   Scalar stored = 0.0;       ///< elastic + hardening energy of the state [J]
+  /// The elastic strain energy of the state [J] (dedicated kernel; NaN with
+  /// the generic element dispatch, which does not separate it).
+  Scalar elastic = 0.0;
   Scalar plastic = 0.0;      ///< W_int - (stored - stored at the start) [J]
   Scalar contact_normal = 0.0;    ///< work of the normal contact forces on the body [J]
   Scalar contact_friction = 0.0;  ///< work of the friction forces on the body [J]
@@ -330,10 +339,17 @@ struct ExplicitResult {
   Scalar added_mass_fraction = 0.0;  ///< (scaled - physical) / physical
   Scalar max_mass_scale = 1.0;       ///< largest s_e
   int scaled_elements = 0;           ///< elements with s_e > 1
-  /// The largest T / internal energy over the records after the first
-  /// contact whose internal energy exceeds 1 % of its value at the end (0
-  /// without contact).
+  /// The largest T / reference energy (`kinetic_ratio_basis`) over the
+  /// records after the first contact whose reference energy exceeds 1 % of
+  /// its value at the end (0 without contact): the ratio warned about.
   Scalar max_kinetic_ratio = 0.0;
+  /// The same over every record after the first contact (the plunge of a
+  /// tool into a flat sheet included) [-].
+  Scalar peak_kinetic_ratio = 0.0;
+  /// What the kinetic energy is measured against: "internal energy" (a
+  /// virgin start), "elastic energy" (a stressed start, dedicated kernel)
+  /// or "stored energy" (a stressed start, generic dispatch).
+  std::string kinetic_ratio_basis = "internal energy";
   /// The largest contact penetration over the node's element thickness,
   /// over every time step [-].
   Scalar max_penetration_ratio = 0.0;

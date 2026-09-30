@@ -779,6 +779,60 @@ TEST_CASE("a plastic run dissipates energy and closes its balance", "[explicit]"
   REQUIRE(r.records.back().max_plastic_strain > 0.01);
 }
 
+TEST_CASE("the dedicated kernel's elastic energy is the stored energy less the hardening energy",
+          "[explicit]") {
+  // The bar pulled 2 % (J2, linear isotropic hardening): the hardening
+  // energy is sum_q w_q int_0^alpha (sigma_y - sigma_y0), from the history;
+  // the elastic energy the rest of the stored energy, for every kinematics
+  // the kernel takes. The generic dispatch does not separate it (NaN).
+  const Scalar length = 0.01;
+  const IsotropicMaterial material = j2_material();
+  const FemModel model =
+      finalised(hex_block(8, 1, 1, length, 0.001, 0.001), material,
+                {clamp(box(-kInf, 1.0e-9), {0}), clamp(box(-kInf, 1.0e-9, -kInf, 1e-9), {1}),
+                 clamp(box(-kInf, 1e-9, -kInf, kInf, -kInf, 1e-9), {2}),
+                 clamp(box(length - 1e-9, kInf), {0}, Vector3(0.02 * length, 0, 0))});
+  const Assembler assembler(model);
+  const Scalar weight = model.mesh().element_measure(0) / 8.0;  // every point of the uniform bar
+  ExplicitOptions o;
+  o.history_every = 50;
+  o.mass_damping = 2.0e4;
+  ExplicitDrive drive = held_drive(model, 2.0e-4);
+  drive.fixed_start.setZero();
+  for (const Kinematics kin :
+       {Kinematics::SmallStrain, Kinematics::Finite, Kinematics::FiniteLogarithmic}) {
+    INFO((kin == Kinematics::SmallStrain ? "small strain"
+          : kin == Kinematics::Finite    ? "finite"
+                                         : "logarithmic"));
+    NonlinearOptions nl;
+    nl.kinematics = kin;
+    ExplicitDynamics dyn(model, assembler, nl, {}, o);
+    REQUIRE(dyn.dedicated());
+    const ExplicitResult r =
+        dyn.run(drive, ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+    REQUIRE(r.completed);
+    Scalar hardening = 0.0;
+    for (const std::vector<PlasticState>& points : r.final_state.history) {
+      for (const PlasticState& p : points) {
+        hardening += weight * material.plasticity().isotropic_energy(p.equivalent_plastic_strain);
+      }
+    }
+    const ExplicitRecord& last = r.records.back();
+    INFO("stored " << last.stored << " J, elastic " << last.elastic << " J, hardening "
+                   << hardening << " J");
+    REQUIRE(hardening > 0.1 * last.stored);
+    REQUIRE(last.elastic > 0.0);
+    REQUIRE(last.elastic + hardening == Approx(last.stored).epsilon(1.0e-12));
+  }
+  ExplicitOptions generic = o;
+  generic.dedicated_kernel = false;
+  const ExplicitResult g = ExplicitDynamics(model, assembler, small_strain(), {}, generic)
+                               .run(drive, ExplicitState{Vector::Zero(model.dofs().num_dofs()),
+                                                         {}, {}, {}});
+  REQUIRE(g.completed);
+  REQUIRE(std::isnan(g.records.back().elastic));
+}
+
 TEST_CASE("the time map moves the fastest tool at the tool speed and skips standstills",
           "[explicit]") {
   // Tool a: 3 mm along x by t = 1 s, still to t = 2 s, 4 mm along y by 3 s.
@@ -1147,16 +1201,22 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
   }
   CHECK(pushed > static_cast<int>(dent.increments.size()) / 2);
   // The lift ends with the ball off the sheet. Its kinetic energy ratio is
-  // measured against the dented sheet's internal energy, not against the
-  // little work of the lift itself.
+  // measured against the dented sheet's elastic energy - neither against
+  // the little work of the lift itself nor against the hardening energy of
+  // the dent, which no retract can stir.
   CHECK(all.steps[1].increments.back().tools.at(0).active_nodes == 0);
   const ExplicitResult& lift = all.steps[1].explicit_result;
   INFO("lift: kinetic ratio " << lift.max_kinetic_ratio << ", internal work "
-                              << lift.records.back().internal << " J of an internal energy "
-                              << lift.records.back().internal_energy << " J");
+                              << lift.records.back().internal << " J, elastic energy "
+                              << lift.records.back().elastic << " J of a stored energy "
+                              << lift.records.back().stored << " J");
   CHECK(lift.contact);
-  CHECK(lift.records.back().internal_energy > 10.0 * std::abs(lift.records.back().internal));
-  CHECK(lift.max_kinetic_ratio < dent.explicit_result.max_kinetic_ratio + 0.1);
+  CHECK(lift.kinetic_ratio_basis == "elastic energy");
+  // (The dent's stored energy is 92 % hardening energy: against it the
+  // lift's ratio was 13 times smaller.)
+  CHECK(lift.records.back().elastic > 0.0);
+  CHECK(lift.records.back().elastic < 0.1 * lift.records.back().stored);
+  CHECK(lift.max_kinetic_ratio > 0.0);
 
   // A restart from the end of the explicit steps releases to the same state
   // bit for bit: the handoff (displacement, velocity, plastic and friction
@@ -1347,9 +1407,9 @@ TEST_CASE("a form_explicit run writes the step files, its energy history and its
     INFO(stem);
     CHECK(first_line(stem + "_nodes.csv") == "node,X,Y,Z,ux,uy,uz");
     CHECK(first_line(stem + "_energy.csv") ==
-          "step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,"
+          "step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,elastic_J,"
           "plastic_dissipation_J,contact_normal_work_J,contact_friction_work_J,damping_J,"
-          "external_work_J,mass_scaling_work_J,energy_error_J,kinetic_internal_ratio");
+          "external_work_J,mass_scaling_work_J,energy_error_J,kinetic_ratio");
   }
   CHECK(lines("step_1_press_energy.csv") ==
         1 + static_cast<int>(r.steps[0].explicit_result.records.size()));
