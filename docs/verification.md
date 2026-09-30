@@ -65,6 +65,7 @@ All numbers in this document come from `results/verification/summary.json`,
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
 | Non-linear oscillators, finite-strain elastic and elastoplastic, vs exact motion (Q4, Hex8) | verification | largest relative difference to the scalar HHT-alpha recursion (order `>= 1.8` to the exact motion also required) | `1.74e-11` | `1e-9` | PASS |
+| Explicit central differences on a rod vs the exact continuum solution (Q4 generic, Hex8 dedicated kernel) | verification | smallest observed convergence order, `h` and `dt` halved together (energy balance `< 1e-2`, stable-step estimates below the exact limit, quasi-static limit `< 1e-3` also required) | `1.981` | `>= 1.9` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -1998,6 +1999,36 @@ numerical dissipation enters the balance too (its coarsest run, 20 steps a
 period, overshoots to `174.91 J`).
 `docs/figures/verify_nonlinear_oscillator.png` shows both motions and the
 convergence.
+
+**Explicit central differences** (`explicit-rod`). The rod of
+`rod-transient` under the same ramped end force, integrated by the explicit
+integrator of the forming analysis (`ExplicitDynamics.hpp`) with the lumped
+mass at Courant number 0.5 (`dt = h / (2c)`), small strain; Q4 through the
+generic element dispatch, Hex8 through the dedicated kernel - the two give
+the same numbers. The end displacement at every 8th step of the finest run
+converges to the continuum's modal series at order `1.947`, `1.981` and
+`1.981` over 20, 40, 80 and 160 elements; on 160 elements the error is
+`2.14e-5` of the largest displacement and the energy balance `2.4e-7`
+(`1.6e-5` on 20). The stable step: on 20 elements the exact limit of the
+constrained lumped system is `9.9134e-6 s`; the element eigenvalue bound
+gives `9.9058e-6 s` (the one-dimensional `h / c` exactly) and power iteration
+on the unconstrained system `9.67e-6 s`, both below it, as they must be. A
+quasi-static run - the force ramped over 20 periods and held for 5 with mass
+damping of 20 % of critical in the first mode - ends at `F L / (E A)` to
+`2.0e-7`. `tests/test_explicit.cpp` (`[explicit]`) adds the discrete checks:
+a run equals the scalar central-difference recursion of every lumped-mass
+mode of a Hex8 cantilever; `dt = 0.99 * 2 / omega_max` stays bounded and
+`1.01` grows (with the element bound above `omega_max` and power iteration on
+it); selective mass scaling reaches its target step with the added mass it
+reports and uniform scaling divides the frequencies by `sqrt(s)`; the
+dedicated Hex8 kernel equals the element dispatch to `2.5e-14` (small and
+finite strain, elastic, J2, Hill48 and Chaboche, mean dilatation, uniform
+and distorted meshes); an undamped linear run balances its energy at second
+order in the step and a plastic run dissipates; a dented sheet (finite
+strain, plasticity, friction, selective mass scaling) is identical bit for
+bit on 1 and 3 threads and its step loop allocates nothing; an explicit
+forming step hands its state to an implicit release exactly (docs/forming.md,
+section 7).
 
 **Cross-validation** (section 14's two codes, seven decks, `configs/
 verification/transient_*.json` and `frequency_response_*.json`). scikit-fem
