@@ -58,6 +58,18 @@ FemModel::FemModel(Mesh mesh, IsotropicMaterial material, Scalar thickness,
 
 void FemModel::check_sheet_integration() const {
   const IntegrationOptions& opts = integration_;
+  // The gradients of the incompatible modes vanish at the element centre, so
+  // a one-point rule along any natural axis leaves the modes without
+  // stiffness there (K_aa singular).
+  if (opts.formulation == ElementFormulation::IncompatibleModes &&
+      (opts.stiffness_points == 1 || opts.thickness_points == 1)) {
+    throw ConfigError(std::string("the incompatible-mode Hex8 needs at least two integration "
+                                  "points along every natural axis: the gradients of its modes "
+                                  "vanish at the element centre and a one-point rule leaves "
+                                  "them without stiffness; set 'model.integration.") +
+                      (opts.stiffness_points == 1 ? "stiffness_points'" : "thickness_points'") +
+                      " to 2 or more");
+  }
   if (opts.thickness_points == 0) return;
   if (mesh_.element_type() != ElementType::Hex8) {
     throw ConfigError("'model.integration.thickness_points' sets the stiffness rule through "

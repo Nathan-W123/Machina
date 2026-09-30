@@ -115,7 +115,8 @@ Matrix Hex8IncompatibleElement::stiffness(const Matrix& coords_in, const Matrix&
   const Eigen::LLT<Eigen::Matrix<Scalar, 9, 9>> llt(kaa);
   if (llt.info() != Eigen::Success) {
     throw SolverError("Hex8 incompatible modes: the stiffness of the modes is not positive "
-                      "definite; the constitutive matrix is not positive definite");
+                      "definite: the constitutive matrix is not positive definite, or the rule has a "
+                      "single point along a natural axis (where the mode gradients vanish)");
   }
   const Eigen::Matrix<Scalar, 9, 24> coupling = llt.solve(kau);
   Eigen::Matrix<Scalar, 24, 24> ke = kuu - kau.transpose() * coupling;

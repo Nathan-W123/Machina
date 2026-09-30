@@ -1235,6 +1235,30 @@ TEST_CASE("the element formulation and the thickness rule are read from a deck a
                     ConfigError);
 }
 
+TEST_CASE("a rule of one point along a natural axis is refused for the incompatible-mode Hex8",
+          "[incompatible][config]") {
+  // The gradients of the modes vanish at the element centre: one point
+  // leaves the modes without stiffness, which would only surface later as a
+  // singular K_aa and a cut step.
+  const auto build = [](ElementFormulation f, int stiffness_points, int thickness_points) {
+    IntegrationOptions o;
+    o.formulation = f;
+    o.stiffness_points = stiffness_points;
+    o.thickness_points = thickness_points;
+    return FemModel(Mesh(unit_box_coords(), {0, 1, 2, 3, 4, 5, 6, 7}, ElementType::Hex8),
+                    IsotropicMaterial(200.0e9, 0.3, 7850.0, "steel"), 1.0,
+                    StressState::ThreeDimensional, o);
+  };
+  REQUIRE_THROWS_AS(build(ElementFormulation::IncompatibleModes, 1, 0), ConfigError);
+  REQUIRE_THROWS_AS(build(ElementFormulation::IncompatibleModes, 2, 1), ConfigError);
+  REQUIRE_THROWS_AS(build(ElementFormulation::IncompatibleModes, 1, 3), ConfigError);
+  REQUIRE(build(ElementFormulation::IncompatibleModes, 2, 0).element().num_internal_dofs() == 9);
+  REQUIRE(build(ElementFormulation::IncompatibleModes, 2, 2).element().num_internal_dofs() == 9);
+  // The standard element keeps its one-point rules.
+  REQUIRE(build(ElementFormulation::Standard, 1, 0).element().num_internal_dofs() == 0);
+  REQUIRE(build(ElementFormulation::Standard, 2, 1).element().num_internal_dofs() == 0);
+}
+
 namespace {
 
 /// The stretch along z of a neo-Hookean body stretched by `sx`, `sy` along
