@@ -39,11 +39,14 @@ the rim pass pushes the sheet up by itself: in the band it sweeps (signed
 distance to the target's outline in [-rim_inside, rim_outside], the flange
 strip included, which displacement adjustment then adjusts instead of
 holding - `compensation_masks`) the command may rise above the plane, by at
-most `rim_max_raise` and no further than the support ball can push the
-commanded underside from below (`command_upper_bound`: a raised band
-narrower than the ball is out of its reach). Every other command is kept
-at z <= 0 (to within `COMMAND_TOLERANCE`), and `build_deck` refuses one above
-the bound.
+most `rim_max_raise` and no further than the rim pass written for it pushes
+the sheet: the top of the volume its ball sweeps along its loops
+(`precomp.toolpath.swept_ball_top`), plus the sheet thickness. The loops sit
+at the lift cutter of the commanded underside, so a raise narrower than the
+ball, a corner seen from below tighter than it, or a raise between two loops
+is out of reach; `command_upper_bound` cuts the command to what the ball
+reaches, to a fixed point. Every other command is kept at z <= 0 (to within
+`COMMAND_TOLERANCE`), and `build_deck` refuses one above the bound.
 
 All lengths are metres.
 """
@@ -58,8 +61,8 @@ from scipy.spatial import cKDTree
 
 from .._util import PrecompError
 from ..geometry.heightmap import HeightMap
-from ..toolpath import (AIR, Toolpath, dsif_support_points, reach_from_below, rim_pass_path,
-                        signed_outline_distance)
+from ..toolpath import (AIR, Toolpath, dsif_support_points, rim_pass_path,
+                        signed_outline_distance, swept_ball_top)
 from .setup import CONTACT_KEYS, FormingSetup
 
 #: Names of the support tools in the deck (fields of tool_forces.csv).
@@ -74,8 +77,11 @@ RIM_PASS_WINDOW = (2.0, 3.0)
 #: (round-off of the conditioning; far below the mesh's resolution): above
 #: the sheet plane without a rim pass, above `command_upper_bound` with one.
 COMMAND_TOLERANCE = 1e-6
-#: Changes of the bound's iteration below this are none [m].
-BOUND_TOLERANCE = 1e-9
+#: The fixed point of `command_upper_bound` is reached when an iteration
+#: changes the command by at most this [m] ...
+BOUND_CONVERGENCE = 1e-8
+#: ... or after this many iterations.
+BOUND_ITERATIONS = 8
 
 
 @dataclass
@@ -236,6 +242,34 @@ def _csv(t: np.ndarray, pts: np.ndarray) -> str:
     return "\n".join(lines) + "\n"
 
 
+def rim_pass(setup: FormingSetup, commanded: HeightMap, reference: HeightMap) -> Toolpath:
+    """The rim pass the deck writes for `commanded` (its full command, above
+    the plane included) with the fixture made for `reference`: the
+    setup's `precomp.toolpath.rim_pass_path` (the support ball, the band
+    and loop spacing of `support_settings`, the point spacing and direction
+    of the forming path)."""
+    s = setup.resolved_support()
+    return rim_pass_path(commanded, reference, float(s["radius"]), float(setup.thickness),
+                         inside=float(s["rim_inside"]), outside=float(s["rim_outside"]),
+                         band_spacing=float(s["rim_spacing"]),
+                         spacing=float(setup.toolpath_spacing), clearance=float(s["clearance"]),
+                         direction=setup.toolpath_direction)
+
+
+def rim_pass_reach(setup: FormingSetup, commanded: HeightMap, path: Toolpath) -> np.ndarray:
+    """(ny, nx) [m] on `commanded`'s grid: the highest the rim pass `path`
+    pushes the sheet's top surface - the top of the volume its ball sweeps
+    up to its last point in contact (`precomp.toolpath.swept_ball_top`;
+    the steps "rim_pass" simulates), plus the sheet thickness (the vertical
+    thickness stays t under the sine law). -inf where the ball never passes
+    under a node."""
+    on = np.flatnonzero(path.level != AIR)
+    if not len(on):
+        return np.full(commanded.grid.shape, -np.inf)
+    pts = path.points[:on[-1] + 1]
+    return swept_ball_top(pts, path.tool_radius, commanded.grid) + float(setup.thickness)
+
+
 def dsif_trajectory(setup: FormingSetup, forming_surface: HeightMap, path: Toolpath,
                     commanded: Optional[HeightMap] = None,
                     reference: Optional[HeightMap] = None
@@ -272,10 +306,7 @@ def dsif_trajectory(setup: FormingSetup, forming_surface: HeightMap, path: Toolp
         return t, pts, None, info
     if commanded is None or reference is None:
         raise PrecompError("the rim pass needs the commanded surface and the reference part")
-    rim = rim_pass_path(commanded, reference, R2, t0, inside=float(s["rim_inside"]),
-                        outside=float(s["rim_outside"]), band_spacing=float(s["rim_spacing"]),
-                        spacing=float(setup.toolpath_spacing), clearance=float(s["clearance"]),
-                        direction=setup.toolpath_direction)
+    rim = rim_pass(setup, commanded, reference)
     up = np.array([0.0, 0.0, 1.0])
     rc = rim.level != AIR
     _check_reach(setup, rim.points[rc], np.tile(up, (int(rc.sum()), 1)), R2, "rim pass")
@@ -356,36 +387,42 @@ def command_upper_bound(setup: FormingSetup, target: HeightMap):
     pass: the forming tool only pushes down, a plate at the sheet's bottom
     and the synchronised support push nothing above the plane. With the rim
     pass, on the band and strip it sweeps (`rim_band`), the command may rise
-    above the plane by at most `rim_max_raise`, and only as far as the
-    support ball can push its underside from below: the reach of the ball
-    under the command's underside (`precomp.toolpath.reach_from_below` of
-    z - t; the vertical thickness is t under the sine law) - a raised band
-    narrower than the ball, or a corner seen from below tighter than it,
-    cannot be pushed up by it and is cut to what the ball reaches (never
-    below the plane). The cut changes the underside, so it is repeated
-    until nothing changes (at most 8 times).
+    above the plane by at most `rim_max_raise`, and only as far as the rim
+    pass written for it pushes the sheet: `rim_pass_reach` of `rim_pass` -
+    the top of the volume the ball sweeps along its loops, plus t. The loops
+    sit at the lift cutter of the command's underside, so a raised band
+    narrower than the ball, a corner seen from below tighter than it (the
+    part's rim), the outermost loop held down by the flange beside it, or a
+    raise between two loops cannot be pushed up by it and is cut to what the
+    ball reaches (never below the plane). The cut lowers the underside the
+    loops follow, so it is repeated on the cut command until an iteration
+    changes it by at most `BOUND_CONVERGENCE` (at most `BOUND_ITERATIONS`
+    times): the rim pass made for a command at or below the bound then
+    reaches it (`check_command` verifies exactly that). Where nothing is
+    raised the bound is `rim_max_raise` on the band (nothing to check).
     """
     band, strip = rim_band(setup, target)
-    cap = np.zeros(target.grid.shape)
     if not (band.any() or strip.any()):
-        return lambda z: cap
+        zero = np.zeros(target.grid.shape)
+        return lambda z: zero.copy()
     s = setup.resolved_support()
     zone = band | strip
-    cap[zone] = float(s["rim_max_raise"])
-    R = float(s["radius"])
-    t = float(setup.thickness)
+    cap = np.where(zone, float(s["rim_max_raise"]), 0.0)
 
     def bound(z: np.ndarray) -> np.ndarray:
         z = np.asarray(z, dtype=float)
+        if z.shape != cap.shape:
+            raise ValueError(f"the command has shape {z.shape}, the target's grid {cap.shape}")
         out = cap.copy()
         cur = np.minimum(z, cap)
-        for _ in range(8):
-            if not (cur > BOUND_TOLERANCE).any():
+        for _ in range(BOUND_ITERATIONS):
+            if not (cur > COMMAND_TOLERANCE).any():
                 break
-            reach = reach_from_below(target.with_z(cur - t), R).z + t
-            out = np.where(zone, np.minimum(cap, np.maximum(reach, 0.0)), 0.0)
+            cmd = target.with_z(cur)
+            reach = rim_pass_reach(setup, cmd, rim_pass(setup, cmd, target))
+            out = np.where(zone, np.clip(reach, 0.0, cap), 0.0)
             new = np.minimum(z, out)
-            if np.abs(new - cur).max() <= BOUND_TOLERANCE:
+            if np.abs(new - cur).max() <= BOUND_CONVERGENCE:
                 break
             cur = new
         return out
@@ -397,9 +434,9 @@ def check_command(setup: FormingSetup, commanded: HeightMap,
                   reference: Optional[HeightMap]) -> None:
     """PrecompError if `commanded` rises more than `COMMAND_TOLERANCE` above
     what the setup's tools can realise (`command_upper_bound`): above the
-    sheet plane anywhere without a DSIF rim pass; with one, above the bound.
-    A command above the plane with a rim pass needs the target the fixture
-    is made for."""
+    sheet plane anywhere without a DSIF rim pass; with one, above what the
+    rim pass the deck writes for it pushes the sheet to. A command above the
+    plane with a rim pass needs the target the fixture is made for."""
     raised = commanded.mask & (commanded.z > COMMAND_TOLERANCE)
     if not raised.any():
         return
@@ -425,12 +462,12 @@ def check_command(setup: FormingSetup, commanded: HeightMap,
         raise PrecompError(
             f"the commanded surface rises above what the tools can realise at {int(over.sum())} "
             f"nodes (up to {worst * 1e3:.3f} mm too high): the forming tool only pushes down, "
-            "and the support ball cannot push the sheet up that far there "
+            "and the rim pass written for this command does not push the sheet up that far "
             "(precomp.fea.support.command_upper_bound)")
 
 
 __all__ = ["PLATE_TOOL", "SUPPORT_TOOL", "SUPPORT_PATH_FILE", "RIM_PASS_WINDOW",
-           "COMMAND_TOLERANCE",
-           "SupportPlan", "plan_support", "plate_nodes", "plate_tool", "support_tool",
-           "dsif_trajectory", "command_upper_bound", "check_command", "compensation_masks",
-           "rim_band", "bottom_node_grid", "part_distance", "outline_distance"]
+           "COMMAND_TOLERANCE", "SupportPlan", "plan_support", "plate_nodes", "plate_tool",
+           "support_tool", "dsif_trajectory", "rim_pass", "rim_pass_reach",
+           "command_upper_bound", "check_command", "compensation_masks", "rim_band",
+           "bottom_node_grid", "part_distance", "outline_distance"]

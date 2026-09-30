@@ -17,9 +17,10 @@ from precomp import PrecompError
 from precomp._util import canonical_json, read_json, sha256_bytes
 from precomp.compensation import FEAPredictor, displacement_adjustment
 from precomp.fea import FormingSetup, build_deck, deck_document, deck_hash, load_result, simulate
-from precomp.fea.support import (COMMAND_TOLERANCE, PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL, bottom_node_grid,
-                                 check_command, command_upper_bound, compensation_masks,
-                                 outline_distance, part_distance, plate_nodes, rim_band)
+from precomp.fea.support import (COMMAND_TOLERANCE, PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL,
+                                 bottom_node_grid, check_command, command_upper_bound,
+                                 compensation_masks, outline_distance, part_distance,
+                                 plate_nodes, rim_band)
 from precomp.geometry import Grid, HeightMap, TruncatedCone
 from precomp.geometry.parts import part_from_dict
 from precomp.materials import get_material
@@ -372,6 +373,65 @@ def test_displacement_adjustment_rises_above_the_plane_only_where_the_support_ca
     check_command(big, up.proposed.with_z(cut), cone)
     with pytest.raises(ValueError, match="upper_bound"):
         displacement_adjustment(cone, pred, iterations=1, upper_bound=-1.0)
+
+
+def _written_rim_pass_reach(deck_dir, radius, grid):
+    """What the rim pass written into the deck pushes the sheet's top to,
+    worked out here from support_path.csv alone: the ball moved in straight
+    lines between the knots of the "rim_pass" step (sampled every 20 um),
+    its top over every node, plus the sheet thickness."""
+    step = next(s for s in forming(deck_dir)["steps"] if s["name"] == "rim_pass")
+    sp = pd.read_csv(deck_dir / SUPPORT_PATH_FILE)
+    knots = sp[(sp["t"] >= step["time"][0]) & (sp["t"] <= step["time"][1])]
+    knots = knots[["x", "y", "z"]].to_numpy()
+    X, Y = grid.mesh()
+    top = np.full(X.shape, -np.inf)
+    for a, b in zip(knots[:-1], knots[1:]):
+        n = max(1, int(np.ceil(np.linalg.norm(b - a) / 2e-5)))
+        for c in a + (np.arange(n + 1) / n)[:, None] * (b - a):
+            win = (np.abs(X - c[0]) <= radius) & (np.abs(Y - c[1]) <= radius)
+            d2 = (X[win] - c[0]) ** 2 + (Y[win] - c[1]) ** 2
+            cap = np.where(d2 <= radius ** 2, c[2] + np.sqrt(np.clip(radius ** 2 - d2, 0, None)),
+                           -np.inf)
+            top[win] = np.maximum(top[win], cap)
+    return top + T
+
+
+@pytest.mark.parametrize("radius", [1.5e-3, 2e-3, 4e-3])
+def test_the_written_rim_pass_reaches_every_command_it_accepts(tmp_path, base, cone, radius):
+    """The bound lets a command rise above the sheet plane only as far as
+    the rim pass the deck then writes for that command pushes the sheet: DA
+    against the stand-in sag, cut by the bound, is accepted, and every raised
+    node lies within the tolerance of the top the written ball sweeps
+    (worked out independently from support_path.csv). Its loops follow the
+    command, so each cut is where the ball, not a guess of it, stops: a raise
+    between two loops, next to the held flange or in the rim's corner seen
+    from below is cut; the rest is kept."""
+    rim = base.replace(support="dsif", support_settings={"rim_pass": True,
+                                                          "rim_max_raise": 2e-3,
+                                                          "radius": radius})
+    hold, adjust = compensation_masks(rim, cone)
+    bound = command_upper_bound(rim, cone)
+    up = displacement_adjustment(cone, _sagging_predictor(cone), iterations=1,
+                                 upper_bound=bound, hold_mask=hold,
+                                 adjust_mask=adjust).proposed
+    free = displacement_adjustment(cone, _sagging_predictor(cone), iterations=1,
+                                   upper_bound=2e-3, hold_mask=hold,
+                                   adjust_mask=adjust).proposed
+    raised = up.z > COMMAND_TOLERANCE
+    assert free.z.max() > 5e-4 and (up.z < free.z - 1e-4).any()     # the bound cut ...
+    d = build_deck(rim, up, tmp_path / "d", target=cone)            # ... and it is accepted
+    reach = _written_rim_pass_reach(d, radius, cone.grid)
+    assert np.all(up.z[raised] <= reach[raised] + COMMAND_TOLERANCE)
+    # the bound is a fixed point: the command it allows is the one it returns
+    assert np.array_equal(np.minimum(up.z, bound(up.z)), up.z)
+    if radius < 4e-3:
+        assert up.z.max() > 3e-4 and raised.sum() > 1000
+    else:                        # the validation's ball: the rim's corner is out of its reach
+        assert up.z.max() < 5e-5
+    # what DA asked for without the bound is out of reach, and refused
+    with pytest.raises(PrecompError, match="too high"):
+        build_deck(rim, free, tmp_path / "free", target=cone)
 
 
 def test_a_command_within_a_micrometre_of_the_plane_is_taken_as_it_is(tmp_path, base, cone):

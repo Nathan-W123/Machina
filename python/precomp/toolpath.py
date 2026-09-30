@@ -43,7 +43,7 @@ import pandas as pd
 from scipy import ndimage
 
 from ._util import PathLike, PrecompError, require_positive
-from .geometry.heightmap import HeightMap
+from .geometry.heightmap import Grid, HeightMap
 
 #: Level value of points where the tool moves in the air (approach, retract,
 #: traverse between separate loops).
@@ -756,6 +756,39 @@ def lift_cutter(underside: HeightMap, radius: float) -> HeightMap:
                             metadata={"quantity": "lift_cutter", "radius": float(radius)})
 
 
+def lift_at_points(underside: HeightMap, radius: float, x: np.ndarray, y: np.ndarray
+                   ) -> np.ndarray:
+    """The highest centre heights [m] of a ball of radius R at points (x, y)
+    with no node of `underside` inside it:
+
+        b(p) = min over nodes x_k with |x_k - p| <= R of
+               [underside(x_k) - sqrt(R^2 - |x_k - p|^2)],
+
+    the lift cutter exact over the grid's nodes, as `tool_center_surface`
+    is for the drop cutter, at any point (not only at nodes, and without
+    interpolating the surface). +inf where no node lies within R. A ball at
+    b(p) touches the underside at a node; a surface whose nodes all lie at
+    or above the top of a set of such balls (`swept_ball_top`) lets every
+    one of them rise to the same height again.
+    """
+    R = require_positive("radius", radius)
+    x = np.asarray(x, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+    gx, gy = underside.grid.x, underside.grid.y
+    out = np.full(len(x), np.inf)
+    for k, (px, py) in enumerate(zip(x, y)):
+        i0, i1 = np.searchsorted(gx, px - R, "left"), np.searchsorted(gx, px + R, "right")
+        j0, j1 = np.searchsorted(gy, py - R, "left"), np.searchsorted(gy, py + R, "right")
+        if i0 >= i1 or j0 >= j1:
+            continue
+        d2 = (gx[None, i0:i1] - px) ** 2 + (gy[j0:j1, None] - py) ** 2
+        inside = d2 <= R * R
+        if inside.any():
+            vals = underside.z[j0:j1, i0:i1] - np.sqrt(np.clip(R * R - d2, 0.0, None))
+            out[k] = float(vals[inside].min())
+    return out
+
+
 def reach_from_below(underside: HeightMap, radius: float) -> HeightMap:
     """What a ball of radius R pushing from below can shape of `underside`:
     the highest point of any ball below it at every node,
@@ -773,6 +806,45 @@ def reach_from_below(underside: HeightMap, radius: float) -> HeightMap:
     top = ndimage.grey_dilation(b.z, footprint=footprint, structure=structure, mode="nearest")
     return underside.with_z(np.minimum(top, underside.z),
                             metadata={"quantity": "reach_from_below", "radius": float(radius)})
+
+
+def swept_ball_top(points: np.ndarray, radius: float, grid: Grid,
+                   max_step: Optional[float] = None) -> np.ndarray:
+    """The top of the volume a ball sweeps along a trajectory: (ny, nx) [m].
+
+    The ball (radius R) moves in straight lines between consecutive rows of
+    `points` ((n, 3) centres [m]), as sparlab_form moves a tool between its
+    trajectory knots (docs/forming.md, 1.3). At every node x of `grid` the
+    result is the highest point of any ball position c over it,
+
+        top(x) = max over c of [c_z + sqrt(R^2 - |x - c_xy|^2)],  |x - c_xy| <= R,
+
+    and -inf where no ball passes over the node. For a ball pushing a sheet
+    up from below this is the highest the underside can be pushed. The
+    segments are sampled every `max_step` [m] (default h / 4; between two
+    samples the envelope is under-estimated by at most max_step^2 / (8 R)).
+    """
+    R = require_positive("radius", radius)
+    p = np.asarray(points, dtype=float)
+    if p.ndim != 2 or p.shape[1] != 3 or not len(p) or not np.all(np.isfinite(p)):
+        raise ValueError("points must be a finite (n >= 1, 3) array")
+    step = 0.25 * grid.h if max_step is None else require_positive("max_step", max_step)
+    parts = [p[:1]]
+    for a, b in zip(p[:-1], p[1:]):
+        m = max(1, int(math.ceil(float(np.linalg.norm(b - a)) / step)))
+        parts.append(a + (np.arange(1, m + 1) / m)[:, None] * (b - a))
+    x, y = grid.x, grid.y
+    top = np.full(grid.shape, -np.inf)
+    for cx, cy, cz in np.vstack(parts):
+        i0, i1 = np.searchsorted(x, cx - R, "left"), np.searchsorted(x, cx + R, "right")
+        j0, j1 = np.searchsorted(y, cy - R, "left"), np.searchsorted(y, cy + R, "right")
+        if i0 >= i1 or j0 >= j1:
+            continue
+        d2 = (x[None, i0:i1] - cx) ** 2 + (y[j0:j1, None] - cy) ** 2
+        cap = np.where(d2 <= R * R, cz + np.sqrt(np.clip(R * R - d2, 0.0, None)), -np.inf)
+        win = top[j0:j1, i0:i1]
+        np.maximum(win, cap, out=win)
+    return top
 
 
 def signed_outline_distance(reference: HeightMap, eps: float = 1e-6) -> HeightMap:
@@ -798,12 +870,14 @@ def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thick
 
     Closed loops at signed distances ``outside, outside - band_spacing, ...``
     down to ``-inside`` from the outline of the part of `reference` (outside
-    first, then inwards; `signed_outline_distance`), each at the lift-cutter
-    height (`lift_heights`) of the underside of `surface` - the highest the
-    ball can rise there without entering the commanded sheet: where the
-    formed sheet sagged below the command, the ball pushes it back up to it,
-    and where the command lies above the sheet plane (a compensation that
-    raises the rim), up to that. Loops are joined by straight moves kept
+    first, then inwards; `signed_outline_distance`), each point at the
+    lift-cutter height of the underside of `surface` (`lift_at_points`,
+    exact over the grid's nodes) - the highest the ball can rise there
+    without entering the commanded sheet: where the formed sheet sagged below
+    the command, the ball pushes it back up to it, and where the command lies
+    above the sheet plane (a compensation that raises the rim), up to that.
+    What the pass reaches is the top of the volume its ball sweeps
+    (`swept_ball_top`). Loops are joined by straight moves kept
     below the lift cutter; the ball starts and ends in the air below the
     whole part (`AIR` points, its top `clearance` below the deepest point of
     `surface` minus `thickness`). `spacing` is the point spacing along a
@@ -818,7 +892,7 @@ def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thick
     sd = signed_outline_distance(reference)
     if not sd.grid.matches(surface.grid):
         sd = sd.resample(surface.grid)
-    lift = lift_cutter(surface.with_z(surface.z - t), R)
+    under = surface.with_z(surface.z - t)
     levels = []
     d = float(outside)
     while d >= -inside - 1e-12:
@@ -829,6 +903,11 @@ def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thick
     pts: List[np.ndarray] = []
     lvl: List[np.ndarray] = []
     low = -(t + R + clearance + max(0.0, -float(surface.z.min())))
+
+    def lift(xy: np.ndarray) -> np.ndarray:
+        b = lift_at_points(under, R, xy[:, 0], xy[:, 1])
+        return np.where(np.isfinite(b) & surface.grid.contains(xy[:, 0], xy[:, 1]), b, low)
+
     current: Optional[np.ndarray] = None
     for k, (level, loops) in enumerate(per_level, start=1):
         if len(loops) != 1:
@@ -836,8 +915,7 @@ def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thick
                                f"{level * 1e3:+.2f} mm from the outline has {len(loops)}")
         xy = resample_loop(loops[0], spacing)
         xy = np.vstack([xy, xy[:1]])
-        ring = np.column_stack([xy, lift.interpolate(xy[:, 0], xy[:, 1], masked=False,
-                                                     fill_value=low)])
+        ring = np.column_stack([xy, lift(xy)])
         if current is None:
             start = np.array([ring[0, 0], ring[0, 1], low])
             pts.append(start[None])
@@ -848,8 +926,7 @@ def rim_pass_path(surface: HeightMap, reference: HeightMap, radius: float, thick
             u = (np.arange(1, m) / m)[:, None]
             link = current + u * (ring[0] - current)
             if len(link):
-                cap = lift.interpolate(link[:, 0], link[:, 1], masked=False, fill_value=low)
-                link[:, 2] = np.minimum(link[:, 2], cap)
+                link[:, 2] = np.minimum(link[:, 2], lift(link))
                 pts.append(link)
                 lvl.append(np.full(len(link), k))
         pts.append(ring)
