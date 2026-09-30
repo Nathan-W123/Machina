@@ -758,6 +758,18 @@ convergence check (halving the speed once) is the sufficient one.
 
 ### 7.5 Limitations
 
+* **The Green-Lagrange elastoplastic law softens in compression.** Its
+  additive split bounds the second Piola-Kirchhoff stress by the yield
+  stress, so the nominal stress `F S` falls with the compressive stretch:
+  one plastic Hex8 compressed uniaxially (free sides, 100 MPa yield,
+  300 MPa hardening) carries at most 123 N at a stretch of 0.7-0.8 and
+  71 N at 0.3, where the logarithmic kinematics carry 295 N and 1 531 N.
+  Under a tool, an element past that limit can collapse - the full cone's
+  runs stop there (section 7.4), whatever the speed or scaling. Parts
+  formed to plastic strains of order one need
+  `"kinematics": "finite_logarithmic"`, which the dedicated kernel runs at
+  about 9 times the Green-Lagrange cost.
+
 * **Inertia is real in the model.** Mass and time scaling make the run
   dynamic by design; the results approach the quasi-static ones as the
   equivalent speed `v sqrt(s)` falls (section 7.3), at a cost inversely
