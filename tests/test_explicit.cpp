@@ -639,6 +639,50 @@ TEST_CASE("a plastic run dissipates energy and closes its balance", "[explicit]"
   REQUIRE(r.records.back().max_plastic_strain > 0.01);
 }
 
+TEST_CASE("the time map moves the fastest tool at the tool speed and skips standstills",
+          "[explicit]") {
+  // Tool a: 3 mm along x by t = 1 s, still to t = 2 s, 4 mm along y by 3 s.
+  // Tool b: 1 mm up by t = 0.5 s, then still.
+  ToolTrajectory a;
+  a.times = {0.0, 1.0, 2.0, 3.0};
+  a.points = {Vector3::Zero(), Vector3(0.003, 0.0, 0.0), Vector3(0.003, 0.0, 0.0),
+              Vector3(0.003, 0.004, 0.0)};
+  ToolTrajectory b;
+  b.times = {0.0, 0.5, 3.0};
+  b.points = {Vector3(0.0, 0.0, 1.0), Vector3(0.0, 0.0, 1.001), Vector3(0.0, 0.0, 1.001)};
+  const ExplicitTimeMap map = ExplicitTimeMap::tool_speed({&a, &b}, 0.0, 3.0, 2.0);
+  // [0, 0.5]: a travels 1.5 mm, b 1 mm -> 0.75 ms; [0.5, 1]: 1.5 mm -> 0.75
+  // ms; [1, 2]: nothing moves -> no time; [2, 3]: 4 mm -> 2 ms.
+  REQUIRE(map.duration() == Approx(3.5e-3).epsilon(1e-14));
+  REQUIRE(map.pseudo_time(0.0) == 0.0);
+  REQUIRE(map.pseudo_time(0.375e-3) == Approx(0.25).epsilon(1e-14));
+  REQUIRE(map.pseudo_time(0.75e-3) == Approx(0.5).epsilon(1e-14));
+  REQUIRE(map.pseudo_time(1.5e-3 - 1e-12) == Approx(1.0).epsilon(1e-8));
+  REQUIRE(map.pseudo_time(2.5e-3) == Approx(2.5).epsilon(1e-14));
+  REQUIRE(map.pseudo_time(-1.0) == 0.0);
+  REQUIRE(map.pseudo_time(1.0) == 3.0);
+  // The fastest tool moves at the speed on every segment.
+  for (const Scalar tau : {0.2e-3, 1.0e-3, 2.0e-3, 3.0e-3}) {
+    INFO("tau " << tau);
+    const Scalar h = 1.0e-7;
+    const Scalar t0 = map.pseudo_time(tau);
+    const Scalar t1 = map.pseudo_time(tau + h);
+    const Scalar fastest = std::max((a.position(t1) - a.position(t0)).norm(),
+                                    (b.position(t1) - b.position(t0)).norm()) / h;
+    REQUIRE(fastest == Approx(2.0).epsilon(1e-9));
+  }
+  // A window of a duration is linear.
+  const ExplicitTimeMap linear = ExplicitTimeMap::linear(1.0, 3.0, 0.01);
+  REQUIRE(linear.duration() == 0.01);
+  REQUIRE(linear.pseudo_time(0.005) == Approx(2.0).epsilon(1e-14));
+  // Refused: no tool moving in the window, a speed or duration not positive.
+  REQUIRE_THROWS_AS(ExplicitTimeMap::tool_speed({&a}, 1.0, 2.0, 1.0), ConfigError);
+  REQUIRE_THROWS_WITH(ExplicitTimeMap::tool_speed({&a}, 1.0, 2.0, 1.0),
+                      ContainsSubstring("no tool moves"));
+  REQUIRE_THROWS_AS(ExplicitTimeMap::tool_speed({&a}, 0.0, 3.0, 0.0), ConfigError);
+  REQUIRE_THROWS_AS(ExplicitTimeMap::linear(0.0, 1.0, 0.0), ConfigError);
+}
+
 // ---------------------------------------------------------------------------
 // 4. Determinism and allocations
 // ---------------------------------------------------------------------------
