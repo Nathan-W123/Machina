@@ -100,7 +100,7 @@ nothing below `api` knows about machine learning.
 |--------|----------|
 | `precomp.geometry` | `Grid`, `HeightMap` (interpolation, gradients, normals, wall angle, curvature, smoothing, resampling, points, STL, `.npz`), `read_stl` / `write_stl` / `raycast_top`, the part families |
 | `precomp.materials` | `Material` (elasticity, linear + Voce isotropic and Prager kinematic hardening; optional Armstrong-Frederick backstress and Hill48 r-values), Swift / Hollomon conversion, the nominal alloy library, `to_sparlab()` |
-| `precomp.toolpath` | `tool_center_surface` (drop cutter), `contour_toolpath`, `spiral_toolpath`, `Toolpath` (trajectory and robot CSV, summary), `dsif_support_points` (the DSIF support tool, synchronised), `rim_pass_path`, `lift_heights` / `lift_cutter` / `reach_from_below` (a ball under the sheet), `signed_outline_distance` |
+| `precomp.toolpath` | `tool_center_surface` (drop cutter), `contour_toolpath`, `spiral_toolpath`, `Toolpath` (trajectory and robot CSV, summary), `dsif_support_points` (the DSIF support tool, synchronised), `rim_pass_path`, `lift_heights` / `lift_cutter` / `lift_at_points` / `reach_from_below` (a ball under the sheet), `swept_ball_top` (what a moving ball reaches), `signed_outline_distance` |
 | `precomp.fea` | `FormingSetup`, `build_deck`, `deck_hash`, `run_deck`, `simulate` (content-addressed cache), `simulate_many` (process pool), `load_result` / `FormingResult`; `precomp.fea.support` - backing plate, DSIF support and rim pass in the deck, `command_upper_bound` ([Rim support](#rim-support)) |
 | `precomp.metrology` | `read_point_cloud`, `align` (robust point-to-plane ICP), `signed_deviation`, `vertical_deviation`, `metrics`, region masks |
 | `precomp.compensation` | `displacement_adjustment`, `update_from_scan`, `limit_wall_angle`, `FEAPredictor`, `SurrogatePredictor`, `CompositePredictor`, the `FieldModel` protocol |
@@ -485,22 +485,30 @@ outline, but its explicit `node_ids` primitive does, with the structured
 mesh's documented numbering (node (i, j, k) is k (n+1)^2 + j (n+1) + i,
 include/sparlab/mesh/StructuredMesh.hpp; the Tet4 mesh keeps those nodes).
 `plate_nodes` lists the corners of every bottom cell whose four corners lie
-farther than `clearance` from the part - so the plate's faces are exactly
-those cells. On a mesh the opening is therefore up to one element wider
-than asked; the provenance (`precomp_deck.json`, `support.plate`) records
-the clearance realised (1.35 mm for 1 mm asked on the 2 mm mesh of the
-validation cone). The plane holds the sheet up to the sheet plane outside
+farther than `clearance` outside the part's outline - so the plate's faces
+are exactly those cells. The distance is to the outline as the rim band
+measures it (`outline_distance`, `signed_outline_distance`: half way
+between the last part node and the first flange node), not to the part's
+nodes, which lie up to a grid spacing inside it. On a mesh the opening is
+therefore up to one element wider than asked, never narrower; the
+provenance (`precomp_deck.json`, `support.plate`) records the clearance
+realised (1.22 mm for 1 mm asked on the 2 mm mesh of the validation cone).
+The plane holds the sheet up to the sheet plane outside
 the opening and nothing holds it down onto the plate; it is removed with
 the tool in "unload", before the 3-2-1 release.
 
 **The fixture is made for the part.** The plate's opening and the rim pass
 band follow the outline of `target` - the same for every commanded iterate
 of that part, as a plate cut for it would be. `build_deck`, `simulate`,
-`simulate_many` (a third job item), `FEAPredictor` and
-`precomp.api.compensate` pass it on; without it the outline is the
-commanded surface's, which moves as compensation raises the rim.
-`precomp.ml` simulators get it with every job of a setup that has a
-support (`precomp.ml.generate.sim_job`).
+`simulate_many` (a third job item), `FEAPredictor`, `precomp.api.predict`
+and `precomp.api.compensate` (`target=`; `precomp simulate --target`) pass
+it on; without it the outline is the commanded surface's, which moves as
+compensation raises the rim. `precomp.ml` simulators get it with every job
+of a setup that has a support (`precomp.ml.generate.sim_job`), and so does
+the FE prior of a hybrid model (`precomp.ml.FEAPrior`): in training each
+sample's target, in prediction the target `predict_deviation`,
+`SurrogatePredictor` and `compensate` are given (a model or prior that does
+not take a `target` keyword is called without it).
 
 **The DSIF support path** (`precomp.toolpath.dsif_support_points`): one
 support-ball centre per point of the forming path, written with the forming
@@ -516,9 +524,12 @@ would leave the free window.
 
 **The rim pass** (`precomp.toolpath.rim_pass_path`): closed loops at signed
 distances `rim_outside, ..., -rim_inside` from the outline (outside in),
-each at the lift-cutter height of the commanded underside - the highest the
-ball can rise there without entering the commanded sheet. Where the formed
-sheet sagged below the command, the ball pushes it back up to it.
+each point at the lift-cutter height of the commanded underside, exact over
+the grid's nodes (`lift_at_points`: the ball touches the underside at a node
+and holds none inside it) - the highest the ball can rise there without
+entering the commanded sheet. Where the formed sheet sagged below the
+command, the ball pushes it back up to it. What it reaches is the top of
+the volume its ball sweeps between the knots (`swept_ball_top`).
 
 **What a command above the sheet plane can mean.** The forming tool presses
 from above; its path is made for the command's part below the plane
@@ -529,26 +540,36 @@ whose path never rises above the plane. Only the rim pass pushes the sheet
 up on its own, so `command_upper_bound(setup, target)` - a function of the
 command - is 0 everywhere except, with the rim pass, on the band and flange
 strip it sweeps, where the command may rise above the plane by at most
-`rim_max_raise` and only as far as the support ball can push the commanded
-underside from below: `reach_from_below` (the morphological opening of the
-underside z - t by the ball), cut and repeated to a fixed point. Seen from
-below, a part's rim is a concave corner and a raised band next to a held
-flange is a slot: a ball larger than their radius cannot reach into them,
-and with the 4 mm support ball on the validation cone none of the raise DA
-asked for survives. `displacement_adjustment(..., upper_bound=)` (and
-`update_from_scan`) keeps every command below it (None: z <= 0, as
-before); the wall-angle limit is the forming tool's and applies to the part
-below the plane. `compensation_masks` adjusts the swept flange strip rather
-than holding it at the plane (the rim pass realises it from below).
-`build_deck` refuses a command above the bound - no tool could produce it -
-and a command above the plane without a target. `precomp.api.compensate`
-does all of this for a setup with a support.
+`rim_max_raise` and only as far as the rim pass written for that command
+pushes the sheet: `rim_pass_reach`, the top its ball sweeps plus t
+(`support.rim_pass`, the pass the deck gets). The loops follow the
+command's underside, so the command is cut to what they reach and the cut
+repeated; since the loops touch the underside at nodes, one cut is already
+the fixed point, and the rim pass made for the cut command reaches it
+(`check_command` checks exactly that pass). Seen from below, a part's rim
+is a concave corner, a raised band next to a held flange is a slot (the
+outermost loop is held down by the flange beside it), and between two loops
+the ball tops leave a scallop: what lies there is out of reach. With the
+4 mm support ball on the validation cone none of the raise DA asked for
+survives. `displacement_adjustment(..., upper_bound=)` (and
+`update_from_scan`, which takes the masks too; `precomp scan update
+--setup`) keeps every command below it (None: z <= 0, as before); the
+wall-angle limit is the forming tool's and applies to the part below the
+plane. `compensation_masks` adjusts the swept flange strip rather than
+holding it at the plane (the rim pass realises it from below). `build_deck`
+refuses a command more than `COMMAND_TOLERANCE` (1 um) above the bound - no
+tool could produce it; without a rim pass that is any command more than
+1 um above the plane, with or without a target - and, with a rim pass, a
+command above the plane without a target. `precomp.api.compensate` does
+all of this for a setup with a support.
 
 **A trained model and the support.** `support` and `support_settings` are
 physics fields: a model's setup envelope records them, so a model trained
-on one strategy refuses a setup with another (`setup_mismatch`), and a
-model trained before the fields existed - on single-point forming only -
-refuses any support.
+on one strategy refuses a setup with another (`setup_mismatch`; a setting
+that spells out its default counts as that default), and a model trained
+before the fields existed - on single-point forming only - refuses any
+support. The proxy simulator knows single-point forming only: as a
+simulator or a model it refuses a setup with a support.
 
 **Validation** (`benchmarks/support_cone`, `python/scripts/support_validation.py`;
 SparLab simulations, not experiment): the springback benchmark's smallest
@@ -557,25 +578,30 @@ AA5754-O, 20 x 20 x 2 Hex8, 5 mm clamp, 4 mm tool, spiral, 3-2-1 release).
 Deviation of the released part from the target over the part [mm]; rim sag
 = mean vertical deviation of the part less than 1 mm deep:
 
-| support | RMS | rim sag | RMS after one FE-DA step | rim sag | runtime (one thread) |
+| support | RMS | rim sag | RMS after one FE-DA step | rim sag | Newton iterations (uncompensated) |
 |---------|--:|--:|--:|--:|--:|
-| none | 0.767 | -1.151 | 0.658 | -0.992 | 144 s |
-| backing plate, 1 mm clearance (1.35 mm on the mesh) | 0.370 | -0.541 | 0.297 | -0.399 | 434 s |
-| DSIF, sine-law gap | 0.275 | -0.221 | 0.298 | -0.053 | 251 s |
-| DSIF, gap t | 0.357 | -0.494 | 0.318 | -0.163 | 248 s |
-| DSIF, sine-law gap, rim pass | 0.338 | -0.074 | 0.267 | -0.119 | 290 s |
+| none | 0.767 | -1.151 | 0.658 | -0.992 | 1 906 |
+| backing plate, 1 mm clearance (1.22 mm to the outline on the mesh) | 0.370 | -0.541 | 0.297 | -0.399 | 5 007 |
+| DSIF, sine-law gap | 0.275 | -0.221 | 0.298 | -0.053 | 3 282 |
+| DSIF, gap t | 0.357 | -0.494 | 0.318 | -0.163 | 3 255 |
+| DSIF, sine-law gap, rim pass | 0.361 | -0.037 | 0.258 | -0.142 | 3 848 |
 
 Support from below removes most of the sag before any compensation. The
-sine-law DSIF's lead over the plate is mostly a squeeze: the model's wall
-comes out about 20 % thicker than t cos(theta), and with a gap of t DSIF
-lands near the plate. What is left moves to the deeper part (DSIF leaves it
-0.24 mm shallow, and one DA step with alpha = 1 made it worse); the rim
-pass cuts the sag further but lifts the part. DA with the rim pass asked
-for up to 0.31 mm above the plane at the rim; the 4 mm ball reaches none of
-it (a 2 mm ball would reach 0.11 mm), so every command stayed at z <= 0.
-Every run completed, every tool's penetration stayed below 1.3 um, the
-plate and support were pushed down and the tool up, and the release left
-no reaction; the record's README has the details and the limitations.
+sine-law DSIF's lead over the plate comes with a squeeze of the lower wall:
+the model's wall comes out about 20 % thicker than t cos(theta), and with
+a gap of t DSIF lands near the plate. The squeeze acts only where the
+support reaches its opposite position - 19 % of the path's contact knots,
+all with the tip deeper than 2 mm; elsewhere, on the whole first level
+where the rim forms, the lift bound keeps the ball lower and both gaps
+plan nearly the same path. What is left moves to the deeper part (DSIF
+leaves it 0.24 mm shallow, and one DA step with alpha = 1 made it worse);
+the rim pass cuts the sag further but lifts the part. DA with the rim pass
+asked for up to 0.31 mm above the plane at the rim; the rim pass of the
+4 mm ball reaches none of it (a 1 mm ball's would reach 0.16 mm), so
+every command stayed at z <= 0. Every run completed, every tool's
+penetration stayed below 1.3 um, the plate and support were pushed down
+and the tool up, and the release left no reaction; the record's README has
+the details and the limitations.
 
 ## Robot compliance
 
@@ -682,8 +708,13 @@ value is from the test's own configuration.
 | STL round trip | the height map | 1e-15 m (ASCII), 2e-9 m (binary, float32) | `test_geometry` |
 | DSIF support on a 40 deg cone, 4 mm balls, t = 1 mm | one centre per tool point; gap t cos(theta) along the normal where the sheet is formed; never inside the in-process sheet; below the part in the air | median gap error < 1 um, never squeezed below it; 0 points inside (1 um at the floor, the last level's offset) | `test_toolpath` |
 | Reach of a ball from below | the underside where the ball fits; less in a slot narrower than it | 1e-6 m on a wide Gaussian bump; < 0.1 of a 1 mm high, 1 mm wide slot for a 4 mm ball | `test_fea_support` |
-| Backing plate node ids | bottom nodes (z = -t) outside the opening, in the numbering of the mesh the solver writes | all, on `mesh.json` of the run | `test_fea_support` |
-| DA with a rim pass on a sag of 1 mm | above the plane only in the swept band and strip, within the ball's reach (a fixed point of the bound), the rest of the flange held | raised 0.3+ mm with a 1.5 mm ball, less with a 4 mm one; 0 elsewhere | `test_fea_support` |
+| Backing plate node ids | bottom nodes (z = -t) outside the opening, in the numbering of the mesh the solver writes | all, on `mesh.json` of the run (the real solver's too: positions to 1e-12 m) | `test_fea_support`, `test_integration_sparlab` |
+| Backing plate on the validation cone and on a rounded-rectangle pyramid (14.9 x 16.7 mm), clearance 0, 1, 2.5 mm | exactly the bottom faces whose corners all lie farther than the clearance outside the outline; the solver's face selection (every node listed) takes exactly those | all; realised clearance >= asked | `test_fea_support` |
+| DA with a rim pass on a sag of 1 mm | above the plane only in the swept band and strip, no higher than the rim pass written into the deck reaches (worked out from `support_path.csv` alone), a fixed point of the bound; the rest of the flange held; DA without the bound refused | raised 0.61 / 0.38 mm with a 1.5 / 2 mm ball, 7 um with a 4 mm one, every raised node within 1 um of the written pass's reach; 0 elsewhere | `test_fea_support` |
+| A ball swept along a path; the lift height at a point | a ball's cap; the half cylinder over a straight move; a cut of the underside to the sweep of balls at their lift heights leaves every ball where it was | 1e-15 m; within max_step^2 / (8 R); 1e-15 m | `test_toolpath` |
+| A command 10 nm / 10 um above the plane | accepted with every support, with or without a target / refused without a rim pass whatever the target, for what it is | as expected | `test_fea_support` |
+| A compensated command (rim raised to the plane) on a backing plate | formed on the target's plate by `api.predict`, `FEAPrior`, the training table's prior and the surrogate predictor when given the target; on its own outline's without | as expected (384 plate nodes for the target, 404 for the command) | `test_fea_support` |
+| One DA step from a scan with the rim pass's masks | the command FE-DA gives; `precomp scan update --setup` raises the rim, without it z <= 0 | identical | `test_fea_support` |
 
 With the real `sparlab_form` (`test_integration_sparlab.py`, skipped without
 `build/bin/sparlab_form`), against the contract of `docs/forming.md` and
@@ -695,8 +726,8 @@ physical sense rather than exact answers:
 | The test double and `sparlab_form` on one deck | the same files, CSV columns, summary and `mesh.json` keys, mesh and step windows | identical | `test_integration_sparlab` |
 | Tiny SPIF: 20 x 20 x 1 mm AA5754-O blank, 8 x 8 x 2 Hex8, 4 mm tool, one spiral revolution to 1 mm ending in contact, unload, 3-2-1 release | depth about the tool's 1 mm; the sheet under the removed tool rises; no reaction after the release; the force on the tool upwards, of order 1 kN | depth 0.937 / 0.913 / 0.953 mm after form / unload / release; rise 25-45 um; release reactions 8e-13 N; fz >= 0 at all 51 increments, peak 1 070 N; 71 increments, 328 iterations, 3.1 s | `test_integration_sparlab` |
 | The original small cone: 80 mm blank, 20 x 20 x 1 Hex8, two contours to 4 mm | completes, depth below twice the target's | completes, 270 increments, about 100 s | `test_integration_sparlab` |
-| Tiny cone (24 mm blank, 12 x 12 x 2 Hex8, 3 mm tool, 1 mm deep) on a backing plate, 0.5 mm clearance | the plate pushed down in "form" only, never through; no reaction after the release | plate in contact 33 of 40 increments, fz -2.2 kN to 0, penetration 0.27 um; release reaction 4e-13 N; 16 s | `test_integration_sparlab` |
-| The same cone with a DSIF support and the rim pass | tool pushed up, support down; the rim pass pushes up in its own step; no reaction after the release | tool fz 0 to 589 N, support -505 N to 0 (steps 1 and 3), penetration <= 0.42 um; release reaction 5e-13 N; 24 s | `test_integration_sparlab` |
+| Tiny cone (24 mm blank, 12 x 12 x 2 Hex8, 3 mm tool, 1 mm deep) on a backing plate, 0.5 mm clearance | the plate pushed down in "form" only, never through; no reaction after the release | plate in contact 33 of 40 increments, fz -2.2 kN to 0, penetration 0.27 um; release reaction 4.5e-13 N; 16-20 s; the listed ids are the intended nodes of the solver's mesh | `test_integration_sparlab` |
+| The same cone with a DSIF support and the rim pass | tool pushed up, support down; the rim pass pushes up in its own step; no reaction after the release | tool fz 0 to 589 N, support -505 N to 0 (steps 1 and 3), penetration <= 0.42 um; release reaction 4e-13 N; 24-29 s | `test_integration_sparlab` |
 
 ## Limitations
 
@@ -735,8 +766,10 @@ physical sense rather than exact answers:
 * **Support.** The DSIF support follows the sine law (or the initial
   thickness), not the sheet's actual thickness: where the model's wall comes
   out thicker than t cos(theta) - about 20 % on the validation cone's
-  2-layer mesh - the sine-law gap squeezes it, which the `squeeze` setting
-  does not show; `thickness_law: "initial"` leaves the gap t. The support's
+  2-layer mesh - the sine-law gap squeezes it where the support reaches its
+  opposite position (19 % of that path's contact knots, the lower wall and
+  floor), which the `squeeze` setting does not show; `thickness_law:
+  "initial"` leaves the gap t. The support's
   springback and deflection, and a support ball that would touch the sheet
   away from its contact point in the air moves of contour paths, are not
   modelled. The backing plate is flat at the sheet plane and one element
