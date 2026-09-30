@@ -258,7 +258,14 @@ The single-point forming smoke case (3 969 DOFs, a 100 mm toolpath) runs in
 75 s with SuiteSparse (122 s with Eigen's factorisations); a 60 x 60 x 2
 Hex8 cone (33 489 DOFs) costs about 17 s per 0.5 mm of toolpath, some 7
 hours for ten contours to 10 mm - the factorisation takes three quarters of
-it (section 5 of `docs/forming.md`).
+it (section 5 of `docs/forming.md`). Explicit forming steps (`form_explicit`,
+section 7) converge to the implicit springback as the equivalent tool speed
+falls (23 %, 9 %, 4 % and 1.3 % of the smoke case's springback at 28, 14,
+7 and 3.5 m/s) and run the cone's toolpath at about 300 time steps a second
+on two threads (0.47 us an element and step), some 17 minutes for its
+305 000 steps at 2 m/s - though with the Green-Lagrange elastoplastic law
+the cone stops at 88 % of its path, an element under the tool collapsing
+at plastic strains above 1 (section 7.4).
 
 ### Benchmarks
 
