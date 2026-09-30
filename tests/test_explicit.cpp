@@ -768,7 +768,8 @@ TEST_CASE("the explicit step loop allocates no memory", "[explicit]") {
 namespace {
 
 /// The dent case as a forming analysis: `dent` (explicit) presses the ball
-/// in and moves it along, `lift` (explicit) takes it off the sheet, and an
+/// in and moves it along, `lift` (explicit) takes it off the sheet,
+/// `settle` (explicit, no tool, damped) lets the sheet come to rest, and an
 /// implicit `release` with the same clamps and no tool follows.
 FormingOptions dent_forming(const DentCase& c) {
   FormingOptions o;
@@ -783,17 +784,24 @@ FormingOptions dent_forming(const DentCase& c) {
   dent.tools = {"ball"};
   dent.t_begin = 0.0;
   dent.t_end = 2.0;
-  dent.tool_speed = 1.0;
+  dent.tool_speed = 4.0;
   dent.explicit_options = dent_options();
   dent.explicit_options.mass_damping = 5.0e4;
   FormingStep lift = dent;
   lift.name = "lift";
   lift.t_begin = 2.0;
   lift.t_end = 3.0;
+  // The sheet brought to rest: no tool, heavy mass-proportional damping.
+  FormingStep settle;
+  settle.name = "settle";
+  settle.type = FormingStep::Type::FormExplicit;
+  settle.duration = 2.5e-4;
+  settle.explicit_options = dent_options();
+  settle.explicit_options.mass_damping = 2.0e5;
   FormingStep release;
   release.name = "release";
   release.type = FormingStep::Type::Release;
-  o.steps = {dent, lift, release};
+  o.steps = {dent, lift, settle, release};
   return o;
 }
 
@@ -807,15 +815,16 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
   const Index n = c.model.dofs().num_dofs();
   const FormingResult all = FormingAnalysis(c.model, assembler, o).run();
   REQUIRE(all.completed);
-  REQUIRE(all.steps.size() == 3);
+  REQUIRE(all.steps.size() == 4);
   const FormingStepResult& dent = all.steps[0];
   REQUIRE(dent.explicit_step);
   CHECK(dent.explicit_result.completed);
   CHECK(dent.explicit_result.contact);
   CHECK(dent.explicit_result.kernel == "dedicated Hex8");
   CHECK(dent.max_plastic_strain > 1.0e-3);
-  CHECK(all.total_explicit_steps ==
-        dent.explicit_result.steps + all.steps[1].explicit_result.steps);
+  CHECK(all.total_explicit_steps == dent.explicit_result.steps +
+                                        all.steps[1].explicit_result.steps +
+                                        all.steps[2].explicit_result.steps);
   // The recorded steps are the step's increments, the tool force averaged
   // over each record's steps; the ball is pushed up by the sheet.
   REQUIRE(dent.increments.size() + 1 == dent.explicit_result.records.size());
@@ -832,14 +841,14 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
   // bit for bit: the handoff (displacement, velocity, plastic and friction
   // history) is the state the analysis carries.
   FormingOptions first = o;
-  first.steps = {o.steps[0], o.steps[1]};
+  first.steps = {o.steps[0], o.steps[1], o.steps[2]};
   const FormingResult formed = FormingAnalysis(c.model, assembler, first).run();
   REQUIRE(formed.completed);
   REQUIRE(formed.final_state.velocity.size() == n);  // an explicit step hands on its velocity
-  CHECK((formed.final_state.displacement - all.steps[1].displacement).cwiseAbs().maxCoeff() ==
+  CHECK((formed.final_state.displacement - all.steps[2].displacement).cwiseAbs().maxCoeff() ==
         0.0);
   FormingOptions second = o;
-  second.steps = {o.steps[2]};
+  second.steps = {o.steps[3]};
   const FormingResult released = FormingAnalysis(c.model, assembler, second).run(formed.final_state);
   REQUIRE(released.completed);
   CHECK((released.final_state.displacement - all.final_state.displacement)
@@ -850,23 +859,23 @@ TEST_CASE("an explicit forming step hands its state to an implicit release exact
   // With the partition unchanged and the tool off the sheet, nothing
   // changed at the handoff (report item 8, the import round trip): the
   // release ramps out only what the explicit end state leaves - the inertia
-  // and damping forces of a damped run come to rest, 1.4e-8 of the forming
-  // force here - and it moves the part by round-off (6e-13 m), at two
-  // iterations an increment (the displacement test's second).
-  const FormingStepResult& release = all.steps[2];
+  // and damping forces of a run damped to rest, 6e-14 of the forming force
+  // here - and it moves the part by round-off (7e-19 m), at one iteration an
+  // increment.
+  const FormingStepResult& release = all.steps[3];
   Scalar max_formed = 0.0;
   for (Index node = 0; node < c.model.mesh().num_nodes(); ++node) {
-    max_formed = std::max(max_formed, all.steps[1].displacement.segment(node * 3, 3).norm());
+    max_formed = std::max(max_formed, all.steps[2].displacement.segment(node * 3, 3).norm());
   }
   INFO("start imbalance " << release.start_imbalance << " N, reference force "
                           << release.reference_force << " N; displacement change "
                           << release.max_displacement_change << " m of " << max_formed
                           << " m; " << release.iterations << " iterations in "
                           << release.increments.size() << " increments");
-  CHECK(release.start_imbalance < 1.0e-6 * release.reference_force);
-  CHECK(release.max_displacement_change < 1.0e-6 * max_formed);
+  CHECK(release.start_imbalance < 1.0e-9 * release.reference_force);
+  CHECK(release.max_displacement_change < 1.0e-12 * max_formed);
   CHECK(release.cuts == 0);
-  CHECK(release.iterations <= 2 * static_cast<int>(release.increments.size()));
+  CHECK(release.iterations <= static_cast<int>(release.increments.size()));
 }
 
 namespace {
