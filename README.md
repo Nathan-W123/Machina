@@ -261,12 +261,16 @@ hours for ten contours to 10 mm - the factorisation takes three quarters of
 it (section 5 of `docs/forming.md`). Explicit forming steps (`form_explicit`,
 section 7) converge to the implicit springback as the equivalent tool speed
 falls (23 %, 9 %, 4 % and 1.3 % of the smoke case's springback at 28, 14,
-7 and 3.5 m/s) and run the cone's toolpath at about 300 time steps a second
-on two threads (0.47 us an element and step) with the Green-Lagrange law -
-which, softening in compression, lets an element under the tool collapse at
-88 % of the path - and complete the whole cone with the logarithmic
-kinematics at 4 m/s in 68 minutes on two threads of a loaded machine
-(section 7.4).
+7 and 3.5 m/s; 3.5 % at the deck's 7 m/s with the default contact penalty),
+match the implicit analysis on a dented sheet to 0.9 % of the depth
+(`explicit-dent`; the former, softer penalty left 7 % at any speed), run the
+cone's toolpath at about 300 time steps a second on two threads (0.47 us an
+element and step) with the Green-Lagrange law - which, softening in
+compression, lets an element under the tool collapse at 88 % of the path -
+and complete the whole cone with the logarithmic kinematics at 4 m/s in 46
+minutes on two threads (load 3 to 4; section 7.4) - a feasibility and cost
+run, whose equivalent speed (above 60 m/s) is too high for its springback to
+be a result.
 
 ### Benchmarks
 

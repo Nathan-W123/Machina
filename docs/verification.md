@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 293 cases, 21 454 assertions
+make test              # the Catch2 suite: 347 cases, 27 687 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -65,7 +65,8 @@ All numbers in this document come from `results/verification/summary.json`,
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
 | Non-linear oscillators, finite-strain elastic and elastoplastic, vs exact motion (Q4, Hex8) | verification | largest relative difference to the scalar HHT-alpha recursion (order `>= 1.8` to the exact motion also required) | `1.74e-11` | `1e-9` | PASS |
-| Explicit central differences on a rod vs the exact continuum solution (Q4 generic, Hex8 dedicated kernel) | verification | smallest observed convergence order, `h` and `dt` halved together (energy balance `< 1e-2`, stable-step estimates below the exact limit, quasi-static limit `< 1e-3` also required) | `1.981` | `>= 1.9` | PASS |
+| Explicit central differences on a rod vs the exact continuum solution (Q4 generic, Hex8 dedicated kernel) | verification | smallest observed convergence order, `h` and `dt` halved together (energy balance `< 1e-4`, stable-step estimates below the exact limit, quasi-static limit `< 1e-5` also required) | `1.981` | `>= 1.9` | PASS |
+| Explicit forming of a dent vs the implicit forming analysis (Hex8, J2, finite strain, frictional ball contact, springback release) | validation | largest formed or final shape difference over the formed depth, default contact penalty at 1 m/s (energy balance `< 1e-2` also required) | `8.71e-3` | `1.5e-2` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -2032,7 +2033,46 @@ order in the step and a plastic run dissipates; a dented sheet (finite
 strain, plasticity, friction, selective mass scaling) is identical bit for
 bit on 1 and 3 threads and its step loop allocates nothing; an explicit
 forming step hands its state to an implicit release exactly (docs/forming.md,
-section 7).
+section 7), and a release straight after a still-moving explicit step ramps
+its inertia forces out (3.4 N, 0.9 % of the reference force, 30 iterations in
+10 increments). Further: the kernel's closed-form eigensolver keeps the
+logarithmic strain at equal and nearly equal principal stretches (within
+`2.7e-15` of the dispatch); its elastic energy is the stored energy less
+the hardening energy (to `1e-12`, three kinematics); a stopped run reports
+the mass of the state it keeps; the penetration is measured against the
+element thickness, falls about as `1 / s_c` and is warned about; the stable
+step reserves a stiffer tangential penalty; the balance is not judged at the
+first touch (a punch recorded at every step with `s_c = 1` completes).
+
+**Explicit forming against the implicit analysis** (`explicit-dent`,
+validation). What forming needs of the explicit integrator - frictional
+contact with a moving rigid tool, J2 plasticity, finite strain, the
+handoff to the implicit release - is checked against the implicit forming
+analysis on the dent of `tests/test_explicit.cpp`: an 8 x 8 x 1 mm sheet
+(8 x 8 x 2 Hex8, 150 MPa yield, 500 MPa linear hardening) clamped on its
+edges; a 2 mm ball (friction 0.1) pressed 0.3 mm in, moved 2 mm and lifted;
+the springback released onto the same clamps. The implicit reference takes
+25 um of tool travel an increment (formed depth `296.9 um`, penetration
+`0.41 um`); 50 um differ from it by `2.07 um` (formed) and `2.00 um`
+(final), 0.7 % of the depth. The explicit runs scale the mass selectively
+to `2e-7 s` (about 10 times the physical mass):
+
+| Tool speed | `contact_stiffness` | Time steps | Penetration (of the 0.5 mm element) | Formed shape, largest / RMS | Final shape, largest / RMS | `max_kinetic_ratio` (peak) | Energy balance |
+|---|---|---|---|---|---|---|---|
+| 4 m/s | 0.1 | 3 135 | 16.8 um (3.4 %) | 22.4 / 3.2 um | 22.5 / 3.2 um | 0.017 (0.37) | `3.8e-4` |
+| 4 m/s | 0.5 (default) | 3 146 | 3.1 um (0.66 %) | 7.6 / 1.4 um | 5.6 / 1.2 um | 0.023 (0.30) | `9.6e-4` |
+| 4 m/s | 1 | 3 148 | 1.4 um (0.33 %) | 8.5 / 1.3 um | 5.9 / 1.1 um | 0.021 (0.28) | `2.9e-3` |
+| 1 m/s | 0.1 | 12 546 | 16.7 um (3.3 %) | 20.9 / 3.1 um | 20.9 / 3.1 um | 0.004 (0.24) | `7.2e-5` |
+| 1 m/s | 0.5 (default) | 12 592 | 3.0 um (0.60 %) | **2.6 / 0.44 um** | **2.3 / 0.43 um** | 0.017 (0.23) | `3.8e-4` |
+| 1 m/s | 1 | 12 598 | 1.3 um (0.27 %) | 1.7 / 0.38 um | 1.6 / 0.36 um | 0.012 (0.25) | `9.9e-4` |
+
+With `contact_stiffness` 0.1 the shape stays 21 um - 7 % of the depth - off
+at both speeds: the mass-based penalty's penetration, `f dt^2 / (s_c m)`,
+does not fall with the speed, and no speed study reveals it. From 0.5 up
+the explicit dent agrees with the implicit one to the implicit reference's
+own increment difference at 1 m/s; the study passes when the default
+penalty at 1 m/s lies within 1.5 % of the depth (`0.87 %`) and every
+balance closes to `1e-2`. 32 s on two threads (`explicit_dent.csv`).
 
 **Cross-validation** (section 14's two codes, seven decks, `configs/
 verification/transient_*.json` and `frequency_response_*.json`). scikit-fem

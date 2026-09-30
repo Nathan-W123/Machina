@@ -12,10 +12,10 @@
 ///   <out>/step_<k>_<s>_inc_<i>_nodes.csv  (and .vtk) snapshots every `stride` increments
 ///   <out>/step_<k>_<s>_energy.csv      form_explicit steps: the energy history
 ///                                      (step,t_s,pseudo_t_s,time_step_s,kinetic_J,
-///                                      internal_work_J,stored_J,plastic_dissipation_J,
-///                                      contact_normal_work_J,contact_friction_work_J,
-///                                      damping_J,external_work_J,mass_scaling_work_J,
-///                                      energy_error_J,kinetic_internal_ratio)
+///                                      internal_work_J,stored_J,elastic_J,
+///                                      plastic_dissipation_J,contact_normal_work_J,
+///                                      contact_friction_work_J,damping_J,external_work_J,
+///                                      mass_scaling_work_J,energy_error_J,kinetic_ratio)
 ///   <out>/tool_forces.csv              step,increment,t,tool,cx,cy,cz,fx,fy,fz,
 ///                                      active_nodes,max_penetration_m
 /// \endcode

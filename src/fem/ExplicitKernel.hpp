@@ -24,8 +24,11 @@
 ///   gives T, and the force takes \f$S = P^TT\f$ (T's deviator with mean
 ///   dilatation, plus the mean pressure over the volume times
 ///   \f$C^{-1} = P^TI\f$, the variation of \f$\ln J\f$) in place of the
-///   Green-Lagrange S - about 5.8 us an element and step, the spectral
-///   decomposition of eight points, against 30 us through the dispatch;
+///   Green-Lagrange S - about 3.6 us an element and step on one thread (the
+///   cone's first 1 518 steps; 4.0 us with the iterative eigensolver
+///   throughout), against 30 us through the dispatch; the spectral
+///   decomposition takes the closed-form 3 x 3 solver where its residual
+///   shows it accurate;
 /// * the history is updated in place (an explicit step is final), in a
 ///   compact form (plastic strain, back stress, equivalent plastic strain,
 ///   loading flag), one array per component over the element's eight
