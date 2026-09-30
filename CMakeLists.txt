@@ -117,6 +117,8 @@ add_library(sparlab STATIC
   src/fem/Contact.cpp
   src/fem/RigidTool.cpp
   src/fem/Forming.cpp
+  src/fem/ExplicitKernel.cpp
+  src/fem/ExplicitDynamics.cpp
   src/topopt/SimpInterpolation.cpp
   src/topopt/DensityFilter.cpp
   src/topopt/DesignDomain.cpp

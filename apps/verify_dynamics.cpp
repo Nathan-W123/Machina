@@ -34,7 +34,20 @@
 ///                            and at second order in the step against the
 ///                            exact motion (a Runge-Kutta reference for the
 ///                            elastic law, the piecewise closed form for the
-///                            plastic one).
+///                            plastic one);
+///   * `explicit-rod`         the rod-transient case integrated by explicit
+///                            central differences (ExplicitDynamics.hpp) with
+///                            the lumped mass, Q4 through the generic element
+///                            dispatch and Hex8 through the dedicated kernel:
+///                            second order against the continuum; the element
+///                            eigenvalue and power-iteration step estimates
+///                            against the exact limit; a slow damped ramp
+///                            reaching the static displacement;
+///   * `explicit-dent`        a ball dented into a clamped plastic sheet and
+///                            lifted, the springback released: explicit
+///                            forming steps (contact, J2 plasticity, finite
+///                            strain) against the implicit forming analysis,
+///                            over the tool speed and the contact penalty.
 
 #include "VerifySupport.hpp"
 
@@ -43,6 +56,8 @@
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/fem/Assembler.hpp"
 #include "sparlab/fem/Dynamics.hpp"
+#include "sparlab/fem/ExplicitDynamics.hpp"
+#include "sparlab/fem/Forming.hpp"
 #include "sparlab/io/CsvWriter.hpp"
 #include "sparlab/mesh/StructuredMesh.hpp"
 
@@ -1409,6 +1424,515 @@ StudyOutcome study_nonlinear_oscillator(const std::string& out_dir, json::Value&
   full << note.str() << "smallest order on the finest pair " << app::format(worst_order, 3)
        << ", Runge-Kutta reference self-difference " << app::format(reference_check, 2);
   outcome.note = full.str();
+  return outcome;
+}
+
+// ---------------------------------------------------------------------------
+// Explicit central differences on the rod (ExplicitDynamics.hpp)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The drive of an explicit run of a rod model: its constraints held at
+/// zero, the load case's end force scaled by `ramp`.
+ExplicitDrive rod_drive(const FemModel& model, Scalar duration, const Amplitude& ramp) {
+  ExplicitDrive drive;
+  drive.duration = duration;
+  drive.fixed = model.dofs().constrained_dofs();
+  drive.fixed_start = Vector::Zero(static_cast<Eigen::Index>(drive.fixed.size()));
+  drive.fixed_end = drive.fixed_start;
+  drive.ramp = ramp;
+  return drive;
+}
+
+/// The x displacement of the rod's end (the mean over the x = L nodes).
+Scalar rod_end(const FemModel& model, const Vector& u, Scalar length) {
+  const Mesh& mesh = model.mesh();
+  const int dim = mesh.dim();
+  Scalar sum = 0.0;
+  int count = 0;
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    if (mesh.node(n).x() < length - 1.0e-9) continue;
+    sum += u(n * dim);
+    ++count;
+  }
+  return sum / count;
+}
+
+}  // namespace
+
+StudyOutcome study_explicit_rod(const std::string& out_dir, json::Value& summary) {
+  const Rod rod;
+  const Scalar c = rod.wave_speed();
+  const Scalar period = 4.0 * rod.length / c;  // the first mode's
+  const Scalar t_ramp = 0.6 * period;
+  const Scalar t_end = 2.5 * period;
+  const Scalar force = 1000.0;
+  const Scalar courant = 0.5;
+  const std::vector<Index> ladder = {20, 40, 80, 160};
+  const int series_modes = 4000;
+  const Scalar static_end = force * rod.length / (rod.youngs * rod.area());
+  NonlinearOptions linear;
+  linear.kinematics = Kinematics::SmallStrain;
+
+  // (1) The transient of rod-transient, integrated explicitly: lumped mass,
+  // Courant number 0.5, the ramp tabulated at the finest run's steps (the
+  // coarser runs' steps are among them).
+  const Scalar dt_fine = courant * rod.length / static_cast<Scalar>(ladder.back()) / c;
+  Amplitude table;
+  table.kind = Amplitude::Kind::Table;
+  const int ramp_steps = static_cast<int>(std::lround(t_ramp / dt_fine));
+  for (int k = 0; k <= ramp_steps; ++k) {
+    table.times.push_back(k * dt_fine);
+    table.values.push_back(ramp(k * dt_fine, t_ramp));
+  }
+  table.times.push_back(t_end * 10.0);
+  table.values.push_back(1.0);
+  CsvWriter csv(path_join(out_dir, "explicit_rod.csv"),
+                {"element", "kernel", "n", "dt[s]", "steps", "max_error[-]", "order[-]",
+                 "energy_balance[-]"});
+  json::Value records = json::Value::make_array();
+  Scalar worst_order = 1.0e300;
+  Scalar worst_error = 0.0;
+  Scalar worst_balance = 0.0;
+  bool dedicated_used = false;
+  for (const ElementType type : {ElementType::Quad4, ElementType::Hex8}) {
+    std::vector<Scalar> errors;
+    std::vector<Scalar> hs;
+    json::Value meshes = json::Value::make_array();
+    std::string kernel;
+    for (const Index n : ladder) {
+      const FemModel model = rod_model(rod, type, n, force, 0.0);
+      const Assembler assembler(model);
+      const Scalar h = rod.length / static_cast<Scalar>(n);
+      ExplicitOptions options;
+      options.time_step = courant * h / c;
+      const long steps = std::lround(t_end / options.time_step);
+      const auto stride = static_cast<int>(ladder.back() / n);
+      options.history_every = 1000000;
+      // The end displacement at every 8th step of the finest run.
+      options.snapshot_every = 8 / stride;
+      ExplicitDynamics integrator(model, assembler, linear, {}, options, 0);
+      const ExplicitResult r =
+          integrator.run(rod_drive(model, static_cast<Scalar>(steps) * options.time_step, table),
+                         ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+      if (!r.completed) throw SolverError("explicit-rod: " + r.termination);
+      kernel = r.kernel;
+      dedicated_used = dedicated_used || r.kernel == "dedicated Hex8";
+      Scalar diff = 0.0;
+      Scalar scale = 0.0;
+      for (const ExplicitSnapshot& snap : r.snapshots) {
+        const Scalar exact = rod_ramp_response(rod, force, t_ramp, snap.time, series_modes);
+        diff = std::max(diff, std::abs(rod_end(model, snap.displacement, rod.length) - exact));
+        scale = std::max(scale, std::abs(exact));
+      }
+      const Scalar error = diff / scale;
+      errors.push_back(error);
+      hs.push_back(h);
+      const std::size_t last = errors.size() - 1;
+      const Scalar order =
+          last > 0 ? observed_order(hs[last - 1], errors[last - 1], hs[last], errors[last])
+                   : std::nan("");
+      worst_balance = std::max(worst_balance, r.max_energy_error);
+      csv.raw_row({element_name(type), r.kernel, fmt(static_cast<Scalar>(n)),
+                   fmt(options.time_step, 6), fmt(static_cast<Scalar>(r.steps)), fmt(error, 6),
+                   fmt(order, 4), fmt(r.max_energy_error, 4)});
+      json::Value rec = json::Value::make_object();
+      rec.set("n", json::Value::make_number(static_cast<Scalar>(n)));
+      rec.set("time_step_s", json::Value::make_number(options.time_step));
+      rec.set("steps", json::Value::make_number(static_cast<Scalar>(r.steps)));
+      rec.set("max_error", json::Value::make_number(error));
+      rec.set("order", json::Value::make_number(order));
+      rec.set("energy_balance", json::Value::make_number(r.max_energy_error));
+      meshes.push_back(rec);
+      if (n == ladder.back()) {
+        worst_order = std::min(worst_order, order);
+        worst_error = std::max(worst_error, error);
+      }
+    }
+    json::Value entry = json::Value::make_object();
+    entry.set("element", json::Value::make_string(element_name(type)));
+    entry.set("kernel", json::Value::make_string(kernel));
+    entry.set("meshes", meshes);
+    records.push_back(entry);
+  }
+  csv.close();
+
+  // (2) The stable step: the element eigenvalue bound and power iteration
+  // against 2 / omega_max of the constrained lumped system (dense), n = 20.
+  json::Value stability = json::Value::make_array();
+  bool bounds_hold = true;
+  Scalar worst_bound_ratio = 0.0;
+  for (const ElementType type : {ElementType::Quad4, ElementType::Hex8}) {
+    const FemModel model = rod_model(rod, type, 20, force, 0.0);
+    const Assembler assembler(model);
+    const Matrix k(assembler.reduce_free_free(assembler.assemble_stiffness()));
+    const Matrix m(assembler.reduce_free_free(assembler.assemble_mass(MassType::Lumped)));
+    Eigen::GeneralizedSelfAdjointEigenSolver<Matrix> es(k, m, Eigen::EigenvaluesOnly);
+    const Scalar exact = 2.0 / std::sqrt(es.eigenvalues().maxCoeff());
+    ExplicitOptions eo;
+    const ExplicitDynamics by_element(model, assembler, linear, {}, eo, 0);
+    const Vector zero = Vector::Zero(model.dofs().num_dofs());
+    const Scalar element = by_element.element_time_steps(zero).minCoeff();
+    eo.stable_step.method = StableStepOptions::Method::PowerIteration;
+    eo.stable_step.power_iterations = 400;
+    const ExplicitDynamics by_power(model, assembler, linear, {}, eo, 0);
+    const Scalar power = by_power.power_iteration_time_step(zero);
+    bounds_hold = bounds_hold && element <= exact * (1.0 + 1.0e-12) &&
+                  power <= exact * (1.0 + 1.0e-12);
+    worst_bound_ratio = std::max(worst_bound_ratio, exact / element);
+    json::Value rec = json::Value::make_object();
+    rec.set("element", json::Value::make_string(element_name(type)));
+    rec.set("exact_constrained_s", json::Value::make_number(exact));
+    rec.set("element_eigenvalue_s", json::Value::make_number(element));
+    rec.set("power_iteration_s", json::Value::make_number(power));
+    rec.set("one_dimensional_s", json::Value::make_number(rod.length / 20.0 / c));
+    stability.push_back(rec);
+  }
+
+  // (3) Quasi-static: the end force ramped over 20 periods and held for 5
+  // with mass-proportional damping (20 % of critical in the first mode)
+  // reaches the static displacement F L / (E A).
+  Scalar static_error = 0.0;
+  Scalar static_kinetic = 0.0;
+  {
+    const FemModel model = rod_model(rod, ElementType::Hex8, 40, force, 0.0);
+    const Assembler assembler(model);
+    ExplicitOptions options;
+    options.mass_damping = 2.0 * 0.2 * 2.0 * kPi / period;
+    options.history_every = 1000;
+    ExplicitDynamics integrator(model, assembler, linear, {}, options, 0);
+    Amplitude slow;
+    slow.kind = Amplitude::Kind::Table;
+    const int knots = 400;
+    for (int k = 0; k <= knots; ++k) {
+      const Scalar t = 20.0 * period * k / knots;
+      slow.times.push_back(t);
+      slow.values.push_back(ramp(t, 20.0 * period));
+    }
+    slow.times.push_back(100.0 * period);
+    slow.values.push_back(1.0);
+    const ExplicitResult r =
+        integrator.run(rod_drive(model, 25.0 * period, slow),
+                       ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+    if (!r.completed) throw SolverError("explicit-rod (quasi-static): " + r.termination);
+    static_error =
+        std::abs(rod_end(model, r.final_state.displacement, rod.length) - static_end) / static_end;
+    static_kinetic = r.records.back().kinetic / r.records.back().internal;
+  }
+
+  json::Value block = json::Value::make_object();
+  block.set("kind", json::Value::make_string(
+                        "verification (convergence to the exact continuum solution; stable "
+                        "step bounds; quasi-static limit)"));
+  block.set("cases", records);
+  block.set("stable_step", stability);
+  block.set("quasi_static_error", json::Value::make_number(static_error));
+  block.set("quasi_static_kinetic_ratio", json::Value::make_number(static_kinetic));
+  block.set("note",
+            json::Value::make_string(
+                "The rod of rod-transient (1 m, 0.05 m square, E = 200 GPa, nu = 0, lateral "
+                "displacements held) under the end force 1000 N s(t), s = sin^2(pi t / (2 T_r)) "
+                "up to T_r = 0.6 T1, from rest, 2.5 T1; explicit central differences with the "
+                "lumped mass at Courant number 0.5 (dt = h / (2c)), small strain; Q4 through the "
+                "generic element dispatch, Hex8 through the dedicated kernel. Error: the largest "
+                "end-displacement difference at every 8th step of the finest run against the "
+                "exact modal series (4000 modes), over the largest exact displacement. Stable "
+                "step: the element eigenvalue bound and power iteration (unconstrained) "
+                "against 2 / omega_max of the constrained lumped system; both must lie below "
+                "it. Quasi-static: Hex8, n = 40, the force ramped over 20 T1 and held 5 T1 with "
+                "mass damping 0.4 omega_1, against F L / (E A)."));
+  summary.set("explicit_rod", block);
+
+  std::ostringstream note;
+  note << "order on the finest pair >= " << app::format(worst_order, 3)
+       << ", largest error at n = 160 " << app::format(worst_error, 3)
+       << ", energy balance <= " << app::format(worst_balance, 2)
+       << "; stable-step bounds hold: " << (bounds_hold ? "yes" : "NO")
+       << " (exact / element bound <= " << app::format(worst_bound_ratio, 3)
+       << "); quasi-static end displacement error " << app::format(static_error, 2)
+       << " (T / W_int " << app::format(static_kinetic, 2) << ")";
+  StudyOutcome outcome;
+  outcome.name = "explicit central differences on a rod vs exact continuum solution";
+  outcome.kind = "verification";
+  outcome.metric = "smallest observed convergence order (h and dt halved together)";
+  outcome.value = worst_order;
+  outcome.tolerance = 1.9;
+  // The tolerances: some 6 and 50 times what the integration achieves
+  // (1.6e-5 and 2e-7), so that a regression of the energy bookkeeping or of
+  // the damped limit shows.
+  outcome.passed = worst_order >= 1.9 && worst_balance < 1.0e-4 && bounds_hold &&
+                   static_error < 1.0e-5 && dedicated_used;
+  outcome.note = note.str();
+  return outcome;
+}
+
+// ---------------------------------------------------------------------------
+// Explicit forming against the implicit forming analysis (a dent)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The dent of tests/test_explicit.cpp: an 8 x 8 x 1 mm plastic sheet (8 x 8
+/// x 2 Hex8, J2 with linear hardening, finite strain) clamped on its four
+/// edges; a 2 mm ball pressed 0.3 mm in, moved 2 mm along and lifted off;
+/// the springback released onto the same clamps.
+struct DentStudy {
+  FemModel model;
+  RigidTool ball;
+  DentStudy() : model(make()) {
+    ball.name = "ball";
+    ball.radius = 0.002;
+    ball.surface = box_group(-kInfinity, kInfinity, -kInfinity, kInfinity, -1.0e-9, kInfinity);
+    ball.friction = 0.1;
+    ball.trajectory.times = {0.0, 1.0, 2.0, 3.0};
+    ball.trajectory.points = {Vector3(0.003, 0.004, 0.0021), Vector3(0.003, 0.004, 0.0017),
+                              Vector3(0.005, 0.004, 0.0017), Vector3(0.005, 0.004, 0.0023)};
+  }
+  static constexpr Scalar kInfinity = std::numeric_limits<Scalar>::infinity();
+  static SelectorGroup box_group(Scalar x0, Scalar x1, Scalar y0, Scalar y1, Scalar z0,
+                                 Scalar z1) {
+    SelectorGroup g;
+    g.name = "box";
+    Selector s;
+    s.kind = SelectorKind::Box;
+    s.xmin = x0;
+    s.xmax = x1;
+    s.ymin = y0;
+    s.ymax = y1;
+    s.zmin = z0;
+    s.zmax = z1;
+    g.members.push_back(s);
+    return g;
+  }
+  static FemModel make() {
+    StructuredMeshSpec spec;
+    spec.nx = 8;
+    spec.ny = 8;
+    spec.nz = 2;
+    spec.lx = 0.008;
+    spec.ly = 0.008;
+    spec.lz = 0.001;
+    spec.z0 = -0.001;
+    IsotropicMaterial m(70.0e9, 0.33, 2700.0, "aluminium");
+    PlasticityParameters p;
+    p.yield_stress = 150.0e6;
+    p.hardening_modulus = 500.0e6;
+    m.set_plasticity(p);
+    FemModel model(make_structured_hex_mesh(spec), m, 1.0, StressState::ThreeDimensional,
+                   IntegrationOptions());
+    const Scalar inf = kInfinity;
+    for (const SelectorGroup& g :
+         {box_group(-inf, 1e-9, -inf, inf, -inf, inf),
+          box_group(0.008 - 1e-9, inf, -inf, inf, -inf, inf),
+          box_group(-inf, inf, -inf, 1e-9, -inf, inf),
+          box_group(-inf, inf, 0.008 - 1e-9, inf, -inf, inf)}) {
+      DisplacementConstraint c;
+      c.region = g;
+      for (int k = 0; k < 3; ++k) c.set(k, true, 0.0);
+      model.constraints().push_back(c);
+    }
+    LoadCaseSpec lc;
+    lc.name = "none";
+    lc.prescribed_displacement_only = true;
+    model.load_case_specs().push_back(lc);
+    model.finalize();
+    return model;
+  }
+  /// Dent, lift and release: implicit steps with `travel` [m] of tool
+  /// travel an increment, or explicit ones at `speed` [m/s] with the
+  /// penalty `stiffness`.
+  FormingResult run(const Assembler& assembler, bool explicit_steps, Scalar travel_or_speed,
+                    Scalar stiffness) const {
+    FormingOptions o;
+    o.kinematics = Kinematics::Finite;
+    o.tools = {ball};
+    FormingStep form;
+    form.name = "dent";
+    form.tools = {"ball"};
+    form.t_begin = 0.0;
+    form.t_end = 2.0;
+    FormingStep lift = form;
+    lift.name = "lift";
+    lift.t_begin = 2.0;
+    lift.t_end = 3.0;
+    for (FormingStep* s : {&form, &lift}) {
+      if (explicit_steps) {
+        s->type = FormingStep::Type::FormExplicit;
+        s->tool_speed = travel_or_speed;
+        ExplicitOptions& e = s->explicit_options;
+        e.mass_scaling.mode = MassScalingOptions::Mode::Selective;
+        e.mass_scaling.target_time_step = 2.0e-7;
+        e.mass_scaling.max_added_mass_fraction = 20.0;
+        e.history_every = 50;
+        e.stable_step.update_every = 200;
+        e.contact_stiffness = stiffness;
+      } else {
+        s->max_tool_travel = travel_or_speed;
+      }
+    }
+    FormingStep release;
+    release.name = "release";
+    release.type = FormingStep::Type::Release;
+    o.steps = {form, lift, release};
+    FormingResult r = FormingAnalysis(model, assembler, o).run();
+    if (!r.completed) throw SolverError("explicit-dent: " + r.termination);
+    return r;
+  }
+  /// The largest and the RMS distance between two states over the top
+  /// surface's nodes [m].
+  std::pair<Scalar, Scalar> difference(const Vector& a, const Vector& b) const {
+    Scalar top = 0.0;
+    Scalar sum = 0.0;
+    int count = 0;
+    for (Index n = 0; n < model.mesh().num_nodes(); ++n) {
+      if (model.mesh().node(n).z() < -1.0e-9) continue;
+      const Scalar d = (a.segment<3>(3 * n) - b.segment<3>(3 * n)).norm();
+      top = std::max(top, d);
+      sum += d * d;
+      ++count;
+    }
+    return {top, std::sqrt(sum / count)};
+  }
+  /// The formed depth: the largest downward displacement of the top [m].
+  Scalar depth(const Vector& u) const {
+    Scalar d = 0.0;
+    for (Index n = 0; n < model.mesh().num_nodes(); ++n) {
+      if (model.mesh().node(n).z() > -1.0e-9) d = std::max(d, -u(3 * n + 2));
+    }
+    return d;
+  }
+};
+
+}  // namespace
+
+StudyOutcome study_explicit_dent(const std::string& out_dir, json::Value& summary) {
+  const DentStudy dent;
+  const Assembler assembler(dent.model);
+  // The implicit references: 25 um of tool travel an increment, and 50 um
+  // for the reference's own discretisation difference.
+  const FormingResult ref = dent.run(assembler, false, 25.0e-6, 0.0);
+  const FormingResult coarse = dent.run(assembler, false, 50.0e-6, 0.0);
+  const Vector& ref_formed = ref.steps[0].displacement;
+  const Vector& ref_final = ref.final_state.displacement;
+  const Scalar ref_depth = dent.depth(ref_formed);
+  Scalar ref_penetration = 0.0;
+  for (const FormingIncrement& inc : ref.steps[0].increments) {
+    for (const ToolRecord& t : inc.tools) {
+      ref_penetration = std::max(ref_penetration, t.max_penetration);
+    }
+  }
+  const auto own = dent.difference(coarse.steps[0].displacement, ref_formed);
+  const auto own_final = dent.difference(coarse.final_state.displacement, ref_final);
+
+  CsvWriter csv(path_join(out_dir, "explicit_dent.csv"),
+                {"run", "tool_speed[m/s]", "contact_stiffness[-]", "time_steps",
+                 "formed_depth[m]", "max_penetration[m]", "penetration_ratio[-]",
+                 "formed_max_diff[m]", "formed_rms_diff[m]", "final_max_diff[m]",
+                 "final_rms_diff[m]", "max_kinetic_ratio[-]", "peak_kinetic_ratio[-]",
+                 "energy_balance[-]"});
+  csv.raw_row({"implicit, 25 um travel (reference)", "", "", "", fmt(ref_depth, 6),
+               fmt(ref_penetration, 4), "", "0", "0", "0", "0", "", "", ""});
+  csv.raw_row({"implicit, 50 um travel", "", "", "",
+               fmt(dent.depth(coarse.steps[0].displacement), 6), "", "", fmt(own.first, 4),
+               fmt(own.second, 4), fmt(own_final.first, 4), fmt(own_final.second, 4), "", "",
+               ""});
+  json::Value runs = json::Value::make_array();
+  const Scalar default_stiffness = ExplicitOptions().contact_stiffness;
+  Scalar default_gap = 0.0;  // the default penalty at the slower speed
+  Scalar soft_gap = 0.0;     // the softest penalty at the slower speed
+  Scalar worst_balance = 0.0;
+  for (const Scalar speed : {4.0, 1.0}) {
+    for (const Scalar stiffness : {0.1, default_stiffness, 1.0}) {
+      const FormingResult r = dent.run(assembler, true, speed, stiffness);
+      const ExplicitResult& e = r.steps[0].explicit_result;
+      Scalar penetration = 0.0;
+      for (const FormingIncrement& inc : r.steps[0].increments) {
+        for (const ToolRecord& t : inc.tools) {
+          penetration = std::max(penetration, t.max_penetration);
+        }
+      }
+      const auto formed = dent.difference(r.steps[0].displacement, ref_formed);
+      const auto final_shape = dent.difference(r.final_state.displacement, ref_final);
+      worst_balance = std::max({worst_balance, e.max_energy_error,
+                                r.steps[1].explicit_result.max_energy_error});
+      const Scalar gap = std::max(formed.first, final_shape.first) / ref_depth;
+      if (speed == 1.0 && stiffness == default_stiffness) default_gap = gap;
+      if (speed == 1.0 && stiffness == 0.1) soft_gap = gap;
+      csv.raw_row({"explicit", fmt(speed, 3), fmt(stiffness, 3), fmt(static_cast<Scalar>(e.steps)),
+                   fmt(dent.depth(r.steps[0].displacement), 6), fmt(penetration, 4),
+                   fmt(e.max_penetration_ratio, 4), fmt(formed.first, 4), fmt(formed.second, 4),
+                   fmt(final_shape.first, 4), fmt(final_shape.second, 4),
+                   fmt(e.max_kinetic_ratio, 4), fmt(e.peak_kinetic_ratio, 4),
+                   fmt(e.max_energy_error, 4)});
+      json::Value rec = json::Value::make_object();
+      rec.set("tool_speed_m_s", json::Value::make_number(speed));
+      rec.set("contact_stiffness", json::Value::make_number(stiffness));
+      rec.set("time_steps", json::Value::make_number(static_cast<Scalar>(e.steps)));
+      rec.set("formed_depth_m", json::Value::make_number(dent.depth(r.steps[0].displacement)));
+      rec.set("max_penetration_m", json::Value::make_number(penetration));
+      rec.set("max_penetration_ratio", json::Value::make_number(e.max_penetration_ratio));
+      rec.set("formed_max_difference_m", json::Value::make_number(formed.first));
+      rec.set("formed_rms_difference_m", json::Value::make_number(formed.second));
+      rec.set("final_max_difference_m", json::Value::make_number(final_shape.first));
+      rec.set("final_rms_difference_m", json::Value::make_number(final_shape.second));
+      rec.set("max_kinetic_ratio", json::Value::make_number(e.max_kinetic_ratio));
+      rec.set("peak_kinetic_ratio", json::Value::make_number(e.peak_kinetic_ratio));
+      rec.set("energy_balance", json::Value::make_number(e.max_energy_error));
+      runs.push_back(rec);
+    }
+  }
+  csv.close();
+
+  // Pass: at 1 m/s with the default penalty the explicit formed and final
+  // shapes lie within 1.5 % of the depth of the implicit reference (the
+  // reference's own increment difference is 0.7 %), and every explicit
+  // balance closes to 1e-2.
+  const Scalar tolerance = 0.015;
+  json::Value block = json::Value::make_object();
+  block.set("kind", json::Value::make_string(
+                        "validation (explicit forming against the implicit forming analysis)"));
+  block.set("reference_depth_m", json::Value::make_number(ref_depth));
+  block.set("reference_penetration_m", json::Value::make_number(ref_penetration));
+  block.set("reference_formed_max_difference_50um_m", json::Value::make_number(own.first));
+  block.set("reference_final_max_difference_50um_m", json::Value::make_number(own_final.first));
+  block.set("runs", runs);
+  block.set("default_contact_stiffness", json::Value::make_number(default_stiffness));
+  block.set("default_gap", json::Value::make_number(default_gap));
+  block.set("soft_penalty_gap", json::Value::make_number(soft_gap));
+  block.set("tolerance", json::Value::make_number(tolerance));
+  block.set(
+      "note",
+      json::Value::make_string(
+          "An 8 x 8 x 1 mm sheet (8 x 8 x 2 Hex8, E = 70 GPa, nu = 0.33, J2 150 MPa + 500 MPa "
+          "linear hardening, finite strain) clamped on its edges; a 2 mm ball (friction 0.1) "
+          "pressed 0.3 mm in, moved 2 mm and lifted; the springback released implicitly onto "
+          "the same clamps. Reference: implicit forming steps, 25 um of tool travel an "
+          "increment (50 um for its own discretisation difference). Explicit: form_explicit "
+          "steps, selective mass scaling to 2e-7 s (scale about 10), at 4 and 1 m/s, contact "
+          "penalty s_c = 0.1, the default and 1. Distances over the top surface's nodes, "
+          "formed (end of the dent) and final (after the release); gap = the larger largest "
+          "distance over the reference depth. The mass-based penalty's penetration, "
+          "f dt^2 / (s_c m), does not fall with the speed: at s_c = 0.1 it biases the shape "
+          "at any speed (soft_penalty_gap). Pass: the default penalty at 1 m/s within 1.5 % "
+          "of the depth, and every balance below 1e-2."));
+  summary.set("explicit_dent", block);
+
+  std::ostringstream note;
+  note << "default penalty (s_c = " << default_stiffness << ") at 1 m/s: shape within "
+       << app::format(100.0 * default_gap, 2) << " % of the " << app::format(ref_depth * 1e6, 4)
+       << " um depth (s_c = 0.1: " << app::format(100.0 * soft_gap, 2)
+       << " %; the reference's own 50 um increment: "
+       << app::format(100.0 * std::max(own.first, own_final.first) / ref_depth, 2)
+       << " %); energy balance <= " << app::format(worst_balance, 2);
+  StudyOutcome outcome;
+  outcome.name = "explicit forming of a dent vs the implicit forming analysis";
+  outcome.kind = "validation";
+  outcome.metric = "largest shape difference over the formed depth (default penalty, 1 m/s)";
+  outcome.value = default_gap;
+  outcome.tolerance = tolerance;
+  outcome.passed = default_gap <= tolerance && worst_balance < 1.0e-2;
+  outcome.note = note.str();
   return outcome;
 }
 

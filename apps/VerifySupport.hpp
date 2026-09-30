@@ -78,6 +78,8 @@ StudyOutcome study_transient_modal(const std::string& out_dir, json::Value& summ
 StudyOutcome study_rod_harmonic(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_rod_transient(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_nonlinear_oscillator(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_explicit_rod(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_explicit_dent(const std::string& out_dir, json::Value& summary);
 /// \}
 
 /// Studies of the incompatible-mode Hex8 and the through-thickness rule in

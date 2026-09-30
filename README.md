@@ -237,7 +237,7 @@ relative.
 | **Linear buckling** | `(K + lambda K_G) phi = 0` of each load case by subspace iteration, with the buckling spectral transformation and an inertia-placed shift when reversed-load modes crowd the spectrum; a check of the analysed model, the full design domain and the **exported part** |
 | **Large deflection** | **Geometrically non-linear statics** (total Lagrangian, consistent tangent) with the Saint Venant-Kirchhoff or a compressible **neo-Hookean** law, **follower pressures**, the centrifugal load at the deformed position (spin softening), the multiplicative finite-strain **thermal** split, prescribed displacements; Newton with an energy line search under load control - which **stops at a limit or bifurcation point** and brackets it, using the tangent's inertia - or **Crisfield's arc-length method** through snap-through; monitors, Cauchy and second Piola-Kirchhoff stresses, the deformed force balance, CalculiX `NLGEOM` export |
 | **Plasticity** | **J2 (von Mises) plasticity** with linear and **Voce** isotropic and **Prager kinematic** hardening, by the backward-Euler radial return with its consistent tangent; **Hill48 anisotropy** (from r-values, stress ratios or coefficients, in a rolled sheet's frame) and **Chaboche kinematic hardening** (up to four Armstrong-Frederick backstresses, integrated exponentially or by backward Euler) by a closest-point return with its consistent - non-symmetric with recovery - tangent; in 3-D, plane strain and **plane stress** (the thickness strain solved at every point), with thermal strain; **small-strain** kinematics, the return in the Green-Lagrange strain at **large rotation**, or **large-strain plasticity in the logarithmic strain** (`finite_logarithmic`: the same return in the Hencky strain, `S = T : P` with robust spectral derivatives, Hencky elasticity, exact for coaxial stretches of any size); **mean dilatation** (B-bar, its Green-strain form, and the average of `ln J`) against volumetric locking; point history committed only on convergence; **load paths that unload and reverse** (permanent set, residual stress, the Bauschinger effect); load control that stops at a **plastic collapse** with it bracketed; equivalent plastic strain fields, CalculiX `*PLASTIC` export |
-| **Contact and forming** | **Unilateral contact** in the non-linear statics (small sliding): rigid planes, cylinders and spheres and deformable pairs by the **dual mortar** method, frictionless or with **Coulomb friction**, by a semismooth Newton method; and the **incremental-forming analysis** (`sparlab_form`, [`docs/forming.md`](docs/forming.md)): rigid **sphere, plane and cylinder tools on tabulated trajectories** (CSV or inline) in **penalty contact in the current configuration** (large sliding, exact tangent), with **Coulomb friction by an elastic-slip return map** and its consistent non-symmetric tangent, **step sequences** with per-step constraints (`hold` / `absolute`), trajectory knots reached exactly and increments capped by tool travel, restartable state (displacement, plastic and friction history), a **release ramp onto 3-2-1 supports** for springback with a reference-force residual scale that converges to the load-free residually stressed state, pattern-cached factorisation with optional **CHOLMOD / UMFPACK**, and a fixed output contract (per-step nodal and element fields, tool force histories) |
+| **Contact and forming** | **Unilateral contact** in the non-linear statics (small sliding): rigid planes, cylinders and spheres and deformable pairs by the **dual mortar** method, frictionless or with **Coulomb friction**, by a semismooth Newton method; and the **incremental-forming analysis** (`sparlab_form`, [`docs/forming.md`](docs/forming.md)): rigid **sphere, plane and cylinder tools on tabulated trajectories** (CSV or inline) in **penalty contact in the current configuration** (large sliding, exact tangent), with **Coulomb friction by an elastic-slip return map** and its consistent non-symmetric tangent, **step sequences** with per-step constraints (`hold` / `absolute`), trajectory knots reached exactly and increments capped by tool travel, restartable state (displacement, plastic and friction history), a **release ramp onto 3-2-1 supports** for springback with a reference-force residual scale that converges to the load-free residually stressed state, pattern-cached factorisation with optional **CHOLMOD / UMFPACK**, and a fixed output contract (per-step nodal and element fields, tool force histories); and **explicit forming steps** (`form_explicit`): central differences with a lumped, uniformly or selectively scaled mass, the tool paths in physical time at a given tool speed, a mass-based penalty contact, an energy balance with quasi-static checks and a dedicated allocation-free Hex8 kernel that is bitwise reproducible on any thread count, handing its state to the implicit springback release |
 | **Dynamics** | **Transient response** by the **HHT-alpha** method (the trapezoidal rule at `alpha = 0`, numerical damping of unresolved modes below it) with consistent or lumped mass, **Rayleigh damping**, step, table and harmonic amplitudes on the loads and on **prescribed motion** (a shaken support), from rest or a released preload, the energy balance tracked every step; the **non-linear transient** (large deflection, J2 plasticity) by Newton's method at every step with the plastic history committed on convergence; the **steady harmonic response** by a direct complex solve per frequency with structural and Rayleigh damping, flagging an undamped resonance; monitors of displacement, velocity, acceleration and reaction, VTK snapshot series, CalculiX `*DYNAMIC` export |
 | **Topology optimisation** | SIMP with penalty continuation, density and sensitivity filters, a **Heaviside projection** with `beta` continuation, the **robust (eroded / blueprint / dilated) formulation** for a minimum length scale, an **additive-manufacturing overhang filter**, analytical sensitivities, optimality criteria *or* the method of moving asymptotes, aggregated **stress** and **buckling** constraints with adjoint sensitivities, passive solid/void regions, multi-load-case objective, length-scale, erosion and overhang checks of the result |
 | **Geometry** | The structure before and after optimisation as VTK and watertight binary STL, with closure, manifoldness and volume checks |
@@ -460,7 +460,19 @@ The single-point forming smoke case (3 969 DOFs, a 100 mm toolpath) runs in
 75 s with SuiteSparse (122 s with Eigen's factorisations); a 60 x 60 x 2
 Hex8 cone (33 489 DOFs) costs about 17 s per 0.5 mm of toolpath, some 7
 hours for ten contours to 10 mm - the factorisation takes three quarters of
-it (section 5 of `docs/forming.md`).
+it (section 5 of `docs/forming.md`). Explicit forming steps (`form_explicit`,
+section 7) converge to the implicit springback as the equivalent tool speed
+falls (23 %, 9 %, 4 % and 1.3 % of the smoke case's springback at 28, 14,
+7 and 3.5 m/s; 3.5 % at the deck's 7 m/s with the default contact penalty),
+match the implicit analysis on a dented sheet to 0.9 % of the depth
+(`explicit-dent`; the former, softer penalty left 7 % at any speed), run the
+cone's toolpath at about 300 time steps a second on two threads (0.47 us an
+element and step) with the Green-Lagrange law - which, softening in
+compression, lets an element under the tool collapse at 88 % of the path -
+and complete the whole cone with the logarithmic kinematics at 4 m/s in 46
+minutes on two threads (load 3 to 4; section 7.4) - a feasibility and cost
+run, whose equivalent speed (above 60 m/s) is too high for its springback to
+be a result.
 
 ### Benchmarks
 
@@ -1184,15 +1196,17 @@ The short version: plane or solid continuum only (no plates, shells or
 beams); contact in the non-linear statics for small sliding only, and in the
 forming analysis for rigid tools only, by a penalty (a penetration of about
 `p h / (s E)`), implicit and quasi-static (hours for a fine sheet and a long
-toolpath), with no remeshing, trimming, thermal effects or tool spin; static
+toolpath; explicit forming steps with mass scaling cut that to minutes, at
+the accuracy their equivalent tool speed allows), with no remeshing,
+trimming, thermal effects or tool spin; static
 analysis linear, or non-linear in `sparlab_solve` - large deflection, and
 rate-independent J2 plasticity at small strain, with large rotation (no
 finite-strain plasticity, creep or damage; the forming analysis applies the
 same law at forming strains, where its stresses are approximate) - with no
 branch switching at a bifurcation of a perfect structure and no sequences of
 different loads within a case (the forming analysis has step sequences);
-dynamics by implicit direct integration with a constant step and one amplitude per case (no
-explicit integration, modal superposition, response spectra or random
+dynamics by implicit direct integration with a constant step and one amplitude per case
+(explicit integration only in the forming analysis; no modal superposition, response spectra or random
 vibration) and a linear harmonic response with Rayleigh and structural
 damping, while modal, linear (bifurcation) buckling and the optimisation stay
 linear and elastic; linear

@@ -306,6 +306,14 @@ Every tolerance is configurable and every run records the value it used in
 | harmonic solve backward error | `1e-10` | `\|\|A U - f\|\| / \|\| \|A\|\|U\| + \|f\| \|\|` of the complex solve at every frequency; above it the frequency is too close to an undamped natural frequency and the run stops |
 | harmonic amplification | `1e6` | a response this many times the static one is flagged as round-off near a natural frequency |
 | non-linear transient energy balance | `1e-2` | energy created (or, without plasticity, lost) beyond this share of the energies involved draws a warning (trapezoidal rule only) |
+| `forming.steps[].explicit.energy_tolerance` | `0.05` | explicit forming step: the energy balance error, relative to the largest energy of the run so far, above which the run warns (`summary.json`: `analysis.explicit_tolerances`) |
+| `forming.steps[].explicit.energy_limit` | `0.5` | explicit forming step: the balance error that stops the run (an unstable integration) |
+| `forming.steps[].explicit.kinetic_ratio_warning` | `0.1` | explicit forming step: kinetic over internal energy (from a virgin state) or elastic strain energy (from a stressed one, `kinetic_ratio_basis`) after the first contact, over the records whose reference energy exceeds 1 % of its final value, above which the run is warned about as not quasi-static |
+| `forming.steps[].explicit.penetration_warning` | `0.01` | explicit forming step: the largest contact penetration over the element thickness at the node (volume over largest face of its thinnest element) above which the run is warned about - the penalty's shape bias, which a slower tool does not reduce |
+| explicit energy balance onset | 10 time steps | the balance is not judged over this many time steps after the first contact (the new contact forces' half-step lag) |
+| explicit kernel closed-form eigensolver | `64 eps` | residual and orthogonality of the closed-form 3 x 3 eigendecomposition (relative to the largest entry of the matrix, and absolute) above which the logarithmic strain takes the iterative solver |
+| `forming.steps[].explicit.mass_scaling.max_added_mass_fraction` | `0.05` | explicit forming step: added over physical mass above which mass scaling is warned about |
+| explicit Hex8 kernel self-check | `1e-10` | relative difference between the dedicated kernel and the element dispatch at the start of a run above which the dispatch is used instead |
 
 The decks that use the multigrid solver (`bracket_3d_projected`,
 `bracket_3d_large`, `engine_mount_3d`) set `iterative_tolerance` to `1e-10`.
