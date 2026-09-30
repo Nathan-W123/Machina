@@ -24,7 +24,7 @@
 ///   gives T, and the force takes \f$S = P^TT\f$ (T's deviator with mean
 ///   dilatation, plus the mean pressure over the volume times
 ///   \f$C^{-1} = P^TI\f$, the variation of \f$\ln J\f$) in place of the
-///   Green-Lagrange S - about 7.5 us an element and step, the spectral
+///   Green-Lagrange S - about 5.8 us an element and step, the spectral
 ///   decomposition of eight points, against 30 us through the dispatch;
 /// * the history is updated in place (an explicit step is final), in a
 ///   compact form (plastic strain, back stress, equivalent plastic strain,

@@ -3,9 +3,9 @@
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
 #include "sparlab/fem/TotalLagrangian.hpp"
-#include "sparlab/material/LogarithmicStrain.hpp"
 
 #include <Eigen/Dense>
+#include <Eigen/Eigenvalues>
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +13,7 @@
 #include <exception>
 #include <limits>
 #include <sstream>
+#include <utility>
 
 // The element kernel is compiled twice on x86-64 GCC builds - for the
 // baseline instruction set and for x86-64-v3 (AVX2 with fused multiply-add,
@@ -47,6 +48,85 @@ Scalar unit_noise(std::uint64_t i) {
   return 2.0 * (static_cast<Scalar>(z >> 11) * (1.0 / 9007199254740992.0)) - 1.0;
 }
 
+/// A point's logarithmic strain, what the kernel needs of
+/// LogarithmicStrain.hpp's: E_log and, for S = P^T T, the principal axes and
+/// the first divided differences of ln - the same operations as
+/// logarithmic_strain() and logarithmic_stress(), without the 6 x 6
+/// projection (a quarter of their cost).
+struct PointLog {
+  Matrix3 axes = Matrix3::Identity();
+  Matrix3 first = Matrix3::Identity();
+};
+
+/// ln[x, y] of x = 1 + 2 mx, y = 1 + 2 my (LogarithmicStrain.cpp).
+Scalar log_divided(Scalar mx, Scalar my) {
+  if (mx > my) std::swap(mx, my);
+  const Scalar y = 1.0 + 2.0 * my;
+  const Scalar d = 2.0 * (mx - my);
+  if (d == 0.0) return 1.0 / y;
+  return std::log1p(d / y) / d;
+}
+
+Matrix3 tensor_of(const Scalar* v, Scalar shear_factor) {
+  Matrix3 t;
+  t(0, 0) = v[0];
+  t(1, 1) = v[1];
+  t(2, 2) = v[2];
+  t(0, 1) = t(1, 0) = shear_factor * v[3];
+  t(1, 2) = t(2, 1) = shear_factor * v[4];
+  t(2, 0) = t(0, 2) = shear_factor * v[5];
+  return t;
+}
+
+/// E_log (engineering Voigt, into `strain`) of the Green-Lagrange strain
+/// `green`, and the point's axes and divided differences.
+/// \throws SolverError as logarithmic_strain() does.
+void point_log(const Scalar* green, Scalar* strain, PointLog& out) {
+  for (int r = 0; r < 6; ++r) {
+    if (!std::isfinite(green[r])) {
+      throw SolverError("the logarithmic strain met a non-finite Green-Lagrange strain");
+    }
+  }
+  const Eigen::SelfAdjointEigenSolver<Matrix3> eigen(tensor_of(green, 0.5));
+  const Vector3 mu = eigen.eigenvalues();
+  out.axes = eigen.eigenvectors();
+  Vector3 principal;
+  for (int a = 0; a < 3; ++a) {
+    const Scalar stretch2 = 1.0 + 2.0 * mu(a);
+    if (!(stretch2 > 0.0) || !std::isfinite(stretch2)) {
+      std::ostringstream os;
+      os << "a point is degenerate: a principal stretch squared of C is " << stretch2
+         << "; the load step is too large or the mesh too coarse";
+      throw SolverError(os.str());
+    }
+    principal(a) = 0.5 * std::log1p(2.0 * mu(a));
+  }
+  const Matrix3& q = out.axes;
+  const Matrix3 e = q * principal.asDiagonal() * q.transpose();
+  strain[0] = e(0, 0);
+  strain[1] = e(1, 1);
+  strain[2] = e(2, 2);
+  strain[3] = 2.0 * e(0, 1);
+  strain[4] = 2.0 * e(1, 2);
+  strain[5] = 2.0 * e(2, 0);
+  for (int a = 0; a < 3; ++a) {
+    for (int b = a; b < 3; ++b) out.first(a, b) = out.first(b, a) = log_divided(mu(a), mu(b));
+  }
+}
+
+/// S = P^T T of a point (tensorial Voigt in and out).
+void point_log_stress(const PointLog& log, const Scalar* t, Scalar* s) {
+  const Matrix3& q = log.axes;
+  const Matrix3 principal = (q.transpose() * tensor_of(t, 1.0) * q).cwiseProduct(log.first);
+  const Matrix3 r = q * principal * q.transpose();
+  s[0] = r(0, 0);
+  s[1] = r(1, 1);
+  s[2] = r(2, 2);
+  s[3] = r(0, 1);
+  s[4] = r(1, 2);
+  s[5] = r(2, 0);
+}
+
 /// Everything one element's evaluation reads and writes.
 struct ElementJob {
   Index element = 0;
@@ -68,7 +148,7 @@ struct ElementJob {
   bool averaged = false;
   bool commit = false;
   bool want_energy = false;
-  LogarithmicStrain* logs = nullptr;  ///< logarithmic: kP of them (scratch)
+  PointLog* logs = nullptr;  ///< logarithmic: kP of them (scratch)
 };
 
 /// The element's nodal forces, node-major (out[3 a + i]), and its stored
@@ -134,10 +214,11 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
       // The logarithmic strain of every point's E (LogarithmicStrain.hpp),
       // which the return and the mean dilatation then take as the strain.
       for (int q = 0; q < kP; ++q) {
-        Vector6 green;
-        for (int r = 0; r < 6; ++r) green(r) = e[r][q];
-        job.logs[q] = logarithmic_strain(green);
-        for (int r = 0; r < 6; ++r) e[r][q] = job.logs[q].strain(r);
+        Scalar green[6];
+        Scalar strain[6];
+        for (int r = 0; r < 6; ++r) green[r] = e[r][q];
+        point_log(green, strain, job.logs[q]);
+        for (int r = 0; r < 6; ++r) e[r][q] = strain[r];
       }
     }
   } else {
@@ -307,14 +388,18 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
     // sum_q w_q C_q^-1 : dE_q / V, and C^-1 = P^T I, so it enters as
     // (pressure / V) C_q^-1 at every point (Elastoplastic.cpp).
     const Scalar mean = job.averaged ? pressure / volume : 0.0;
-    Vector6 unit;
-    unit << 1.0, 1.0, 1.0, 0.0, 0.0, 0.0;
+    static constexpr Scalar kUnit[6] = {1.0, 1.0, 1.0, 0.0, 0.0, 0.0};
     for (int q = 0; q < kP; ++q) {
-      Vector6 tq;
-      for (int r = 0; r < 6; ++r) tq(r) = t[r][q];
-      Vector6 xq = logarithmic_stress(job.logs[q], tq);
-      if (job.averaged) xq += mean * logarithmic_stress(job.logs[q], unit);
-      for (int r = 0; r < 6; ++r) t[r][q] = xq(r);
+      Scalar tq[6];
+      Scalar xq[6];
+      for (int r = 0; r < 6; ++r) tq[r] = t[r][q];
+      point_log_stress(job.logs[q], tq, xq);
+      if (job.averaged) {
+        Scalar cinv[6];
+        point_log_stress(job.logs[q], kUnit, cinv);
+        for (int r = 0; r < 6; ++r) xq[r] += mean * cinv[r];
+      }
+      for (int r = 0; r < 6; ++r) t[r][q] = xq[r];
     }
   }
   // The tensor's rows: row i holds (T_i0, T_i1, T_i2).
@@ -763,7 +848,7 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
 #endif
   {
   // Logarithmic kinematics' per-point scratch, once per thread.
-  LogarithmicStrain logs[kPoints];
+  PointLog logs[kPoints];
 #ifdef SPARLAB_HAVE_OPENMP
 #pragma omp for schedule(static)
 #endif

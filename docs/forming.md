@@ -783,9 +783,9 @@ convergence check (halving the speed once) is the sufficient one.
   slower (a plastic 20 x 20 x 2 sheet on one thread: 21 us an element and
   step against 0.59 us; it allocates its buffers at every step and forms
   the plastic moduli it does not need). The logarithmic kinematics cost
-  7.5 us an element and step in the kernel (30 us through the dispatch),
-  most of it the spectral decomposition of every point: 12 times the
-  Green-Lagrange kernel, too slow for the full cone (section 7.4). No
+  5.8 us an element and step in the kernel (30 us through the dispatch),
+  most of it the spectral decomposition of every point: 9 times the
+  Green-Lagrange kernel (section 7.4). No
   reduced integration with hourglass control is provided: a fully
   integrated Hex8 costs about 3 000 instructions a step in the kernel.
 * **Bulk viscosity** is not provided (it matters for shocks, not for
