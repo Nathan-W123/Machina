@@ -1,0 +1,233 @@
+{
+  "command": "python3 python/scripts/springback_benchmark.py --out benchmarks/springback --work benchmarks/springback/work --n-per-family 10 --models gbm mlp --workers 2 --da-fe-runs 3",
+  "config": {
+    "calibration_every": 4,
+    "da_fe_runs": 3,
+    "families": [
+      "truncated_cone",
+      "pyramid",
+      "dome",
+      "elliptic_cone"
+    ],
+    "grid_spacing": 0.00025,
+    "part_bounds": {
+      "dome": {
+        "aspect": [
+          0.75,
+          1.0
+        ],
+        "depth": [
+          0.002,
+          0.004
+        ],
+        "opening_radius": [
+          0.0075,
+          0.0105
+        ],
+        "rim_fillet": [
+          0.0015,
+          0.004
+        ]
+      },
+      "elliptic_cone": {
+        "bottom_fillet": [
+          0.001,
+          0.002
+        ],
+        "depth": [
+          0.002,
+          0.0035
+        ],
+        "semi_axis_x": [
+          0.0075,
+          0.01
+        ],
+        "semi_axis_y": [
+          0.0055,
+          0.008
+        ],
+        "top_fillet": [
+          0.001,
+          0.002
+        ],
+        "wall_angle_deg": [
+          30.0,
+          50.0
+        ]
+      },
+      "pyramid": {
+        "bottom_fillet": [
+          0.001,
+          0.002
+        ],
+        "corner_radius": [
+          0.0035,
+          0.0065
+        ],
+        "depth": [
+          0.002,
+          0.0035
+        ],
+        "half_width_x": [
+          0.0065,
+          0.0085
+        ],
+        "half_width_y": [
+          0.0065,
+          0.0085
+        ],
+        "top_fillet": [
+          0.001,
+          0.002
+        ],
+        "wall_angle_deg": [
+          30.0,
+          50.0
+        ]
+      },
+      "truncated_cone": {
+        "bottom_fillet": [
+          0.001,
+          0.0025
+        ],
+        "depth": [
+          0.002,
+          0.004
+        ],
+        "top_fillet": [
+          0.001,
+          0.0025
+        ],
+        "top_radius": [
+          0.0065,
+          0.0095
+        ],
+        "wall_angle_deg": [
+          30.0,
+          55.0
+        ]
+      }
+    },
+    "perturbation": {
+      "amplitude": [
+        0.0001,
+        0.0005
+      ],
+      "angle_margin_deg": 10.0,
+      "correlation_length": [
+        0.004,
+        0.012
+      ],
+      "taper": 1.0
+    },
+    "protocol_revision": 1,
+    "seed": 2026,
+    "solver": {
+      "setup": {
+        "blank_size": 0.04,
+        "clamp_margin": 0.005,
+        "element": "hex8",
+        "element_size": 0.002,
+        "friction": 0.1,
+        "kinematics": "finite_logarithmic",
+        "layers": 2,
+        "material": "AA5754-O",
+        "max_tool_travel": 0.001,
+        "release": "321",
+        "step_down": 0.001,
+        "thickness": 0.001,
+        "threads": 1,
+        "tool_radius": 0.004,
+        "toolpath_spacing": 0.001,
+        "toolpath_style": "spiral"
+      },
+      "simulator": "sparlab_form"
+    },
+    "surrogate": {
+      "gbm": {
+        "max_iter": 300,
+        "n_members": 8
+      },
+      "iterations": 8,
+      "mlp": {
+        "epochs": 40,
+        "hidden": [
+          128,
+          128
+        ],
+        "n_members": 5
+      },
+      "points_per_sample": 2000,
+      "stagnation": 0.02
+    },
+    "test_per_family": 2,
+    "train_kinds": [
+      "uncompensated",
+      "compensated"
+    ]
+  },
+  "cpu_count": 4,
+  "created_at": "2026-09-30T05:46:52Z",
+  "data_source": "SparLab simulation",
+  "dataset": {
+    "by_split": {
+      "calibration": 8,
+      "test": 8,
+      "train": 24
+    },
+    "generation_failures": 0,
+    "parts": 40,
+    "samples": 80
+  },
+  "load_average_end": [
+    2.84521484375,
+    4.10302734375,
+    4.37939453125
+  ],
+  "load_average_start": [
+    3.2998046875,
+    5.3203125,
+    5.95849609375
+  ],
+  "models": [
+    "gbm",
+    "mlp"
+  ],
+  "n_per_family": 10,
+  "simulations": {
+    "complete": 113,
+    "failed": 0,
+    "runtime_s_max": 637.4338434029996,
+    "runtime_s_mean": 250.0411776358141,
+    "runtime_s_median": 217.589173114,
+    "runtime_s_min": 102.91201894599726,
+    "runtime_s_total": 28254.653072846995,
+    "total": 113
+  },
+  "sparlab_version": "sparlab 1.0.0 (a014858e7dbc-dirty)",
+  "stage": "stage_n10",
+  "timings_s": {
+    "fe_da_s": 1048.8961091630008,
+    "gbm_s": 1167.483804307998,
+    "generate_s": 3532.1325714859995,
+    "mlp_s": 915.8662618100025,
+    "total_s": 6665.328556233
+  },
+  "training_threads": 2,
+  "training_time_s": {
+    "gbm": 134.97699722700054,
+    "mlp": 52.26876957400236
+  },
+  "versions": {
+    "git_revision": "e4dd9d3",
+    "numpy": "2.4.6",
+    "pandas": "3.0.6",
+    "platform": "Linux-6.18.44-fc-v50-x86_64-with-glibc2.39",
+    "precomp": "0.1.0",
+    "python": "3.11.15",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.17.1",
+    "torch": "2.14.0+cpu"
+  },
+  "workers": 2
+}
