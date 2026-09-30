@@ -8,10 +8,12 @@
 // (60 x 60 x 2 Hex8), 5 mm tool and ten 1 mm contours to 10 mm depth
 // (spif_cone_60_toolpath.csv). The logarithmic kinematics are needed: with the
 // Green-Lagrange law ("finite") an element under the tool collapses at 88 % of
-// the path, at plastic strains above 1 (section 7.5). The run took 68 minutes
-// on two threads of a loaded machine; the kinetic energy stays below 0.03 of
-// the internal energy, but the equivalent speed (about 60 m/s) is high for
-// springback work - see the settings guide (section 7.2).
+// the path, at plastic strains above 1 (section 7.5). This deck shows that the
+// full part completes and what it costs; it is too fast for springback work:
+// the mass is scaled by about 250 (the run warns about it), an equivalent speed
+// v sqrt(s) above 60 m/s, where the smoke study (section 7.3) leaves the
+// springback 20 % or more off. For springback, lower the equivalent speed to
+// about 7 m/s and check it by halving it once (section 7.2).
 {
   "name": "spif_cone_60_explicit",
   "description": "SPIF cone, explicit forming (logarithmic strain, 4 m/s): 60 x 60 x 1 mm blank (60 x 60 x 2 Hex8), 5 mm tool, 10 contours to 10 mm, retract, unclamp",
@@ -31,8 +33,7 @@
     "steps": [
       { "name": "form", "type": "form_explicit", "tools": ["tool"], "time": [0.0, 11.9],
         "explicit": { "tool_speed": 4.0,
-                      "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6,
-                                        "max_added_mass_fraction": 1000.0, "dynamic": true },
+                      "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6, "dynamic": true },
                       "history_every": 200 },
         "boundary_conditions": [
           { "name": "frame", "fix": ["x", "y", "z"], "mode": "hold",
@@ -40,8 +41,7 @@
                                     { "box": { "ymax": -0.0225 } }, { "box": { "ymin": 0.0225 } } ] } } ] },
       { "name": "retract", "type": "form_explicit", "tools": ["tool"], "time": [11.9, 12.0],
         "explicit": { "tool_speed": 4.0,
-                      "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6,
-                                        "max_added_mass_fraction": 1000.0, "dynamic": true },
+                      "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6, "dynamic": true },
                       "history_every": 200 },
         "boundary_conditions": [
           { "name": "frame", "fix": ["x", "y", "z"], "mode": "hold",
