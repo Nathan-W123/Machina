@@ -761,3 +761,287 @@ TEST_CASE("the explicit step loop allocates no memory", "[explicit]") {
   INFO("allocations " << a << " and " << b << " (less the friction history entries)");
   REQUIRE(a == b);
 }
+
+// ---------------------------------------------------------------------------
+// 5. The explicit forming step (form_explicit) and its handoff
+// ---------------------------------------------------------------------------
+namespace {
+
+/// The dent case as a forming analysis: `dent` (explicit) presses the ball
+/// in and moves it along, `lift` (explicit) takes it off the sheet, and an
+/// implicit `release` with the same clamps and no tool follows.
+FormingOptions dent_forming(const DentCase& c) {
+  FormingOptions o;
+  RigidTool ball = c.tools[0];
+  ball.trajectory.times = {0.0, 1.0, 2.0, 3.0};
+  ball.trajectory.points = {Vector3(0.003, 0.004, 0.0021), Vector3(0.003, 0.004, 0.0017),
+                            Vector3(0.005, 0.004, 0.0017), Vector3(0.005, 0.004, 0.0023)};
+  o.tools.push_back(ball);
+  FormingStep dent;
+  dent.name = "dent";
+  dent.type = FormingStep::Type::FormExplicit;
+  dent.tools = {"ball"};
+  dent.t_begin = 0.0;
+  dent.t_end = 2.0;
+  dent.tool_speed = 1.0;
+  dent.explicit_options = dent_options();
+  dent.explicit_options.mass_damping = 5.0e4;
+  FormingStep lift = dent;
+  lift.name = "lift";
+  lift.t_begin = 2.0;
+  lift.t_end = 3.0;
+  FormingStep release;
+  release.name = "release";
+  release.type = FormingStep::Type::Release;
+  o.steps = {dent, lift, release};
+  return o;
+}
+
+}  // namespace
+
+TEST_CASE("an explicit forming step hands its state to an implicit release exactly",
+          "[explicit][forming]") {
+  const DentCase c;
+  const Assembler assembler(c.model);
+  const FormingOptions o = dent_forming(c);
+  const Index n = c.model.dofs().num_dofs();
+  const FormingResult all = FormingAnalysis(c.model, assembler, o).run();
+  REQUIRE(all.completed);
+  REQUIRE(all.steps.size() == 3);
+  const FormingStepResult& dent = all.steps[0];
+  REQUIRE(dent.explicit_step);
+  CHECK(dent.explicit_result.completed);
+  CHECK(dent.explicit_result.contact);
+  CHECK(dent.explicit_result.kernel == "dedicated Hex8");
+  CHECK(dent.max_plastic_strain > 1.0e-3);
+  CHECK(all.total_explicit_steps ==
+        dent.explicit_result.steps + all.steps[1].explicit_result.steps);
+  // The recorded steps are the step's increments, the tool force averaged
+  // over each record's steps; the ball is pushed up by the sheet.
+  REQUIRE(dent.increments.size() + 1 == dent.explicit_result.records.size());
+  CHECK(dent.increments.back().time == Approx(2.0));
+  int pushed = 0;
+  for (const FormingIncrement& inc : dent.increments) {
+    if (inc.tools.at(0).active_nodes > 0 && inc.tools[0].force.z() > 0.0) ++pushed;
+  }
+  CHECK(pushed > static_cast<int>(dent.increments.size()) / 2);
+  // The lift ends with the ball off the sheet.
+  CHECK(all.steps[1].increments.back().tools.at(0).active_nodes == 0);
+
+  // A restart from the end of the explicit steps releases to the same state
+  // bit for bit: the handoff (displacement, velocity, plastic and friction
+  // history) is the state the analysis carries.
+  FormingOptions first = o;
+  first.steps = {o.steps[0], o.steps[1]};
+  const FormingResult formed = FormingAnalysis(c.model, assembler, first).run();
+  REQUIRE(formed.completed);
+  REQUIRE(formed.final_state.velocity.size() == n);  // an explicit step hands on its velocity
+  CHECK((formed.final_state.displacement - all.steps[1].displacement).cwiseAbs().maxCoeff() ==
+        0.0);
+  FormingOptions second = o;
+  second.steps = {o.steps[2]};
+  const FormingResult released = FormingAnalysis(c.model, assembler, second).run(formed.final_state);
+  REQUIRE(released.completed);
+  CHECK((released.final_state.displacement - all.final_state.displacement)
+            .cwiseAbs()
+            .maxCoeff() == 0.0);
+  CHECK(all.final_state.velocity.size() == 0);  // an implicit step ends at rest
+
+  // With the partition unchanged and the tool off the sheet, nothing
+  // changed at the handoff (report item 8, the import round trip): the
+  // release ramps out only what the explicit end state leaves - the inertia
+  // and damping forces of a damped run come to rest, 1.4e-8 of the forming
+  // force here - and it moves the part by round-off (6e-13 m), at two
+  // iterations an increment (the displacement test's second).
+  const FormingStepResult& release = all.steps[2];
+  Scalar max_formed = 0.0;
+  for (Index node = 0; node < c.model.mesh().num_nodes(); ++node) {
+    max_formed = std::max(max_formed, all.steps[1].displacement.segment(node * 3, 3).norm());
+  }
+  INFO("start imbalance " << release.start_imbalance << " N, reference force "
+                          << release.reference_force << " N; displacement change "
+                          << release.max_displacement_change << " m of " << max_formed
+                          << " m; " << release.iterations << " iterations in "
+                          << release.increments.size() << " increments");
+  CHECK(release.start_imbalance < 1.0e-6 * release.reference_force);
+  CHECK(release.max_displacement_change < 1.0e-6 * max_formed);
+  CHECK(release.cuts == 0);
+  CHECK(release.iterations <= 2 * static_cast<int>(release.increments.size()));
+}
+
+namespace {
+
+const char* kExplicitForming = R"({
+      "kinematics": "finite",
+      "tools": [
+        {"name": "punch", "shape": "plane", "normal": [0, 0, -1],
+         "surface": {"box": {"zmin": 0.002}}, "friction": 0.1,
+         "trajectory": {"times": [0, 1, 1.5], "points": [[0, 0, 0.002], [0, 0, 0.00196],
+                                                           [0, 0, 0.0021]]}}],
+      "steps": [
+        {"name": "press", "type": "form_explicit", "tools": ["punch"], "time": [0, 1],
+         "explicit": {"tool_speed": 0.05,
+                      "mass_scaling": {"mode": "selective", "target_time_step": 2e-7,
+                                       "max_added_mass_fraction": 20},
+                      "stable_step": {"method": "element_eigenvalue", "safety": 0.8,
+                                      "update_every": 100, "power_iterations": 40},
+                      "damping": 1000, "contact_stiffness": 0.2, "history_every": 50,
+                      "snapshot_every": 400, "energy_tolerance": 0.1, "energy_limit": 0.8,
+                      "kinetic_ratio_warning": 0.2}},
+        {"name": "lift", "type": "form_explicit", "tools": ["punch"], "time": [1, 1.5],
+         "explicit": {"duration": 0.002}},
+        {"name": "release", "type": "release", "increments": 4,
+         "boundary_conditions": [
+           {"name": "A", "fix": ["x", "y", "z"], "region": {"nearest_node": [0, 0, 0]}},
+           {"name": "B", "fix": ["y", "z"], "region": {"nearest_node": [0.004, 0, 0]}},
+           {"name": "C", "fix": ["z"], "region": {"nearest_node": [0, 0.004, 0]}}]}],
+      "output": {"vtk": false}
+    })";
+
+std::string explicit_deck(const std::string& forming) {
+  return R"({
+    "name": "tiny explicit forming",
+    "mesh": {"type": "structured_hex", "nx": 2, "ny": 2, "nz": 2,
+             "lx": 0.004, "ly": 0.004, "lz": 0.002},
+    "material": {"youngs_modulus": 70e9, "poisson_ratio": 0.33, "density": 2700,
+                 "plasticity": {"yield_stress": 100e6, "hardening_modulus": 300e6}},
+    "boundary_conditions": [
+      {"name": "base", "fix": ["z"], "region": {"box": {"zmax": 0.0}}},
+      {"name": "corner", "fix": ["x", "y"], "region": {"nearest_node": [0, 0, 0]}},
+      {"name": "edge", "fix": ["y"], "region": {"nearest_node": [0.004, 0, 0]}}],
+    "forming": )" + forming + "}";
+}
+
+Configuration parse_explicit_deck(const std::string& text) {
+  return parse_configuration(json::parse(text, "deck"), "deck", true, "");
+}
+
+}  // namespace
+
+TEST_CASE("the explicit block of a form_explicit step is read in full, strictly",
+          "[explicit][forming][io]") {
+  const Configuration c = parse_explicit_deck(explicit_deck(kExplicitForming));
+  const FormingOptions& o = c.forming.options;
+  REQUIRE(o.steps.size() == 3);
+  const FormingStep& press = o.steps[0];
+  CHECK(press.type == FormingStep::Type::FormExplicit);
+  CHECK(press.tool_speed == 0.05);
+  CHECK(press.duration == 0.0);
+  const ExplicitOptions& e = press.explicit_options;
+  CHECK(e.mass_scaling.mode == MassScalingOptions::Mode::Selective);
+  CHECK(e.mass_scaling.target_time_step == 2e-7);
+  CHECK(e.mass_scaling.max_added_mass_fraction == 20.0);
+  CHECK(e.stable_step.method == StableStepOptions::Method::ElementEigenvalue);
+  CHECK(e.stable_step.safety == 0.8);
+  CHECK(e.stable_step.update_every == 100);
+  CHECK(e.stable_step.power_iterations == 40);
+  CHECK(e.mass_damping == 1000.0);
+  CHECK(e.contact_stiffness == 0.2);
+  CHECK(e.history_every == 50);
+  CHECK(e.snapshot_every == 400);
+  CHECK(e.energy_tolerance == 0.1);
+  CHECK(e.energy_limit == 0.8);
+  CHECK(e.kinetic_ratio_warning == 0.2);
+  CHECK(o.steps[1].duration == 0.002);
+  CHECK(o.steps[1].tool_speed == 0.0);
+  CHECK(o.steps[1].explicit_options.mass_scaling.mode == MassScalingOptions::Mode::None);
+
+  const auto refuse = [&](const std::string& from, const std::string& to,
+                          const std::string& message) {
+    std::string text = kExplicitForming;
+    const std::size_t at = text.find(from);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, from.size(), to);
+    INFO(message);
+    CHECK_THROWS_WITH(parse_explicit_deck(explicit_deck(text)), ContainsSubstring(message));
+  };
+  refuse(R"("duration": 0.002)", R"("duration": 0.002, "tool_speed": 1)", "not both");
+  refuse(R"(,
+         "explicit": {"duration": 0.002})", "", "needs an 'explicit' block");
+  refuse(R"("duration": 0.002})", R"("duration": 0.002}, "max_tool_travel": 1e-4)",
+         "'max_tool_travel' and 'increments' set the increments of an implicit step");
+  refuse(R"("mode": "selective")", R"("mode": "sideways")", "unknown mass scaling mode");
+  refuse(R"("method": "element_eigenvalue")", R"("method": "guess")",
+         "unknown stable step method");
+  refuse(R"("method": "element_eigenvalue")", R"("method": "power_iteration")",
+         "selective mass scaling needs a time step per element");
+  refuse(R"("safety": 0.8)", R"("safety": 1.5)", "'stable_step.safety' must lie in (0, 1]");
+  refuse(R"("contact_stiffness": 0.2)", R"("contact_stiffness": 2)", "'contact_stiffness'");
+  refuse(R"("tool_speed": 0.05)", R"("tool_speed": -1)", "must be positive");
+  refuse(R"("damping": 1000)", R"("damping": 1000, "dampnig": 1)", "dampnig");
+  refuse(R"("type": "release", "increments": 4)",
+         R"("type": "release", "increments": 4, "explicit": {"duration": 1})",
+         "an 'explicit' block belongs to a step of type \"form_explicit\"");
+}
+
+TEST_CASE("a form_explicit run writes the step files, its energy history and its summary",
+          "[explicit][forming][io]") {
+  const Configuration c = parse_explicit_deck(explicit_deck(kExplicitForming));
+  FemModel model = build_model(c);
+  Assembler assembler(model);
+  const FormingResult r = FormingAnalysis(model, assembler, c.forming.options).run();
+  REQUIRE(r.completed);
+  REQUIRE(r.steps.size() == 3);
+  REQUIRE(r.steps[0].explicit_step);
+  CHECK(r.steps[0].explicit_result.contact);
+  CHECK_FALSE(r.steps[2].explicit_step);
+  CHECK(r.timing.get("explicit") > 0.0);
+  CHECK(r.timing.get("explicit_internal_force") > 0.0);
+  // Snapshots every 400 steps of the press.
+  CHECK(r.steps[0].snapshots.size() ==
+        static_cast<std::size_t>((r.steps[0].explicit_result.steps - 1) / 400));
+
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "sparlab_test_explicit_out";
+  std::filesystem::remove_all(dir);
+  ResultWriter writer(dir.string(), c);
+  const std::vector<std::string> files =
+      write_forming_results(writer, model, c.forming.options, r, false, true);
+  const auto first_line = [&](const std::string& name) {
+    std::ifstream in((dir / name).string());
+    std::string line;
+    std::getline(in, line);
+    return line;
+  };
+  const auto lines = [&](const std::string& name) {
+    std::ifstream in((dir / name).string());
+    std::string line;
+    int count = 0;
+    while (std::getline(in, line)) ++count;
+    return count;
+  };
+  for (const std::string stem : {"step_1_press", "step_2_lift"}) {
+    INFO(stem);
+    CHECK(first_line(stem + "_nodes.csv") == "node,X,Y,Z,ux,uy,uz");
+    CHECK(first_line(stem + "_energy.csv") ==
+          "step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,"
+          "plastic_dissipation_J,contact_normal_work_J,contact_friction_work_J,damping_J,"
+          "external_work_J,energy_error_J,kinetic_internal_ratio");
+  }
+  CHECK(lines("step_1_press_energy.csv") ==
+        1 + static_cast<int>(r.steps[0].explicit_result.records.size()));
+  CHECK_FALSE(std::filesystem::exists(dir / "step_3_release_energy.csv"));
+  // The tool forces: a row per record of the explicit steps.
+  CHECK(lines("tool_forces.csv") ==
+        1 + static_cast<int>(r.steps[0].increments.size() + r.steps[1].increments.size()));
+
+  const json::Value summary =
+      forming_summary_json(c, model, c.forming.options, r, 1.0, "test", files);
+  const json::Value& steps = *summary.find("steps");
+  REQUIRE(steps.array_items().size() == 3);
+  const json::Value* ex = steps.array_items()[0].find("explicit");
+  REQUIRE(ex != nullptr);
+  for (const char* key :
+       {"steps", "physical_time_s", "tool_speed_m_s", "time_step_s", "stable_time_step_s",
+        "scaled_stable_time_step_s", "mass_scaling", "mass_scale_max", "added_mass_fraction",
+        "physical_mass_kg", "scaled_mass_kg", "max_kinetic_ratio", "max_energy_error",
+        "kernel", "wall_s", "energy_file", "timing"}) {
+    INFO(key);
+    CHECK(ex->find(key) != nullptr);
+  }
+  CHECK(ex->find("steps")->number_value() ==
+        static_cast<Scalar>(r.steps[0].explicit_result.steps));
+  CHECK(ex->find("energy_file")->string_value() == "step_1_press_energy.csv");
+  CHECK(steps.array_items()[2].find("explicit") == nullptr);
+  std::filesystem::remove_all(dir);
+}

@@ -907,7 +907,14 @@ FormingResult FormingAnalysis::run(const AnalysisState& start) {
         log::warn(label, ": ", os.str());
       }
     }
-    if (started) {
+    if (started && step.type == FormingStep::Type::FormExplicit) {
+      // An explicit step ramps nothing out: it integrates from the state as
+      // it is (its imbalance above, with the implicit penalty, is only the
+      // check that the state can be evaluated).
+      sr.start_imbalance = 0.0;
+      log::info("forming ", label, " (", to_string(step.type), ", t = ", tb, " .. ", te, " s, ",
+                sr.tools.size(), " tool(s), ", part.fixed.size(), " prescribed DOF(s))");
+    } else if (started) {
       log::info("forming ", label, " (", to_string(step.type), ", t = ", tb, " .. ", te, " s, ",
                 sr.tools.size(), " tool(s), ", part.fixed.size(), " prescribed DOF(s)): start "
                 "imbalance ", sr.start_imbalance, " N");

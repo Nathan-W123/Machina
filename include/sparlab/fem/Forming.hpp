@@ -287,7 +287,7 @@ struct FormingStepResult {
   Vector reactions;
   Scalar reaction_norm = 0.0;       ///< [N]
   Scalar reference_force = 0.0;     ///< F_ref at the end [N]
-  Scalar start_imbalance = 0.0;     ///< |R_0f|, the imbalance ramped out [N]
+  Scalar start_imbalance = 0.0;     ///< |R_0f|, the imbalance ramped out [N] (0: form_explicit)
   Scalar max_plastic_strain = 0.0;
   /// Per element at the end: the largest equivalent plastic strain of its
   /// points and the von Mises stress of its point-averaged Cauchy stress.
