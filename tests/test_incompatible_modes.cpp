@@ -1186,3 +1186,118 @@ TEST_CASE("the element formulation and the thickness rule are read from a deck a
   REQUIRE_THROWS_AS(build_model(parse(deck(quad, R"({"element_formulation": "incompatible_modes"})"))),
                     ConfigError);
 }
+
+namespace {
+
+/// The stretch along z of a neo-Hookean body stretched by `sx`, `sy` along
+/// x and y with S_zz = 0 (and S_yy = 0 too when `uniaxial`: then sy is
+/// found as well, equal to the z stretch), by bisection.
+Scalar free_stretch(const IsotropicMaterial& m, Scalar sx, Scalar sy, bool uniaxial) {
+  const auto stress_zz = [&](Scalar s) {
+    Matrix h = Matrix::Zero(3, 3);
+    h(0, 0) = sx - 1.0;
+    h(1, 1) = (uniaxial ? s : sy) - 1.0;
+    h(2, 2) = s - 1.0;
+    return evaluate_hyperelastic(HyperelasticModel::NeoHookean, m,
+                                 StressState::ThreeDimensional, h, 0.0)
+        .stress(2);
+  };
+  // Bisection: S_zz rises monotonically with the stretch along z; it is
+  // negative (compressive) at a small one and positive at rest under the
+  // stretches, or at 1 in compression along x.
+  Scalar lo = 0.05;
+  Scalar hi = 2.0;
+  for (int it = 0; it < 200 && hi - lo > 1.0e-15; ++it) {
+    const Scalar mid = 0.5 * (lo + hi);
+    (stress_zz(mid) > 0.0 ? hi : lo) = mid;
+  }
+  const Scalar b = 0.5 * (lo + hi);
+  return b;
+}
+
+/// The smallest eigenvalue, relative to the largest, of an element tangent
+/// reduced by the held degrees of freedom [node][component].
+Scalar reduced_smallest_eigenvalue(const Matrix& tangent, const bool held[8][3]) {
+  std::vector<Eigen::Index> free;
+  for (int a = 0; a < 8; ++a) {
+    for (int k = 0; k < 3; ++k) {
+      if (!held[a][k]) free.push_back(3 * a + k);
+    }
+  }
+  const Eigen::Index n = static_cast<Eigen::Index>(free.size());
+  Matrix reduced(n, n);
+  for (Eigen::Index i = 0; i < n; ++i) {
+    for (Eigen::Index j = 0; j < n; ++j) {
+      reduced(i, j) = tangent(free[static_cast<std::size_t>(i)], free[static_cast<std::size_t>(j)]);
+    }
+  }
+  const Vector lambda = eigenvalues(0.5 * (reduced + reduced.transpose()));
+  return lambda(0) / lambda.cwiseAbs().maxCoeff();
+}
+
+}  // namespace
+
+TEST_CASE("under large compression the finite incompatible-mode Hex8 develops a spurious "
+          "hourglass mode the standard Hex8 does not",
+          "[incompatible][nonlinear][stability]") {
+  // Wriggers and Reese (1996, CMAME 135): the enhanced elements of finite
+  // deformation lose stability under large compression although the
+  // material and the compatible element are stable. A unit cube of a
+  // neo-Hookean material (nu = 0.3) under a homogeneous deformation, its
+  // tangent reduced to the test: u_x held on the faces x = 0 and 1 (and u_y
+  // on y = 0 and 1 in the biaxial test), the remaining rigid motions
+  // removed at nodes 0 and 3.
+  const IsotropicMaterial m(1.0e6, 0.3, 1.0, "neo-Hookean");
+  const auto cube = [&](ElementFormulation f) {
+    IntegrationOptions o;
+    o.formulation = f;
+    return FemModel(Mesh(unit_box_coords(), {0, 1, 2, 3, 4, 5, 6, 7}, ElementType::Hex8), m, 1.0,
+                    StressState::ThreeDimensional, o);
+  };
+  const FemModel model = cube(ElementFormulation::IncompatibleModes);
+  const FemModel standard = cube(ElementFormulation::Standard);
+  const Matrix x = unit_box_coords();
+  const auto smallest = [&](const FemModel& fm, const Vector3& stretch, const bool held[8][3]) {
+    Vector ue(24);
+    for (int a = 0; a < 8; ++a) {
+      ue.segment<3>(3 * a) = (stretch.array() - 1.0).matrix().cwiseProduct(Vector3(x.col(a)));
+    }
+    const TotalLagrangianElement el = total_lagrangian_element(
+        fm, 0, ue, HyperelasticModel::NeoHookean, nullptr, 0.0, true, nullptr);
+    if (el.internal.size() > 0) {
+      REQUIRE(el.internal.cwiseAbs().maxCoeff() <= 1.0e-12);  // homogeneous: no modes
+    }
+    return reduced_smallest_eigenvalue(el.tangent, held);
+  };
+  // Uniaxial compression along x. Measured: the smallest eigenvalue of the
+  // incompatible-mode element passes zero between the stretches 0.66 and
+  // 0.65 (0.0039 and -0.0012 of the largest), in an hourglass mode; the
+  // standard element stays at 0.0145 to 0.0182 down to 0.3.
+  bool uniaxial_held[8][3] = {};
+  for (int a = 0; a < 8; ++a) uniaxial_held[a][0] = true;
+  uniaxial_held[0][1] = uniaxial_held[0][2] = uniaxial_held[3][2] = true;
+  for (int i = 1; i <= 70; ++i) {
+    const Scalar axial = 1.0 - 0.01 * i;
+    const Scalar lateral = free_stretch(m, axial, 0.0, true);
+    const Vector3 stretch(axial, lateral, lateral);
+    const Scalar e_im = smallest(model, stretch, uniaxial_held);
+    const Scalar e_st = smallest(standard, stretch, uniaxial_held);
+    INFO("stretch " << axial << ": " << e_im << " (standard " << e_st << ")");
+    REQUIRE(e_st > 0.01);
+    if (axial >= 0.66 - 1.0e-12) REQUIRE(e_im > 0.0);
+    if (axial <= 0.65 + 1.0e-12) REQUIRE(e_im < 0.0);
+  }
+  // The thinning of a sheet: equibiaxial stretch in its plane, free through
+  // its thickness, to a thickness stretch below 0.5, stays stable: the
+  // stress is tensile.
+  bool biaxial_held[8][3] = {};
+  for (int a = 0; a < 8; ++a) biaxial_held[a][0] = biaxial_held[a][1] = true;
+  biaxial_held[0][2] = true;
+  for (int i = 1; i <= 50; ++i) {
+    const Scalar in_plane = 1.0 + 0.02 * i;
+    const Scalar thickness = free_stretch(m, in_plane, in_plane, false);
+    INFO("in-plane stretch " << in_plane << ", thickness stretch " << thickness);
+    REQUIRE(smallest(model, Vector3(in_plane, in_plane, thickness), biaxial_held) > 0.0);
+    if (i == 50) REQUIRE(thickness < 0.5);
+  }
+}
