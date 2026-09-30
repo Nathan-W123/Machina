@@ -1,4 +1,202 @@
-# SparLab
+# SparLab: springback pre-compensation for robotic incremental sheet forming
+
+**Predict how a sheet-metal part will spring back before it is formed, and
+form a corrected shape instead - so the first part is closer to the target.**
+
+In single-point incremental forming (SPIF) a robot pushes a small spherical
+tool over a clamped sheet, contour by contour, until the sheet takes the
+shape of the part. When the tool leaves and the clamp is released, the
+elastic part of the deformation recovers: the part **springs back**, and
+comes out shallower and bent compared with the programmed shape. The usual
+remedy is trial and error - form a part, scan it, correct the tool path,
+form again - which costs sheets, robot time and scans for every new
+geometry.
+
+This project replaces as many of those iterations as it can with
+computation: a finite-element model of the forming process predicts the
+formed and released part, a compensation loop adjusts the commanded shape
+until the *predicted* part matches the target, and - once there is data - a
+learned surrogate makes that prediction in seconds instead of minutes, with
+an uncertainty estimate and a check of whether the part is inside what the
+model was trained on. Measured scans close the same loop on the shop floor.
+
+It is an independent, open project. **Status: a working pipeline with
+simulation results on small parts; nothing here has yet been compared with a
+formed part** (see [Results](#current-results) and
+[Limitations](#limitations-of-the-pre-compensation-pipeline)).
+
+## How it fits together
+
+```
+ target part (height map, STL, or a parametric family)
+        |
+        v
+ +-------------------------------------------------------------------+
+ | precomp  (Python, python/precomp, docs/precomp.md)                 |
+ |   geometry -> tool path (drop cutter; contour / spiral) -> deck     |
+ |   compensation: displacement adjustment with a predictor           |
+ |   metrology: scan alignment (ICP), deviation maps, reports         |
+ |   robot: compliance pre-compensation of the tool path              |
+ +--------------+-----------------------------------+----------------+
+                | forming deck (JSON + CSV path)    | features, targets
+                v                                   v
+ +------------------------------+     +-------------------------------+
+ | sparlab_form  (C++ engine)   |     | precomp.ml  (docs/precomp_ml) |
+ |  rigid tools on trajectories |     |  GBM / MLP ensembles, U-Net   |
+ |  penalty contact + Coulomb   |     |  conformal intervals          |
+ |  Hill48 / Chaboche, finite   |     |  training envelope (refuses   |
+ |  strain in the log strain    |     |  out-of-distribution parts)   |
+ |  form - unload - release     |     |  surrogate compensation,      |
+ |  onto 3-2-1 supports         |     |  verified by one FEA run      |
+ +--------------+---------------+     +---------------+---------------+
+                | formed + released shape            | predicted shape
+                +-----------------+------------------+
+                                  v
+                  commanded (compensated) shape + tool path
+```
+
+* **C++ engine** - `sparlab_form` ([`docs/forming.md`](docs/forming.md)):
+  an implicit, quasi-static forming analysis on SparLab's finite-element
+  core. Rigid sphere, plane and cylinder tools follow tabulated trajectories
+  in penalty contact with Coulomb friction; the sheet is Hex8 with J2 or
+  Hill48 plasticity, Voce and Chaboche hardening, and large-strain
+  plasticity in the logarithmic strain; a step sequence forms the part,
+  removes the tool and releases the clamp onto 3-2-1 supports to give the
+  sprung-back shape. Optional SuiteSparse (CHOLMOD / UMFPACK)
+  factorisations.
+* **precomp pipeline** - `python/precomp` ([`docs/precomp.md`](docs/precomp.md)):
+  parts, materials, tool paths, forming decks and a content-addressed run
+  cache, deviation metrics, displacement-adjustment compensation driven by
+  the FEA, by a surrogate or by a scan, robot-compliance correction of the
+  path, reports, and the `precomp` command.
+* **ML** - `precomp.ml` ([`docs/precomp_ml.md`](docs/precomp_ml.md)):
+  per-node springback models (gradient-boosting and MLP ensembles, a field
+  U-Net) with split-conformal intervals calibrated over whole parts, a
+  training envelope that refuses parts unlike the training data, surrogate
+  compensation verified by a simulation, active selection of the next runs,
+  and transfer to measured parts.
+
+## Quick start
+
+```bash
+# 1. Build the engine (Eigen and a C++17 compiler; SuiteSparse is optional and
+#    speeds up the forming analysis: apt-get install libsuitesparse-dev)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# 2. Install the Python package and run its tests (the sparlab_form
+#    integration tests run because build/bin/sparlab_form now exists)
+pip install -e '.[dev]'              # '.[torch]' adds the neural models
+python3 -m pytest python/tests -q
+
+# 3. The forming smoke case on its own (about 75 s with SuiteSparse)
+./build/bin/sparlab_form --config configs/forming/spif_smoke.json --output results/spif_smoke
+
+# 4. Compensate a part with the FEA: a small cone, two simulations
+precomp part --family truncated_cone \
+    --param top_radius=0.009 wall_angle_deg=45 depth=0.003 top_fillet=0.002 bottom_fillet=0.002 \
+    --size 0.04 --spacing 0.00025 --out cone.npz
+precomp setup --material AA5754-O --set blank_size=0.04 element_size=0.002 layers=2 \
+    thickness=0.001 tool_radius=0.004 step_down=0.001 clamp_margin=0.009 --out setup.json
+precomp compensate --target cone.npz --setup setup.json --method fea --iterations 2 \
+    --work-dir runs --out comp       # comp/compensated.npz, toolpath.csv, compensation.json
+
+# 5. The same, recorded as the benchmark below (about 4.5 minutes on one thread)
+python3 python/scripts/fea_da_demo.py --out results/fea_da_cone --work runs/fea_da \
+    --clamp-margin 0.009
+```
+
+Scans, reports, the robot-compliance correction and the ML commands
+(`precomp dataset | train | evaluate | active`, `precomp compensate --method
+surrogate --verify-fea`) are listed in
+[`docs/precomp.md`](docs/precomp.md#high-level-api-and-command-line) and
+[`docs/precomp_ml.md`](docs/precomp_ml.md#command-line-and-api).
+
+## Current results
+
+### Compensation with the forming FEA (simulation)
+
+From [`benchmarks/fea_da_cone`](benchmarks/fea_da_cone/README.md): a
+truncated cone 3 mm deep (top radius 9 mm, 45 degree wall) in a 40 x 40 x
+1 mm AA5754-O blank with nominal material data, 20 x 20 x 2 Hex8, a 4 mm
+tool on a spiral path, formed, unloaded and released onto 3-2-1 supports.
+Deviation of the released part from the target, over the part, after one
+step of displacement adjustment (two `sparlab_form` simulations):
+
+| Clamp | Vertical RMS, as designed | Vertical RMS, compensated | Change | Vertical max, as designed / compensated |
+|-------|--------------------------:|--------------------------:|-------:|----------------------------------------:|
+| 9 mm frame (like a backing plate) | **0.465 mm** | **0.405 mm** | -13 % | 0.970 / 0.833 mm |
+| 5 mm frame | 0.739 mm | 0.630 mm | -15 % | 1.392 / 1.196 mm |
+
+Each simulation takes two to four minutes on one thread (126-249 s). These
+are **simulations of a coarse model, not measurements**. The benchmark's
+own analysis explains why one compensation step removes only 13-15 % here:
+the rim sags between the clamp and the first contour where the tool cannot
+push upwards, the tool does not sweep the floor, and the response to a
+change of the commanded shape is not local. Clamping close to the part cut
+the deviation before any compensation by 37 % (0.739 to 0.465 mm) - more
+than the compensation step did.
+
+### The ML layer on proxy data (not physics)
+
+The learning pipeline has so far been exercised end to end **only on the
+`ProxySimulator`, an analytic stand-in for springback that is not physics
+and is not validated against anything**
+([`benchmarks/ml_proxy`](benchmarks/ml_proxy/README.md)). On 70 proxy parts
+of seven families, held-out relative errors of the predicted springback
+were 3.1 % (MLP ensemble), 6.7 % (GBM ensemble) and 9.5 % (U-Net) on test
+parts; the 90 % conformal intervals covered 96.7-97.1 % of a new part in
+expectation; the training envelope flagged every probe with an unseen
+material, thickness, release or tool-path style, and 87 % of a left-out
+family with novel features (freeform) - but not an elliptic cone that was
+predicted worse. Surrogate compensation, checked by the proxy, cut the
+deviation by a median factor of 18.2. **These numbers show that the
+machinery works; they say nothing about accuracy on SparLab simulations or
+on real parts** - that benchmark has not been run yet.
+
+## Limitations of the pre-compensation pipeline
+
+* **No experiment yet.** No simulated or compensated shape has been compared
+  with a formed and scanned part; the metrology and scan-update path is
+  tested on synthetic scans only.
+* **Coarse, slow forming model.** The forming analysis is implicit: a 3 mm
+  cone on a 40 mm blank takes minutes, and a 60 x 60 x 2 Hex8 cone about
+  7 hours for ten contours to 10 mm ([`docs/forming.md`](docs/forming.md),
+  section 5). Two Hex8 layers are stiff in bending, and a tool on elements
+  not much smaller than itself touches the sheet at one to three nodes.
+* **Material data** are nominal handbook values, not certified; Hill48 with
+  r < 1 is known to misrepresent the equibiaxial yield stress of aluminium
+  alloys.
+* **Compensation** is displacement adjustment on the vertical error: it
+  converges slowly on the benchmark cone and cannot command the surface above
+  the sheet plane, where the rim sags.
+* **ML** has been trained and evaluated only on proxy data; a model is
+  only as good as the simulations it is trained on, and one material per
+  model.
+* One spherical tool, height-field parts (no overhangs), no thermal
+  effects, no trimming. Every item, with what it would take to lift it:
+  [`docs/precomp.md`](docs/precomp.md#limitations),
+  [`docs/precomp_ml.md`](docs/precomp_ml.md#limitations),
+  [`docs/forming.md`](docs/forming.md) and
+  [`docs/limitations.md`](docs/limitations.md).
+
+## Documentation for the pre-compensation project
+
+| Document | Contents |
+|----------|----------|
+| [`docs/precomp.md`](docs/precomp.md) | the Python package: conventions, architecture, geometry, materials, tool paths, the forming deck and run cache, metrology, compensation, robot compliance, API and CLI, verification, limitations |
+| [`docs/precomp_ml.md`](docs/precomp_ml.md) | the learning problem, features, data, models, conformal intervals, the training envelope, model bundles, the evaluation protocol, surrogate compensation, active learning, results on proxy data |
+| [`docs/forming.md`](docs/forming.md) | the incremental-forming analysis `sparlab_form`: tools, contact and friction, steps, release, linear algebra, deck and output contract, verification, cost |
+| [`benchmarks/fea_da_cone`](benchmarks/fea_da_cone/README.md) | FEA compensation of a small cone: setup, results, what they say, how to reproduce |
+| [`benchmarks/ml_proxy`](benchmarks/ml_proxy/README.md) | the ML protocol and its tables on proxy data |
+
+---
+
+# The SparLab engine
+
+Everything below documents the finite-element engine the pre-compensation
+system is built on: its capabilities, verification and validation, and the
+structural analyses and topology optimisation it was first written for.
 
 **A 2-D and 3-D finite-element structural solver with density-based topology
 optimisation, built for lightweight aerospace structures.**
@@ -47,7 +245,7 @@ relative.
 | **Diagnostics** | Pre-solve detection of rigid-body under-constraint and floating regions, singular-matrix reporting with the likely modelling cause, explicit non-convergence and infeasibility reporting |
 | **Output** | `summary.json`, CSV tables, legacy VTK for ParaView, CalculiX decks, STL, publication-quality figures and animations |
 
-## Quick start
+## Engine quick start
 
 ```bash
 # 1. Dependencies (Debian/Ubuntu; see scripts/setup_deps.sh for other platforms)
@@ -73,7 +271,9 @@ make all
 
 Only Eigen 3.3+ and a C++17 compiler are required to build; OpenMP is used
 by the multigrid solver, and by Eigen inside the Jacobi CG solver, when the
-compiler has it. Catch2 is used for the tests
+compiler has it. SuiteSparse (CHOLMOD / UMFPACK), when installed, is found
+automatically and used by the forming analysis (`-DSPARLAB_WITH_CHOLMOD=ON`
+requires it, `OFF` never uses it). Catch2 is used for the tests
 and is fetched automatically if the system package is absent. The Python
 layer needs `numpy`, `pandas`, `matplotlib` and `pillow`; the cross-validation
 additionally needs `scikit-fem` and, for the CalculiX half, `ccx` on the path.
@@ -775,6 +975,10 @@ Full table, including every tolerance and its default, in
   python/scripts/cross_validate.py   drives CalculiX and scikit-fem on the exported decks
   python/scripts/make_meshes.py      generates the Gmsh meshes (committed)
   python/scripts/tet10_part_study.py meshes, solves and compares Tet4 and Tet10
+
+  python/precomp/       springback pre-compensation: writes sparlab_form decks,
+                        reads its results, compensates, learns (precomp.ml);
+                        see "How it fits together" at the top and docs/precomp.md
 ```
 
 No cycles, no upward dependencies, and one dimension-generic core: the mesh
@@ -1023,17 +1227,24 @@ treating any number here as a design answer.
 | [`docs/verification.md`](docs/verification.md) | every verification and validation check in 2-D and 3-D, the simplices and the quadratic tetrahedron, the mesh readers, the multigrid solver, the projection, buckling, the robust and overhang options, the MMA and constraint tests, the cross-validation against CalculiX and scikit-fem, with measured values and what is not covered |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | the benchmark cases in detail, the projection comparison, the two parts read from mesh files, the 356 475-DOF solid, Tet4 against Tet10, the buckling-constrained column, the robust and overhang comparisons, convergence behaviour, runtime and solver scaling |
 | [`docs/aerospace_study.md`](docs/aerospace_study.md) | the parametric design study: mass-stiffness trade, load weighting, mesh dependence, penalty, filter radius, material stiffness |
+| [`docs/precomp.md`](docs/precomp.md) | the springback pre-compensation package `precomp` (Python): deck writing, run cache, metrology, compensation, robot compliance, API and CLI |
+| [`docs/precomp_ml.md`](docs/precomp_ml.md) | `precomp.ml`: learned springback models, conformal intervals, training envelope, surrogate compensation, results on proxy data |
 | [`docs/limitations.md`](docs/limitations.md) | assumptions and scope boundaries |
 | [`docs/results/README.md`](docs/results/README.md) | machine-generated result tables |
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs three jobs:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs four jobs:
 
 * **build and test** on GCC and Clang, in Release and Debug, with
-  `-DSPARLAB_WARNINGS_AS_ERRORS=ON`. The Debug build enables Eigen's own
+  `-DSPARLAB_WARNINGS_AS_ERRORS=ON` and SuiteSparse required
+  (`-DSPARLAB_WITH_CHOLMOD=ON`), plus a GCC Release build without it
+  (`OFF`, SuiteSparse not installed). The Debug build enables Eigen's own
   assertions, which is the configuration most likely to catch an indexing
-  mistake;
+  mistake. The Release builds also run the forming smoke deck
+  (`configs/forming/spif_smoke.json`) through `sparlab_form` and check
+  from its `summary.json` that every step completed with the
+  factorisations the build asked for;
 * **verification** runs all the studies, plane and solid, and fails the build
   if any documented tolerance is missed, uploading the summary either way;
 * **benchmark** runs the static, modal and buckling analyses on all five
@@ -1054,7 +1265,13 @@ treating any number here as a design answer.
   constraint, the robust formulation and the overhang filter with their
   comparison runs, small direct / multigrid / Jacobi scaling runs, and
   regenerates the figures and tables - so a break in the whole pipeline, not
-  just the library, is caught.
+  just the library, is caught;
+* **python** builds `sparlab_form` (with SuiteSparse), installs the `precomp`
+  package with `pip install -e '.[dev]'` on the oldest supported Python
+  (3.10), and runs `python/tests` - including the integration tests against
+  the real `sparlab_form`, whose skipping fails the job. torch is not
+  installed, so the neural-model tests skip; that they skip cleanly is part
+  of the check.
 
 ## Licence
 
