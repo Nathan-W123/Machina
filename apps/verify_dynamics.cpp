@@ -34,7 +34,15 @@
 ///                            and at second order in the step against the
 ///                            exact motion (a Runge-Kutta reference for the
 ///                            elastic law, the piecewise closed form for the
-///                            plastic one).
+///                            plastic one);
+///   * `explicit-rod`         the rod-transient case integrated by explicit
+///                            central differences (ExplicitDynamics.hpp) with
+///                            the lumped mass, Q4 through the generic element
+///                            dispatch and Hex8 through the dedicated kernel:
+///                            second order against the continuum; the element
+///                            eigenvalue and power-iteration step estimates
+///                            against the exact limit; a slow damped ramp
+///                            reaching the static displacement.
 
 #include "VerifySupport.hpp"
 
@@ -43,6 +51,7 @@
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/fem/Assembler.hpp"
 #include "sparlab/fem/Dynamics.hpp"
+#include "sparlab/fem/ExplicitDynamics.hpp"
 #include "sparlab/io/CsvWriter.hpp"
 #include "sparlab/mesh/StructuredMesh.hpp"
 
@@ -1409,6 +1418,243 @@ StudyOutcome study_nonlinear_oscillator(const std::string& out_dir, json::Value&
   full << note.str() << "smallest order on the finest pair " << app::format(worst_order, 3)
        << ", Runge-Kutta reference self-difference " << app::format(reference_check, 2);
   outcome.note = full.str();
+  return outcome;
+}
+
+// ---------------------------------------------------------------------------
+// Explicit central differences on the rod (ExplicitDynamics.hpp)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The drive of an explicit run of a rod model: its constraints held at
+/// zero, the load case's end force scaled by `ramp`.
+ExplicitDrive rod_drive(const FemModel& model, Scalar duration, const Amplitude& ramp) {
+  ExplicitDrive drive;
+  drive.duration = duration;
+  drive.fixed = model.dofs().constrained_dofs();
+  drive.fixed_start = Vector::Zero(static_cast<Eigen::Index>(drive.fixed.size()));
+  drive.fixed_end = drive.fixed_start;
+  drive.ramp = ramp;
+  return drive;
+}
+
+/// The x displacement of the rod's end (the mean over the x = L nodes).
+Scalar rod_end(const FemModel& model, const Vector& u, Scalar length) {
+  const Mesh& mesh = model.mesh();
+  const int dim = mesh.dim();
+  Scalar sum = 0.0;
+  int count = 0;
+  for (Index n = 0; n < mesh.num_nodes(); ++n) {
+    if (mesh.node(n).x() < length - 1.0e-9) continue;
+    sum += u(n * dim);
+    ++count;
+  }
+  return sum / count;
+}
+
+}  // namespace
+
+StudyOutcome study_explicit_rod(const std::string& out_dir, json::Value& summary) {
+  const Rod rod;
+  const Scalar c = rod.wave_speed();
+  const Scalar period = 4.0 * rod.length / c;  // the first mode's
+  const Scalar t_ramp = 0.6 * period;
+  const Scalar t_end = 2.5 * period;
+  const Scalar force = 1000.0;
+  const Scalar courant = 0.5;
+  const std::vector<Index> ladder = {20, 40, 80, 160};
+  const int series_modes = 4000;
+  const Scalar static_end = force * rod.length / (rod.youngs * rod.area());
+  NonlinearOptions linear;
+  linear.kinematics = Kinematics::SmallStrain;
+
+  // (1) The transient of rod-transient, integrated explicitly: lumped mass,
+  // Courant number 0.5, the ramp tabulated at the finest run's steps (the
+  // coarser runs' steps are among them).
+  const Scalar dt_fine = courant * rod.length / static_cast<Scalar>(ladder.back()) / c;
+  Amplitude table;
+  table.kind = Amplitude::Kind::Table;
+  const int ramp_steps = static_cast<int>(std::lround(t_ramp / dt_fine));
+  for (int k = 0; k <= ramp_steps; ++k) {
+    table.times.push_back(k * dt_fine);
+    table.values.push_back(ramp(k * dt_fine, t_ramp));
+  }
+  table.times.push_back(t_end * 10.0);
+  table.values.push_back(1.0);
+  CsvWriter csv(path_join(out_dir, "explicit_rod.csv"),
+                {"element", "kernel", "n", "dt[s]", "steps", "max_error[-]", "order[-]",
+                 "energy_balance[-]"});
+  json::Value records = json::Value::make_array();
+  Scalar worst_order = 1.0e300;
+  Scalar worst_error = 0.0;
+  Scalar worst_balance = 0.0;
+  bool dedicated_used = false;
+  for (const ElementType type : {ElementType::Quad4, ElementType::Hex8}) {
+    std::vector<Scalar> errors;
+    std::vector<Scalar> hs;
+    json::Value meshes = json::Value::make_array();
+    std::string kernel;
+    for (const Index n : ladder) {
+      const FemModel model = rod_model(rod, type, n, force, 0.0);
+      const Assembler assembler(model);
+      const Scalar h = rod.length / static_cast<Scalar>(n);
+      ExplicitOptions options;
+      options.time_step = courant * h / c;
+      const long steps = std::lround(t_end / options.time_step);
+      const auto stride = static_cast<int>(ladder.back() / n);
+      options.history_every = 1000000;
+      // The end displacement at every 8th step of the finest run.
+      options.snapshot_every = 8 / stride;
+      ExplicitDynamics integrator(model, assembler, linear, {}, options, 0);
+      const ExplicitResult r =
+          integrator.run(rod_drive(model, static_cast<Scalar>(steps) * options.time_step, table),
+                         ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+      if (!r.completed) throw SolverError("explicit-rod: " + r.termination);
+      kernel = r.kernel;
+      dedicated_used = dedicated_used || r.kernel == "dedicated Hex8";
+      Scalar diff = 0.0;
+      Scalar scale = 0.0;
+      for (const ExplicitSnapshot& snap : r.snapshots) {
+        const Scalar exact = rod_ramp_response(rod, force, t_ramp, snap.time, series_modes);
+        diff = std::max(diff, std::abs(rod_end(model, snap.displacement, rod.length) - exact));
+        scale = std::max(scale, std::abs(exact));
+      }
+      const Scalar error = diff / scale;
+      errors.push_back(error);
+      hs.push_back(h);
+      const std::size_t last = errors.size() - 1;
+      const Scalar order =
+          last > 0 ? observed_order(hs[last - 1], errors[last - 1], hs[last], errors[last])
+                   : std::nan("");
+      worst_balance = std::max(worst_balance, r.max_energy_error);
+      csv.raw_row({element_name(type), r.kernel, fmt(static_cast<Scalar>(n)),
+                   fmt(options.time_step, 6), fmt(static_cast<Scalar>(r.steps)), fmt(error, 6),
+                   fmt(order, 4), fmt(r.max_energy_error, 4)});
+      json::Value rec = json::Value::make_object();
+      rec.set("n", json::Value::make_number(static_cast<Scalar>(n)));
+      rec.set("time_step_s", json::Value::make_number(options.time_step));
+      rec.set("steps", json::Value::make_number(static_cast<Scalar>(r.steps)));
+      rec.set("max_error", json::Value::make_number(error));
+      rec.set("order", json::Value::make_number(order));
+      rec.set("energy_balance", json::Value::make_number(r.max_energy_error));
+      meshes.push_back(rec);
+      if (n == ladder.back()) {
+        worst_order = std::min(worst_order, order);
+        worst_error = std::max(worst_error, error);
+      }
+    }
+    json::Value entry = json::Value::make_object();
+    entry.set("element", json::Value::make_string(element_name(type)));
+    entry.set("kernel", json::Value::make_string(kernel));
+    entry.set("meshes", meshes);
+    records.push_back(entry);
+  }
+  csv.close();
+
+  // (2) The stable step: the element eigenvalue bound and power iteration
+  // against 2 / omega_max of the constrained lumped system (dense), n = 20.
+  json::Value stability = json::Value::make_array();
+  bool bounds_hold = true;
+  Scalar worst_bound_ratio = 0.0;
+  for (const ElementType type : {ElementType::Quad4, ElementType::Hex8}) {
+    const FemModel model = rod_model(rod, type, 20, force, 0.0);
+    const Assembler assembler(model);
+    const Matrix k(assembler.reduce_free_free(assembler.assemble_stiffness()));
+    const Matrix m(assembler.reduce_free_free(assembler.assemble_mass(MassType::Lumped)));
+    Eigen::GeneralizedSelfAdjointEigenSolver<Matrix> es(k, m, Eigen::EigenvaluesOnly);
+    const Scalar exact = 2.0 / std::sqrt(es.eigenvalues().maxCoeff());
+    ExplicitOptions eo;
+    const ExplicitDynamics by_element(model, assembler, linear, {}, eo, 0);
+    const Vector zero = Vector::Zero(model.dofs().num_dofs());
+    const Scalar element = by_element.element_time_steps(zero).minCoeff();
+    eo.stable_step.method = StableStepOptions::Method::PowerIteration;
+    eo.stable_step.power_iterations = 400;
+    const ExplicitDynamics by_power(model, assembler, linear, {}, eo, 0);
+    const Scalar power = by_power.power_iteration_time_step(zero);
+    bounds_hold = bounds_hold && element <= exact * (1.0 + 1.0e-12) &&
+                  power <= exact * (1.0 + 1.0e-12);
+    worst_bound_ratio = std::max(worst_bound_ratio, exact / element);
+    json::Value rec = json::Value::make_object();
+    rec.set("element", json::Value::make_string(element_name(type)));
+    rec.set("exact_constrained_s", json::Value::make_number(exact));
+    rec.set("element_eigenvalue_s", json::Value::make_number(element));
+    rec.set("power_iteration_s", json::Value::make_number(power));
+    rec.set("one_dimensional_s", json::Value::make_number(rod.length / 20.0 / c));
+    stability.push_back(rec);
+  }
+
+  // (3) Quasi-static: the end force ramped over 20 periods and held for 5
+  // with mass-proportional damping (20 % of critical in the first mode)
+  // reaches the static displacement F L / (E A).
+  Scalar static_error = 0.0;
+  Scalar static_kinetic = 0.0;
+  {
+    const FemModel model = rod_model(rod, ElementType::Hex8, 40, force, 0.0);
+    const Assembler assembler(model);
+    ExplicitOptions options;
+    options.mass_damping = 2.0 * 0.2 * 2.0 * kPi / period;
+    options.history_every = 1000;
+    ExplicitDynamics integrator(model, assembler, linear, {}, options, 0);
+    Amplitude slow;
+    slow.kind = Amplitude::Kind::Table;
+    const int knots = 400;
+    for (int k = 0; k <= knots; ++k) {
+      const Scalar t = 20.0 * period * k / knots;
+      slow.times.push_back(t);
+      slow.values.push_back(ramp(t, 20.0 * period));
+    }
+    slow.times.push_back(100.0 * period);
+    slow.values.push_back(1.0);
+    const ExplicitResult r =
+        integrator.run(rod_drive(model, 25.0 * period, slow),
+                       ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+    if (!r.completed) throw SolverError("explicit-rod (quasi-static): " + r.termination);
+    static_error =
+        std::abs(rod_end(model, r.final_state.displacement, rod.length) - static_end) / static_end;
+    static_kinetic = r.records.back().kinetic / r.records.back().internal;
+  }
+
+  json::Value block = json::Value::make_object();
+  block.set("kind", json::Value::make_string(
+                        "verification (convergence to the exact continuum solution; stable "
+                        "step bounds; quasi-static limit)"));
+  block.set("cases", records);
+  block.set("stable_step", stability);
+  block.set("quasi_static_error", json::Value::make_number(static_error));
+  block.set("quasi_static_kinetic_ratio", json::Value::make_number(static_kinetic));
+  block.set("note",
+            json::Value::make_string(
+                "The rod of rod-transient (1 m, 0.05 m square, E = 200 GPa, nu = 0, lateral "
+                "displacements held) under the end force 1000 N s(t), s = sin^2(pi t / (2 T_r)) "
+                "up to T_r = 0.6 T1, from rest, 2.5 T1; explicit central differences with the "
+                "lumped mass at Courant number 0.5 (dt = h / (2c)), small strain; Q4 through the "
+                "generic element dispatch, Hex8 through the dedicated kernel. Error: the largest "
+                "end-displacement difference at every 8th step of the finest run against the "
+                "exact modal series (4000 modes), over the largest exact displacement. Stable "
+                "step: the element eigenvalue bound and power iteration (unconstrained) "
+                "against 2 / omega_max of the constrained lumped system; both must lie below "
+                "it. Quasi-static: Hex8, n = 40, the force ramped over 20 T1 and held 5 T1 with "
+                "mass damping 0.4 omega_1, against F L / (E A)."));
+  summary.set("explicit_rod", block);
+
+  std::ostringstream note;
+  note << "order on the finest pair >= " << app::format(worst_order, 3)
+       << ", largest error at n = 160 " << app::format(worst_error, 3)
+       << ", energy balance <= " << app::format(worst_balance, 2)
+       << "; stable-step bounds hold: " << (bounds_hold ? "yes" : "NO")
+       << " (exact / element bound <= " << app::format(worst_bound_ratio, 3)
+       << "); quasi-static end displacement error " << app::format(static_error, 2)
+       << " (T / W_int " << app::format(static_kinetic, 2) << ")";
+  StudyOutcome outcome;
+  outcome.name = "explicit central differences on a rod vs exact continuum solution";
+  outcome.kind = "verification";
+  outcome.metric = "smallest observed convergence order (h and dt halved together)";
+  outcome.value = worst_order;
+  outcome.tolerance = 1.9;
+  outcome.passed = worst_order >= 1.9 && worst_balance < 1.0e-2 && bounds_hold &&
+                   static_error < 1.0e-3 && dedicated_used;
+  outcome.note = note.str();
   return outcome;
 }
 
