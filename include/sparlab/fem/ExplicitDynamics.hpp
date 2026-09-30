@@ -101,8 +101,9 @@
 /// balance (both warned about); a balance beyond `energy_limit` stops the
 /// run, as do non-finite values and an inverted element.
 ///
-/// **Internal forces.** A dedicated kernel for Hex8 (finite or small-strain
-/// kinematics; elastic, or elastoplastic through the return of
+/// **Internal forces.** A dedicated kernel for Hex8 (finite, logarithmic -
+/// elastoplastic elements only - or small-strain kinematics; elastic, or
+/// elastoplastic through the return of
 /// Plasticity.hpp; mean dilatation) keeps the reference gradients and
 /// weights of every point (one set on a uniform structured mesh), updates
 /// the history in place and assembles by a gather over each node's

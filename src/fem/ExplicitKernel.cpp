@@ -3,6 +3,7 @@
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
 #include "sparlab/fem/TotalLagrangian.hpp"
+#include "sparlab/material/LogarithmicStrain.hpp"
 
 #include <Eigen/Dense>
 
@@ -62,10 +63,12 @@ struct ElementJob {
   PlasticState* full = nullptr;        ///< the points' history (general), 8 of them
   StressState state = StressState::ThreeDimensional;
   bool finite = true;
+  bool logarithmic = false;  ///< finite, with the logarithmic strain (plastic only)
   bool plastic = false;
   bool averaged = false;
   bool commit = false;
   bool want_energy = false;
+  LogarithmicStrain* logs = nullptr;  ///< logarithmic: kP of them (scratch)
 };
 
 /// The element's nodal forces, node-major (out[3 a + i]), and its stored
@@ -125,6 +128,16 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
         os << "element " << job.element << " is inverted (det F = " << det[q]
            << " at an integration point)";
         throw SolverError(os.str());
+      }
+    }
+    if (job.logarithmic) {
+      // The logarithmic strain of every point's E (LogarithmicStrain.hpp),
+      // which the return and the mean dilatation then take as the strain.
+      for (int q = 0; q < kP; ++q) {
+        Vector6 green;
+        for (int r = 0; r < 6; ++r) green(r) = e[r][q];
+        job.logs[q] = logarithmic_strain(green);
+        for (int r = 0; r < 6; ++r) e[r][q] = job.logs[q].strain(r);
       }
     }
   } else {
@@ -287,6 +300,23 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
     }
     for (int q = 0; q < kP; ++q) pressure += w[q] * third[q];
   }
+  if (job.logarithmic) {
+    // The second Piola-Kirchhoff stress S = P^T T of each point (T its
+    // deviator with mean dilatation), and with mean dilatation the mean
+    // pressure's term: the averaged variation of ln J is
+    // sum_q w_q C_q^-1 : dE_q / V, and C^-1 = P^T I, so it enters as
+    // (pressure / V) C_q^-1 at every point (Elastoplastic.cpp).
+    const Scalar mean = job.averaged ? pressure / volume : 0.0;
+    Vector6 unit;
+    unit << 1.0, 1.0, 1.0, 0.0, 0.0, 0.0;
+    for (int q = 0; q < kP; ++q) {
+      Vector6 tq;
+      for (int r = 0; r < 6; ++r) tq(r) = t[r][q];
+      Vector6 xq = logarithmic_stress(job.logs[q], tq);
+      if (job.averaged) xq += mean * logarithmic_stress(job.logs[q], unit);
+      for (int r = 0; r < 6; ++r) t[r][q] = xq(r);
+    }
+  }
   // The tensor's rows: row i holds (T_i0, T_i1, T_i2).
   static constexpr int kVoigt[3][3] = {{0, 3, 5}, {3, 1, 4}, {5, 4, 2}};
   alignas(64) Scalar p[9][kP];
@@ -329,7 +359,7 @@ Scalar element_kernel(const ElementJob& job, Scalar* out) {
       }
     }
   }
-  if (job.averaged) {
+  if (job.averaged && !job.logarithmic) {
     const Scalar* amat = job.dilatation;       // A[i][a]
     const Scalar* bmat = job.dilatation + 24;  // B[a][b]
     const Scalar factor = pressure / volume;
@@ -374,19 +404,26 @@ ExplicitInternalForce::ExplicitInternalForce(const FemModel& model, const Assemb
   } else if (mesh.element_type() != ElementType::Hex8 || model.dofs_per_node() != 3) {
     reason_ = "the dedicated kernel is written for Hex8 meshes";
   } else if (options_.kinematics != Kinematics::Finite &&
-             options_.kinematics != Kinematics::SmallStrain) {
-    reason_ = "the dedicated kernel covers finite and small-strain kinematics";
+             options_.kinematics != Kinematics::SmallStrain &&
+             options_.kinematics != Kinematics::FiniteLogarithmic) {
+    reason_ = "the dedicated kernel covers finite, logarithmic and small-strain kinematics";
   } else if (elastoplastic_points(model) != kPoints) {
     reason_ = "the dedicated kernel takes the 2 x 2 x 2 rule";
   } else if (model.stress_state() != StressState::ThreeDimensional) {
     reason_ = "the dedicated kernel is three-dimensional";
   } else {
-    finite_ = options_.kinematics == Kinematics::Finite;
+    logarithmic_ = options_.kinematics == Kinematics::FiniteLogarithmic;
+    finite_ = options_.kinematics == Kinematics::Finite || logarithmic_;
     bool elastic_element = false;
     for (Index e = 0; e < mesh.num_elements(); ++e) {
       if (!system_->elastoplastic(e)) elastic_element = true;
     }
-    if (finite_ && elastic_element && options_.law != HyperelasticModel::SaintVenantKirchhoff) {
+    if (logarithmic_ && elastic_element) {
+      reason_ = "the dedicated kernel's logarithmic kinematics are written for elastoplastic "
+                "elements";
+    }
+    if (reason_.empty() && finite_ && elastic_element &&
+        options_.law != HyperelasticModel::SaintVenantKirchhoff) {
       reason_ = "the dedicated kernel's elastic law with finite kinematics is Saint "
                 "Venant-Kirchhoff";
     }
@@ -722,7 +759,13 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
   // The first failure, rethrown as it was (its type and message).
   std::exception_ptr failure;
 #ifdef SPARLAB_HAVE_OPENMP
-#pragma omp parallel for schedule(static)
+#pragma omp parallel
+#endif
+  {
+  // Logarithmic kinematics' per-point scratch, once per thread.
+  LogarithmicStrain logs[kPoints];
+#ifdef SPARLAB_HAVE_OPENMP
+#pragma omp for schedule(static)
 #endif
   for (Index e = 0; e < ne_; ++e) {
     try {
@@ -742,6 +785,8 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
       job.elasticity = elasticity_.data() + 36 * static_cast<std::size_t>(mi);
       job.state = state;
       job.finite = finite_;
+      job.logarithmic = logarithmic_;
+      job.logs = logs;
       job.plastic = plastic_[ue] != 0;
       job.averaged = averaged_[ue] != 0;
       job.commit = commit;
@@ -766,6 +811,7 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
 #endif
       if (!failure) failure = std::make_exception_ptr(SolverError(ex.what()));
     }
+  }
   }
   if (failure) std::rethrow_exception(failure);
 

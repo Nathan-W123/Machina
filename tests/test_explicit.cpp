@@ -544,10 +544,15 @@ TEST_CASE("the dedicated Hex8 kernel gives the internal forces of the element di
   const Mesh irregular = distorted(uniform, 0.12);
   Scalar worst = 0.0;
   for (const Material& mat : materials) {
-    for (const Kinematics kin : {Kinematics::SmallStrain, Kinematics::Finite}) {
+    for (const Kinematics kin :
+         {Kinematics::SmallStrain, Kinematics::Finite, Kinematics::FiniteLogarithmic}) {
+      // The kernel's logarithmic kinematics are for elastoplastic elements.
+      if (kin == Kinematics::FiniteLogarithmic && !mat.m.plasticity().enabled()) continue;
       for (const MeanDilatation md : {MeanDilatation::Auto, MeanDilatation::None}) {
         for (const bool regular : {true, false}) {
-          INFO(mat.name << (kin == Kinematics::Finite ? ", finite" : ", small strain")
+          INFO(mat.name << (kin == Kinematics::Finite ? ", finite"
+                            : kin == Kinematics::FiniteLogarithmic ? ", logarithmic"
+                                                                    : ", small strain")
                         << (md == MeanDilatation::Auto ? ", mean dilatation" : "")
                         << (regular ? ", uniform mesh" : ", distorted mesh"));
           const FemModel model = finalised(regular ? uniform : irregular, mat.m,
@@ -562,8 +567,11 @@ TEST_CASE("the dedicated Hex8 kernel gives the internal forces of the element di
           // A large rotation (finite kinematics) and strains of about 1e-2:
           // points on and inside the yield surface.
           Vector u = random_vector(n, 11, 2.0e-6);
-          if (kin == Kinematics::Finite) {
-            const Matrix3 rot = Eigen::AngleAxisd(0.4, Vector3(1, 2, 3).normalized()).matrix();
+          if (kin != Kinematics::SmallStrain) {
+            // (With a 20 % stretch along x: a finite strain, where the
+            // logarithmic and Green-Lagrange strains differ.)
+            const Matrix3 rot = Eigen::AngleAxisd(0.4, Vector3(1, 2, 3).normalized()).matrix() *
+                                Vector3(1.2, 1.0, 1.0).asDiagonal();
             for (Index node = 0; node < model.mesh().num_nodes(); ++node) {
               const Vector3 xn = model.mesh().node(node);
               u.segment<3>(3 * node) += (rot - Matrix3::Identity()) * xn;

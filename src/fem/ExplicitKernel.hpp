@@ -19,6 +19,13 @@
 ///   element's average in the strain, and the force gains
 ///   \f$\tfrac w3\,\mathrm{tr}S\,(\bar d - d)\f$ with \f$d = FG\f$ the
 ///   variation of the dilatation (Elastoplastic.hpp);
+/// * with logarithmic kinematics (elastoplastic elements) the strain is
+///   \f$E_{\log}\f$ of every point's E (LogarithmicStrain.hpp), the return
+///   gives T, and the force takes \f$S = P^TT\f$ (T's deviator with mean
+///   dilatation, plus the mean pressure over the volume times
+///   \f$C^{-1} = P^TI\f$, the variation of \f$\ln J\f$) in place of the
+///   Green-Lagrange S - about 7.5 us an element and step, the spectral
+///   decomposition of eight points, against 30 us through the dispatch;
 /// * the history is updated in place (an explicit step is final), in a
 ///   compact form (plastic strain, back stress, equivalent plastic strain,
 ///   loading flag), one array per component over the element's eight
@@ -142,6 +149,7 @@ class ExplicitInternalForce {
  private:
   // --- dedicated Hex8 kernel ---------------------------------------------
   bool finite_ = true;
+  bool logarithmic_ = false;  ///< finite with the logarithmic strain
   bool uniform_ = false;    ///< one set of gradients for every element
   bool compact_ = true;     ///< point blocks (no backstresses)
   Index ne_ = 0;
