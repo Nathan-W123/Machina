@@ -39,12 +39,18 @@
 /// |C_q|\,|H_q|(1 + |H_q|)\f$ - the forces of a strain error of that
 /// relative size, which is all a rigid rotation leaves; it
 /// throws SolverError, which cuts the step, after 25 iterations or at a
-/// singular \f$K_{\alpha\alpha}\f$. Newton's direction descends
-/// \f$\|r_\alpha\|^2\f$ for any invertible \f$K_{\alpha\alpha}\f$; a step
-/// that does not reduce \f$\|r_\alpha\|\f$ is halved (at most 6 times),
-/// which a return far from its committed state - a large increment, or a
-/// start without the committed parameters - needs, and near the solution
-/// never happens. Elastic small strain is linear in \f$\alpha\f$ and
+/// singular \f$K_{\alpha\alpha}\f$. Near the solution the full Newton
+/// step is taken. Far from it - a return far from its committed state, a
+/// load reversal, a start without the committed parameters - the points
+/// switch between elastic and plastic along the step, \f$r_\alpha\f$ is
+/// only piecewise smooth and Newton's iterates can cycle, and
+/// \f$\|r_\alpha\|\f$ is no merit function; a step that does not reduce
+/// it is shortened by a line search on the directional residual
+/// \f$\phi(s) = d^T r_\alpha(\alpha + s d)\f$ (regula falsi, Crisfield
+/// 1991, *Non-linear finite element analysis of solids and structures*
+/// vol. 1, sec. 9.3), whose root minimises the incremental potential along
+/// the direction wherever there is one (an associative return, a
+/// hyperelastic law). Elastic small strain is linear in \f$\alpha\f$ and
 /// converges in one iteration.
 ///
 /// **Condensation** at the converged parameters:
@@ -84,9 +90,16 @@ namespace detail {
 
 /// The largest number of local Newton iterations.
 inline constexpr int kMaxLocalIterations = 25;
-/// The most halvings of one local Newton step (backtracking on
-/// \f$\|r_\alpha\|\f$).
-inline constexpr int kMaxLocalCuts = 6;
+/// A full local Newton step is taken when it reduces
+/// \f$\|r_\alpha\|\f$ at all (by this factor, or converges); otherwise
+/// its length comes from the line search.
+inline constexpr Scalar kFullStepReduction = 1.0 - 1.0e-4;
+/// The most evaluations of one line search (regula falsi on the
+/// directional residual).
+inline constexpr int kMaxLineSearch = 8;
+/// The line search stops at \f$|d^T r_\alpha(\alpha + s d)| \le\f$ this
+/// times \f$|d^T r_\alpha(\alpha)|\f$.
+inline constexpr Scalar kLineSearchRatio = 0.1;
 /// The relative tolerance of the local residual \f$r_\alpha\f$. The
 /// condensed force carries the last Newton correction, so its error is
 /// quadratic in this (1e-16); the points' states are consistent with it to

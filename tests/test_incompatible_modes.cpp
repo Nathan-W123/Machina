@@ -687,6 +687,45 @@ TEST_CASE("the condensed elastoplastic tangent of the incompatible-mode Hex8 is 
   }
 }
 
+TEST_CASE("the local iteration of the incompatible modes converges through a load reversal "
+          "far from the committed state",
+          "[incompatible][nonlinear][plasticity]") {
+  // A plastic step committed, then a reversal to six times the strain the
+  // other way in one increment: the points unload and yield again, on which
+  // a plain Newton iteration on the piecewise-smooth r_alpha can cycle, and
+  // the full step of the logarithmic kinematics inverts points; the line
+  // search on the directional residual takes it through.
+  for (const IsotropicMaterial& material : {j2_steel(), chaboche_steel()}) {
+    for (Kinematics k : {Kinematics::SmallStrain, Kinematics::FiniteLogarithmic}) {
+      INFO(material.name() << ", " << to_string(k));
+      const FemModel model = single_hex(material, 5);
+      const std::size_t points = static_cast<std::size_t>(elastoplastic_points(model));
+      const std::vector<PlasticState> virgin(points);
+      const Matrix x = model.mesh().element_coordinates(0);
+      const Scalar scale = k == Kinematics::SmallStrain ? 4.0e-3 : 0.02;
+      const ElastoplasticElement first = elastoplastic_element(
+          model, 0, deformation(x, scale), virgin, false, nullptr, 0.0, false, k);
+      REQUIRE(first.yielding_points > 0);
+      Vector ue = deformation(x, -6.0 * scale);
+      for (int a = 0; a < 8; ++a) ue(3 * a) += 2.0 * scale * x(2, a) * x(2, a);
+      const ElastoplasticElement el = elastoplastic_element(
+          model, 0, ue, first.states, false, nullptr, 0.0, true, k, &first.internal);
+      INFO("local iterations " << el.internal_iterations);
+      REQUIRE(el.yielding_points > 0);
+      // Measured: 3 (small strain, J2 and Chaboche), 9 (logarithmic, J2),
+      // 13 (logarithmic, Chaboche, whose tangent is not symmetric).
+      REQUIRE(el.internal_iterations <= 15);
+      // And the result is the solution: a restart of the local iteration
+      // from it stays there.
+      const ElastoplasticElement again = elastoplastic_element(
+          model, 0, ue, first.states, false, nullptr, 0.0, false, k, &el.internal);
+      REQUIRE(again.internal_iterations <= 1);
+      REQUIRE((again.internal_force - el.internal_force).cwiseAbs().maxCoeff() <=
+              1.0e-8 * el.internal_force.cwiseAbs().maxCoeff());
+    }
+  }
+}
+
 TEST_CASE("the condensed hyperelastic tangents of the incompatible-mode Hex8 are the "
           "derivatives of their forces",
           "[incompatible][nonlinear]") {
