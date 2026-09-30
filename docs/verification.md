@@ -2136,7 +2136,8 @@ Every one of them also passes in a build without SuiteSparse
 
 The element of `docs/formulation.md` ("The Hex8 with incompatible modes",
 "A sheet's rule through its thickness") is checked in
-`tests/test_incompatible_modes.cpp` (`[incompatible]`) and by four studies
+`tests/test_incompatible_modes.cpp` (24 cases, 2 337 assertions; the whole
+suite now has 350 cases and 29 090 assertions) and by four studies
 (`apps/verify_elements.cpp`) and a variant of a fifth.
 
 **Unit tests**, each against an exact answer, a central difference or an
