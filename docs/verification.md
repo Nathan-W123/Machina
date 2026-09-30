@@ -2175,7 +2175,10 @@ invariant:
   whose springback equals the linear elastic solution (`1e-8`); a reversal
   to six times the strain of a committed plastic step in one increment
   converges in 3 (small strain, J2 and Chaboche), 9 (logarithmic, J2) and
-  12 (logarithmic, Chaboche) iterations;
+  12 (logarithmic, Chaboche) iterations; a reversal of 2 % logarithmic
+  strain to 12 to 30 % (perfectly plastic J2, hardening J2, Chaboche,
+  Hill48; 5 and 7 thickness points), where `K_aa` is indefinite, in 9 to
+  18;
 * *the non-linear small-strain solution* of an elastic cantilever equals
   the linear one (`1e-9`), within 2 % of Timoshenko on 8 x 1 x 1 cells;
 * *the history*: `evaluate` is bitwise identical on one and three threads;

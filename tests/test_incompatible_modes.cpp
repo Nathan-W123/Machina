@@ -726,6 +726,54 @@ TEST_CASE("the local iteration of the incompatible modes converges through a loa
   }
 }
 
+TEST_CASE("the local iteration of the incompatible modes converges from reversals of up to "
+          "fifteen times the strain under logarithmic strains, where K_aa is indefinite",
+          "[incompatible][nonlinear][plasticity]") {
+  // A harder case than the one above: logarithmic strains of 2 %, reversed
+  // to 12 to 30 % in one increment, with perfect plasticity among the laws.
+  // The plastic tangent keeps little deviatoric stiffness against the
+  // geometric term of the stress, so the symmetric part of K_aa is
+  // indefinite over most of the iteration (measured: smallest eigenvalue
+  // down to -0.03 of the largest), and Newton's direction climbs the
+  // potential; the iteration then searches along the shifted direction of
+  // (K_aa + mu I) d = -r_alpha, and never moves to a worse |r_alpha| on its
+  // fallbacks. Before, 18 of 48 such cases (the four laws, rules of 2, 5 and
+  // 7 thickness points, reversals of 3, 6, 10 and 15 times) ran out of
+  // iterations or inverted every trial; now 1 does (Chaboche with the
+  // 2 x 2 x 2 rule at 10 times, a non-associative law without a potential).
+  IsotropicMaterial perfect(200.0e9, 0.3, 7850.0, "perfectly plastic");
+  PlasticityParameters p;
+  p.yield_stress = 250.0e6;
+  perfect.set_plasticity(p);
+  for (const IsotropicMaterial& material : {perfect, j2_steel(), chaboche_steel(), hill_sheet()}) {
+    for (int thickness_points : {5, 7}) {
+      for (Scalar factor : {-6.0, -10.0, -15.0}) {
+        INFO(material.name() << ", " << thickness_points << " thickness points, reversal "
+                             << factor);
+        const FemModel model = single_hex(material, thickness_points);
+        const std::size_t points = static_cast<std::size_t>(elastoplastic_points(model));
+        const std::vector<PlasticState> virgin(points);
+        const Matrix x = model.mesh().element_coordinates(0);
+        const Kinematics k = Kinematics::FiniteLogarithmic;
+        const ElastoplasticElement first = elastoplastic_element(
+            model, 0, deformation(x, 0.02), virgin, false, nullptr, 0.0, false, k);
+        const Vector ue = deformation(x, factor * 0.02);
+        const ElastoplasticElement el = elastoplastic_element(
+            model, 0, ue, first.states, false, nullptr, 0.0, false, k, &first.internal);
+        INFO("local iterations " << el.internal_iterations);
+        REQUIRE(el.yielding_points > 0);
+        // Measured: 9 to 18.
+        REQUIRE(el.internal_iterations <= 20);
+        const ElastoplasticElement again = elastoplastic_element(
+            model, 0, ue, first.states, false, nullptr, 0.0, false, k, &el.internal);
+        REQUIRE(again.internal_iterations <= 1);
+        REQUIRE((again.internal_force - el.internal_force).cwiseAbs().maxCoeff() <=
+                1.0e-8 * el.internal_force.cwiseAbs().maxCoeff());
+      }
+    }
+  }
+}
+
 TEST_CASE("the condensed hyperelastic tangents of the incompatible-mode Hex8 are the "
           "derivatives of their forces",
           "[incompatible][nonlinear]") {

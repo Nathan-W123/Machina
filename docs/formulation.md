@@ -323,12 +323,27 @@ root of `d_i^T r_alpha(alpha_i + s d_i)`, the derivative of the incremental
 potential along `d_i` wherever there is one (Crisfield 1991, *Non-linear
 finite element analysis of solids and structures*, vol. 1, sec. 9.3); a
 trial that inverts a point counts as beyond the root, and where that
-derivative brackets no root on the step (`K_aa` not positive definite, a
+derivative brackets no root on the step (a non-associative law, a
 non-convex potential) the step is halved on `|r_alpha|`, the best trial
-kept. Elastic small strain
-is linear in `alpha`: one iteration. Plastic steps converge quadratically;
-in the unit tests a converged step takes at most 3 local iterations, a
-reversal to six times the strain in one increment 3 to 12. Everything runs
+taken only if it lowers `|r_alpha|`. Where the symmetric part of `K_aa` is
+indefinite (a softening plastic tangent against the geometric stress term
+of finite kinematics - frequent under logarithmic strains far from the
+solution) and the full Newton step does not lower `|r_alpha|`, the search
+runs along the shifted direction `(K_aa + mu I) d = -r_alpha`, `mu` lifting
+the smallest eigenvalue of that symmetric part to `1e-3` of the largest (a
+modified Newton method, a descent direction of the potential; Nocedal and
+Wright 2006, sec. 3.4), then along Newton's direction on `|r_alpha|`. If
+nothing lowers `|r_alpha|`, Levenberg-Marquardt steps
+`(K^T K + mu I) d = -K^T r_alpha`, `mu` growing tenfold from `1e-6` of the
+largest diagonal entry (More 1978); no fallback moves to a worse point, and
+if none helps the step is cut. Near the solution the full Newton step is
+always taken, also to a solution where `K_aa` is indefinite. Elastic small
+strain is linear in `alpha`: one iteration. Plastic steps converge
+quadratically; in the unit tests a converged step takes at most 3 local
+iterations, a reversal to six times the strain in one increment 3 to 12,
+and a reversal of 2 % logarithmic strain to 12 to 30 % 9 to 18 (four laws,
+5 and 7 thickness points; of 48 such cases 1 still fails, Chaboche on the
+2 x 2 x 2 rule at ten times, against 18 before the shifted direction). Everything runs
 on fixed-size Eigen types (6 x 33 operators, the 9 x 9, 24 x 9, 24 x 24
 blocks) in a per-thread workspace: the local iteration allocates nothing.
 

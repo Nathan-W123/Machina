@@ -446,6 +446,108 @@ Condensed solve_and_condense(const Setting& set, Workspace& points,
   };
   pass(alpha);
   Scalar residual = sums.r.tail<kA>().norm();
+  // A search on |r_alpha| along d: the step `reach` d, halved until a trial
+  // lowers |r_alpha| by kFullStepReduction, is taken at its best trial if
+  // that lowers |r_alpha| at all; false (alpha and |r_alpha| unchanged, the
+  // sums at a trial) if none does.
+  const auto search_norm = [&](const VectorI& d, Scalar reach) {
+    Scalar best_step = 0.0;
+    Scalar best = residual;
+    bool last_is_best = false;
+    Scalar trial_step = reach;
+    for (int search = 0; search < kMaxLineSearch; ++search, trial_step *= 0.5) {
+      ++out.cuts;
+      if (!try_pass(alpha + trial_step * d)) {
+        last_is_best = false;
+        continue;
+      }
+      const Scalar n = sums.r.tail<kA>().norm();
+      last_is_best = n < best;
+      if (last_is_best) {
+        best = n;
+        best_step = trial_step;
+      }
+      if (n <= kFullStepReduction * residual) break;
+    }
+    if (best_step == 0.0) return false;
+    if (!last_is_best) pass(alpha + best_step * d);
+    alpha += best_step * d;
+    residual = best;
+    return true;
+  };
+  // The line search along a descent direction d of the incremental
+  // potential (d^T r_alpha < 0) on its directional residual phi(s) =
+  // d^T r_alpha(alpha + s d) (Crisfield 1991, sec. 9.3; Matthies and Strang
+  // 1979), the derivative of the potential along d wherever one exists (an
+  // associative return, a hyperelastic law): its root is the minimum of the
+  // potential on the line, so every such step lowers it. The full step is
+  // taken when it lowers |r_alpha|. Otherwise, with phi(0) < 0 < phi(reach),
+  // regula falsi with the Illinois modification, each trial kept a tenth of
+  // the bracket from its ends (a kinked phi would otherwise creep along one
+  // end), to |phi(s)| <= kLineSearchRatio |phi(0)|; a trial that inverts a
+  // point counts as beyond the root. Without such a bracket (d no descent
+  // direction: a non-associative law; or the potential still falls at the
+  // end of a step that raised |r_alpha|: not convex there), the search on
+  // |r_alpha|. False where nothing moved alpha.
+  const auto line_search = [&](const VectorI& d, const VectorI& r0) {
+    const Scalar phi0 = d.dot(r0);
+    // The full step, shortened while it inverts a point (finite kinematics).
+    Scalar reach = 1.0;
+    bool evaluated = try_pass(alpha + d);
+    for (int halving = 0; !evaluated && halving < kMaxLineSearch; ++halving) {
+      reach *= 0.5;
+      ++out.cuts;
+      evaluated = try_pass(alpha + reach * d);
+    }
+    if (!evaluated) return false;  // every step along d inverts a point
+    const Scalar full = sums.r.tail<kA>().norm();
+    if (full <= kFullStepReduction * residual ||
+        sums.r.tail<kA>().cwiseAbs().maxCoeff() <=
+            kLocalTolerance * sums.scale.maxCoeff() + kLocalRoundOff * sums.floor.maxCoeff()) {
+      alpha += reach * d;
+      residual = full;
+      return true;
+    }
+    const Scalar phi1 = d.dot(sums.r.tail<kA>());
+    if (!(phi0 < 0.0) || !(phi1 > 0.0) || !std::isfinite(phi1)) {
+      return search_norm(d, 0.5 * reach);
+    }
+    Scalar s0 = 0.0;
+    Scalar f0 = phi0;
+    Scalar s1 = reach;
+    Scalar f1 = phi1;
+    Scalar step = reach;
+    int side = 0;
+    for (int search = 0; search < kMaxLineSearch; ++search) {
+      const Scalar width = s1 - s0;
+      step = std::clamp((s0 * f1 - s1 * f0) / (f1 - f0), s0 + 0.1 * width, s1 - 0.1 * width);
+      evaluated = try_pass(alpha + step * d);
+      ++out.cuts;
+      const Scalar f =
+          evaluated ? d.dot(sums.r.tail<kA>()) : std::numeric_limits<Scalar>::infinity();
+      if (evaluated && std::abs(f) <= kLineSearchRatio * std::abs(phi0)) break;
+      if (!evaluated || f > 0.0) {
+        s1 = step;
+        f1 = evaluated ? f : 0.5 * f1;
+        if (side == 1) f0 *= 0.5;
+        side = 1;
+      } else {
+        s0 = step;
+        f0 = f;
+        if (side == -1) f1 *= 0.5;
+        side = -1;
+      }
+    }
+    if (!evaluated) {
+      // The search ended on an inverted trial: its last admissible bracket.
+      if (s0 == 0.0) return false;
+      step = s0;
+      pass(alpha + step * d);
+    }
+    alpha += step * d;
+    residual = sums.r.tail<kA>().norm();
+    return true;
+  };
   for (;;) {
     const Scalar largest = sums.r.tail<kA>().cwiseAbs().maxCoeff();
     const Scalar scale = sums.scale.maxCoeff();
@@ -466,113 +568,75 @@ Condensed solve_and_condense(const Setting& set, Workspace& points,
          << scale << " N); the step is cut";
       throw SolverError(os.str());
     }
-    // Newton's direction. Near the solution the full step is taken and
-    // converges quadratically. Far from it (a return far from its committed
-    // state: a large increment, a reversal) the points switch between
-    // elastic and plastic along the step, r_alpha is only piecewise smooth
-    // and |r_alpha| is no merit function (Newton's iterates cycle); then the
-    // step is found by a line search on the directional residual
-    // phi(s) = d^T r_alpha(alpha + s d) (Crisfield 1991, sec. 9.3; Matthies
-    // and Strang 1979), the derivative of the incremental potential along d
-    // wherever one exists (an associative return, a hyperelastic law): its
-    // root is the minimum of the potential on the line, so every such step
-    // lowers it.
-    const VectorI direction = -lu.solve(sums.r.tail<kA>());
-    const Scalar phi0 = direction.dot(sums.r.tail<kA>());
     ++out.iterations;
-    // The full step, shortened while it inverts a point (finite kinematics).
-    Scalar reach = 1.0;
-    bool evaluated = try_pass(alpha + direction);
-    for (int halving = 0; !evaluated && halving < kMaxLineSearch; ++halving) {
-      reach *= 0.5;
-      ++out.cuts;
-      evaluated = try_pass(alpha + reach * direction);
-    }
-    if (!evaluated) {
-      std::ostringstream os;
-      os << "Hex8 element " << set.e
-         << ": every step of the incompatible modes inverts a point; the step is cut";
-      throw SolverError(os.str());
-    }
-    const Scalar full = sums.r.tail<kA>().norm();
-    const bool accepted_full =
-        full <= kFullStepReduction * residual ||
-        sums.r.tail<kA>().cwiseAbs().maxCoeff() <=
-            kLocalTolerance * sums.scale.maxCoeff() + kLocalRoundOff * sums.floor.maxCoeff();
-    if (accepted_full) {
-      alpha += reach * direction;
-      residual = full;
-      continue;
-    }
-    const Scalar phi1 = direction.dot(sums.r.tail<kA>());
-    if (!(phi0 < 0.0) || !(phi1 > 0.0) || !std::isfinite(phi1)) {
-      // No bracket of the root of phi on the step: d is no descent
-      // direction (K_aa not positive definite - a non-associative law, an
-      // unstable state), or the potential, if any, still falls at the end
-      // of a step that raised |r_alpha| (it is not convex there). Halve the
-      // step on |r_alpha| and keep the best trial.
-      Scalar best_step = reach;
-      Scalar best = std::isfinite(full) ? full : std::numeric_limits<Scalar>::infinity();
-      bool last_is_best = true;
-      Scalar trial_step = reach;
-      for (int search = 0; search < kMaxLineSearch; ++search) {
-        trial_step *= 0.5;
-        ++out.cuts;
-        if (!try_pass(alpha + trial_step * direction)) {
-          last_is_best = false;
+    // The residual and K_aa at alpha: the trials below overwrite the sums.
+    const VectorI r0 = sums.r.tail<kA>();
+    const MatrixII k0 = sums.kaa;
+    // Newton's direction. Near the solution the full step is taken and
+    // converges quadratically, also to a solution where K_aa is indefinite
+    // (the element is then unstable in its modes, but in equilibrium). Far
+    // from it (a return far from its committed state: a large increment, a
+    // reversal) the points switch between elastic and plastic along the
+    // step, r_alpha is only piecewise smooth and |r_alpha| is no merit
+    // function (Newton's iterates cycle): then the line search on the
+    // potential.
+    const VectorI newton = -lu.solve(r0);
+    const MatrixII sym = 0.5 * (k0 + k0.transpose());
+    if (Eigen::LLT<MatrixII>(sym).info() == Eigen::Success) {
+      if (line_search(newton, r0)) continue;
+    } else {
+      // The full Newton step if it lowers |r_alpha|; else, K_aa's symmetric
+      // part being indefinite (a softening plastic tangent with the
+      // geometric stress term of finite kinematics), Newton's direction may
+      // climb the potential, and the search is along (K_aa + mu I) d =
+      // -r_alpha instead, mu shifting the smallest eigenvalue of that
+      // symmetric part to kLocalShift times its largest magnitude: a descent
+      // direction of the potential (a modified Newton method, Nocedal and
+      // Wright 2006, sec. 3.4).
+      if (try_pass(alpha + newton)) {
+        const Scalar full = sums.r.tail<kA>().norm();
+        if (full <= kFullStepReduction * residual) {
+          alpha += newton;
+          residual = full;
           continue;
         }
-        const Scalar n = sums.r.tail<kA>().norm();
-        last_is_best = n < best;
-        if (last_is_best) {
-          best = n;
-          best_step = trial_step;
-        }
-        if (n <= kFullStepReduction * residual) break;
       }
-      if (!last_is_best) pass(alpha + best_step * direction);
-      alpha += best_step * direction;
-      residual = sums.r.tail<kA>().norm();
-      continue;
+      const Eigen::SelfAdjointEigenSolver<MatrixII> spectrum(sym, Eigen::EigenvaluesOnly);
+      const Scalar top = spectrum.eigenvalues().cwiseAbs().maxCoeff();
+      const Scalar mu = kLocalShift * top - spectrum.eigenvalues()(0);
+      const VectorI shifted = -(k0 + mu * MatrixII::Identity()).partialPivLu().solve(r0);
+      if (line_search(shifted, r0) || search_norm(newton, 0.5)) continue;
     }
-    // phi(0) < 0 < phi(reach): regula falsi with the Illinois modification,
-    // each trial kept a tenth of the bracket from its ends (a kinked phi
-    // would otherwise creep along one end), to |phi(s)| <= kLineSearchRatio
-    // |phi(0)|; a trial that inverts a point counts as beyond the root.
-    Scalar s0 = 0.0;
-    Scalar f0 = phi0;
-    Scalar s1 = reach;
-    Scalar f1 = phi1;
-    Scalar step = reach;
-    int side = 0;
-    evaluated = true;
-    for (int search = 0; search < kMaxLineSearch; ++search) {
-      const Scalar width = s1 - s0;
-      step = std::clamp((s0 * f1 - s1 * f0) / (f1 - f0), s0 + 0.1 * width, s1 - 0.1 * width);
-      evaluated = try_pass(alpha + step * direction);
+    // Nothing along those directions lowers |r_alpha| or the potential (or
+    // every step inverts a point): Levenberg-Marquardt steps on
+    // |r_alpha|^2 / 2, (K^T K + mu I) d = -K^T r_alpha with mu growing
+    // tenfold, which turn towards its steepest descent -K^T r_alpha (More
+    // 1978); the first that lowers |r_alpha| is taken, and none moves to a
+    // worse point. Else the step is cut.
+    const MatrixII normal = k0.transpose() * k0;
+    const VectorI gradient = k0.transpose() * r0;
+    Scalar mu = kLocalMarquardt * normal.diagonal().maxCoeff();
+    bool moved = false;
+    for (int search = 0; search < kMaxLineSearch && !moved; ++search, mu *= 10.0) {
+      const VectorI d = -(normal + mu * MatrixII::Identity()).llt().solve(gradient);
       ++out.cuts;
-      const Scalar f = evaluated ? direction.dot(sums.r.tail<kA>())
-                                 : std::numeric_limits<Scalar>::infinity();
-      if (evaluated && std::abs(f) <= kLineSearchRatio * std::abs(phi0)) break;
-      if (!evaluated || f > 0.0) {
-        s1 = step;
-        f1 = evaluated ? f : 0.5 * f1;
-        if (side == 1) f0 *= 0.5;
-        side = 1;
-      } else {
-        s0 = step;
-        f0 = f;
-        if (side == -1) f1 *= 0.5;
-        side = -1;
+      if (!try_pass(alpha + d)) continue;
+      const Scalar n = sums.r.tail<kA>().norm();
+      if (n < residual) {
+        alpha += d;
+        residual = n;
+        moved = true;
       }
     }
-    if (!evaluated) {
-      // The search ended on an inverted trial: its last admissible bracket.
-      step = s0;
-      pass(alpha + step * direction);
+    if (!moved) {
+      std::ostringstream os;
+      os << "Hex8 element " << set.e
+         << ": no step of the incompatible modes lowers their residual (" << largest
+         << " N of " << scale
+         << " N) without inverting a point (an unstable or non-smooth element state); the "
+            "step is cut";
+      throw SolverError(os.str());
     }
-    alpha += step * direction;
-    residual = sums.r.tail<kA>().norm();
   }
   // The coupling blocks (and K_uu) at the converged parameters, from the
   // points of the last pass.

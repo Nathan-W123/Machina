@@ -104,6 +104,13 @@ inline constexpr int kMaxLineSearch = 8;
 /// The line search stops at \f$|d^T r_\alpha(\alpha + s d)| \le\f$ this
 /// times \f$|d^T r_\alpha(\alpha)|\f$.
 inline constexpr Scalar kLineSearchRatio = 0.5;
+/// Where the symmetric part of K_aa is not positive definite, the local
+/// direction solves (K_aa + mu I) d = -r_alpha with mu shifting its smallest
+/// eigenvalue to this times its largest magnitude (IncompatibleModes.cpp).
+inline constexpr Scalar kLocalShift = 1.0e-3;
+/// The first damping of the Levenberg-Marquardt fallback of the local
+/// iteration, relative to the largest diagonal entry of K_aa^T K_aa.
+inline constexpr Scalar kLocalMarquardt = 1.0e-6;
 /// The relative tolerance of the local residual \f$r_\alpha\f$. The
 /// condensed force carries the last Newton correction, so its error is
 /// quadratic in this (1e-16); the points' states are consistent with it to
