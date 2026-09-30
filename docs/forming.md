@@ -299,7 +299,7 @@ writes, into `dir`:
 
 | File | Content |
 |------|---------|
-| `summary.json` | `case`, `sparlab_version` (`"<version> (<git revision>)"`), `completed`, `termination`, `runtime_s`, `timing` (seconds per phase: `element_tangent_s`, `element_residual_s`, `contact_s`, `factorisation_s` with `factor_<kind>_s` per factorisation, `solve_s`, `output_s` (the step files written during the run), `total_s`; `increments`, `iterations`, `cuts`, `linear_solver` with the count of each factorisation used, `failed_factorisations` with the count of each attempt that failed - a Cholesky of a tangent that is not positive definite, then `LDL^T`; an `LDL^T` with a vanishing pivot, then LU; a singular LU, which fails the iteration - empty if none, `suitesparse`), `analysis` (kinematics, tolerances), `steps` (per step: `name`, `type`, `completed`, `increments`, `iterations`, `cuts`, `max_plastic_strain`, `reaction_norm_N`, `warnings`, and `termination`, `files_stem`, `t_begin_s`, `t_end_s`, `tools`, `constrained_dofs`, `start_imbalance_N`, `reference_force_N`, `max_displacement_change_m`, `max_displacement_m`, and for a `form_explicit` step `explicit`: `steps`, `physical_time_s`, `tool_speed_m_s`, `duration_s`, `time_step_s`, `min_time_step_s`, `final_time_step_s`, `stable_time_step_s` (unscaled), `scaled_stable_time_step_s`, `stable_step_method`, `safety`, `step_updates`, `mass_scaling`, `target_time_step_s`, `mass_scale_max`, `scaled_elements`, `physical_mass_kg`, `scaled_mass_kg`, `added_mass_fraction`, `max_added_mass_fraction`, `damping_per_s`, `contact_stiffness`, `contact`, `max_kinetic_ratio`, `kinetic_ratio_warning`, `max_energy_error`, `energy_tolerance`, `energy_limit`, `history_every`, `kernel`, `timing`, `wall_s`, `energy_file`), `tools` (per tool: shape, radius, friction, penalty, trajectory span and length, peak force and its time, largest contact node count and penetration), `mesh` (element type, dim, nodes, elements, DOFs, bounding box), `warnings`, `files`, `provenance` |
+| `summary.json` | `case`, `sparlab_version` (`"<version> (<git revision>)"`), `completed`, `termination`, `runtime_s`, `timing` (seconds per phase: `element_tangent_s`, `element_residual_s`, `contact_s`, `factorisation_s` with `factor_<kind>_s` per factorisation, `solve_s`, `output_s` (the step files written during the run), `total_s`; `increments`, `iterations`, `cuts`, `linear_solver` with the count of each factorisation used, `failed_factorisations` with the count of each attempt that failed - a Cholesky of a tangent that is not positive definite, then `LDL^T`; an `LDL^T` with a vanishing pivot, then LU; a singular LU, which fails the iteration - empty if none, `suitesparse`), `analysis` (kinematics, tolerances), `steps` (per step: `name`, `type`, `completed`, `increments`, `iterations`, `cuts`, `max_plastic_strain`, `reaction_norm_N`, `warnings`, and `termination`, `files_stem`, `t_begin_s`, `t_end_s`, `tools`, `constrained_dofs`, `start_imbalance_N`, `reference_force_N`, `max_displacement_change_m`, `max_displacement_m`, and for a `form_explicit` step `explicit`: `steps`, `physical_time_s`, `tool_speed_m_s`, `duration_s`, `time_step_s`, `min_time_step_s`, `final_time_step_s`, `stable_time_step_s` (unscaled), `scaled_stable_time_step_s`, `stable_step_method`, `safety`, `step_updates`, `mass_scaling`, `target_time_step_s`, `dynamic_mass_scaling`, `mass_updates`, `mass_scale_max`, `scaled_elements`, `physical_mass_kg`, `scaled_mass_kg`, `added_mass_fraction`, `max_added_mass_fraction`, `damping_per_s`, `contact_stiffness`, `contact`, `max_kinetic_ratio`, `kinetic_ratio_warning`, `max_energy_error`, `energy_tolerance`, `energy_limit`, `history_every`, `kernel`, `timing`, `wall_s`, `energy_file`), `tools` (per tool: shape, radius, friction, penalty, trajectory span and length, peak force and its time, largest contact node count and penetration), `mesh` (element type, dim, nodes, elements, DOFs, bounding box), `warnings`, `files`, `provenance` |
 | `config.json` | the deck, verbatim |
 | `mesh.json` | nodes, connectivity (`ResultWriter::write_mesh`) |
 | `step_<k>_<s>_nodes.csv` | `node,X,Y,Z,ux,uy,uz`: reference coordinates and the displacement at the end of step `k` (1-based) named `s` [m]; Z and uz are 0 on a 2-D model |
@@ -307,7 +307,7 @@ writes, into `dir`:
 | `step_<k>_<s>.vtk` | the same fields for ParaView (unless `--no-vtk`) |
 | `step_<k>_<s>_inc_<i>_nodes.csv`, `.vtk` | snapshots every `output.snapshots` increments (step ends excluded) |
 | `tool_forces.csv` | `step,increment,t,tool,cx,cy,cz,fx,fy,fz,active_nodes,max_penetration_m`: per converged increment and active tool, the tool's reference point [m] and the force the body exerts **on the tool** [N]; for a `form_explicit` step a row every `history_every` time steps (`increment` is the time step's number), the force averaged over those steps |
-| `step_<k>_<s>_energy.csv` | `form_explicit` steps only: `step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,plastic_dissipation_J,contact_normal_work_J,contact_friction_work_J,damping_J,external_work_J,energy_error_J,kinetic_internal_ratio` every `history_every` time steps (section 7.1) |
+| `step_<k>_<s>_energy.csv` | `form_explicit` steps only: `step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,plastic_dissipation_J,contact_normal_work_J,contact_friction_work_J,damping_J,external_work_J,mass_scaling_work_J,energy_error_J,kinetic_internal_ratio` every `history_every` time steps (section 7.1) |
 
 `s` is the step name with every character other than letters, digits, `-`
 and `_` replaced by `_`. Only completed steps have files. They are written
@@ -516,8 +516,13 @@ analysis, which gives the springback.
 * **Mass scaling** multiplies an element's density by `s_e >= 1`: `uniform`,
   `s_e = (dt_target / dt_crit)^2` for every element; `selective`
   (conventional, per element), `s_e = max(1, (dt_target / dt_e)^2)`, which adds
-  mass only where an element limits the step. The added mass is reported
-  (`added_mass_fraction`) and warned about above `max_added_mass_fraction`.
+  mass only where an element limits the step. With `dynamic` selective
+  scaling the scales are raised at every stable-step update wherever an
+  element's step has fallen below the target (a wall thinning and shearing
+  under the tool), so the step stays at the target; the velocities are kept
+  and the kinetic energy of the added mass, `W_m = 1/2 sum dm v^2`, is booked
+  in the energy balance. The added mass is reported (`added_mass_fraction`,
+  at the end of the run) and warned about above `max_added_mass_fraction`.
   (Selective mass scaling proper - a non-diagonal mass that keeps the
   rigid-body inertia, Olovsson, Simonsson and Unosson, IJNME 63 (2005)
   1436-1445 - needs an iterative mass solve and is not provided.)
@@ -532,9 +537,10 @@ analysis, which gives the springback.
   carried onto the current tangent plane, incremented by the tangential
   motion relative to the tool times `k_T = tangential_penalty k_j`, and
   returned onto the cone `|F_T| <= mu |f_N|`.
-* **Internal forces.** A dedicated Hex8 kernel (finite or small strain;
-  elastic Saint Venant-Kirchhoff or elastoplastic through the return of
-  `Plasticity.hpp`; mean dilatation) caches the reference gradients and
+* **Internal forces.** A dedicated Hex8 kernel (finite, logarithmic or small
+  strain; elastic Saint Venant-Kirchhoff or elastoplastic through the return
+  of `Plasticity.hpp` - with the logarithmic kinematics elastoplastic only;
+  mean dilatation) caches the reference gradients and
   weights, updates the history in place, gathers the element forces per node
   in ascending element order (the order of the serial assembly), and
   allocates nothing. It is checked against the generic element dispatch
@@ -548,8 +554,9 @@ analysis, which gives the springback.
   the kinetic energy `T`, the work of the internal forces `W_int` (the
   stored elastic and hardening energy plus the plastic dissipation), of the
   contact forces on the body (normal and friction parts), of the damping and
-  of the reactions, as trapezoidal sums; the balance error
-  `T - T_0 + W_int + D - W_ext - W_c` relative to the largest energy so far.
+  of the reactions, as trapezoidal sums, and `W_m` of dynamic mass scaling;
+  the balance error `T - T_0 + W_int + D - W_ext - W_c - W_m` relative to the
+  largest energy so far.
 * **Validity checks.** Quasi-static: the largest `T / W_int` over the records
   after the first contact whose `W_int` exceeds 1 % of its final value
   (`max_kinetic_ratio`, warned above `kinetic_ratio_warning`, 0.1); the
@@ -579,7 +586,8 @@ analysis, which gives the springback.
     "tool_speed": 1.0,                       // [m/s]; or "duration": [s] - exactly one
     "mass_scaling": { "mode": "selective",   // "none" | "uniform" | "selective"
                       "target_time_step": 1.0e-6,          // [s], required with a mode
-                      "max_added_mass_fraction": 1000.0 },  // warn above (default 0.05)
+                      "max_added_mass_fraction": 1000.0,    // warn above (default 0.05)
+                      "dynamic": true },                    // keep the step at the target
     "stable_step": { "method": "element_eigenvalue",        // | "element_length" | "power_iteration"
                      "safety": 0.9, "update_every": 1000, "power_iterations": 60 },
     "damping": 0.0,                          // alpha of C = alpha M [1/s]
@@ -597,6 +605,7 @@ analysis, which gives the springback.
 | `mass_scaling.mode` | `"none"` | `"uniform"`: one factor `(dt_target / dt_crit)^2`; `"selective"`: per element `max(1, (dt_target / dt_e)^2)` |
 | `mass_scaling.target_time_step` | - | [s]; the time step is at most this |
 | `mass_scaling.max_added_mass_fraction` | 0.05 | added / physical mass above which the run warns |
+| `mass_scaling.dynamic` | false | selective, finite kinematics: at every stable-step update, raise the scale of the elements whose step has fallen below the target (a thinning wall), so the step stays at the target; the velocities are kept and the added mass's kinetic energy is booked in the balance |
 | `stable_step.method` | `"element_eigenvalue"` | see 7.1; `"power_iteration"` cannot drive selective scaling (refused) |
 | `stable_step.safety` | 0.9 | the step over the stability limit, in (0, 1] |
 | `stable_step.update_every` | 1000 | finite kinematics: re-estimate every N steps (0: never) |
@@ -715,18 +724,19 @@ COST_PLACEHOLDER
   contact would see that penetration with the stiffer implicit law. Follow an
   explicit forming step by a `release`, or retract the tool explicitly first.
 * **The dedicated kernel** covers Hex8 with the 2 x 2 x 2 rule in 3-D, finite
-  (Green-Lagrange) or small-strain kinematics, Saint Venant-Kirchhoff or the
-  elastoplastic laws, no temperature, follower pressure or centrifugal load;
-  everything else (logarithmic kinematics, other elements, an element
-  technology added to the element dispatch) runs through the generic
-  dispatch - correct, but about 35 times slower (a plastic 20 x 20 x 2
-  sheet on one thread: 21 us an element and step against 0.59 us; it
-  allocates its buffers at every step and forms the element tangent's
-  plastic moduli it does not need). The logarithmic kinematics are the most
-  consequential case: an explicit run with them is practical only on small
-  models. No reduced integration with hourglass control is provided: a fully
-  integrated Hex8 costs about 3 000 instructions a step in the dedicated
-  kernel.
+  (Green-Lagrange), logarithmic (elastoplastic elements) or small-strain
+  kinematics, Saint Venant-Kirchhoff or the elastoplastic laws, no
+  temperature, follower pressure or centrifugal load; everything else (other
+  elements, the neo-Hookean law, an element technology added to the element
+  dispatch) runs through the generic dispatch - correct, but about 35 times
+  slower (a plastic 20 x 20 x 2 sheet on one thread: 21 us an element and
+  step against 0.59 us; it allocates its buffers at every step and forms
+  the plastic moduli it does not need). The logarithmic kinematics cost
+  7.5 us an element and step in the kernel (30 us through the dispatch),
+  most of it the spectral decomposition of every point: 12 times the
+  Green-Lagrange kernel, too slow for the full cone (section 7.4). No
+  reduced integration with hourglass control is provided: a fully
+  integrated Hex8 costs about 3 000 instructions a step in the kernel.
 * **Bulk viscosity** is not provided (it matters for shocks, not for
   quasi-static forming); tools translate (no spin); the time step is uniform
   over the model.

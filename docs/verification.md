@@ -2021,9 +2021,13 @@ mode of a Hex8 cantilever; `dt = 0.99 * 2 / omega_max` stays bounded and
 `1.01` grows (with the element bound above `omega_max` and power iteration on
 it); selective mass scaling reaches its target step with the added mass it
 reports and uniform scaling divides the frequencies by `sqrt(s)`; the
-dedicated Hex8 kernel equals the element dispatch to `2.5e-14` (small and
-finite strain, elastic, J2, Hill48 and Chaboche, mean dilatation, uniform
-and distorted meshes); an undamped linear run balances its energy at second
+dedicated Hex8 kernel equals the element dispatch to `9.1e-16` of the
+largest force (small strain, finite strain with a 0.4 rad rotation and a
+20 % stretch, and logarithmic kinematics; elastic, J2, Hill48 and Chaboche;
+mean dilatation; uniform and distorted meshes); dynamic selective mass
+scaling keeps a crushed block's step at its target with the balance closed
+to `8.5e-4`, where it falls to 0.93 of it without; the time map moves the
+fastest tool at the tool speed and skips standstills; an undamped linear run balances its energy at second
 order in the step and a plastic run dissipates; a dented sheet (finite
 strain, plasticity, friction, selective mass scaling) is identical bit for
 bit on 1 and 3 threads and its step loop allocates nothing; an explicit
