@@ -338,7 +338,9 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
                      smoothing: Optional[float] = None, direction: str = "vertical",
                      max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
                      max_gap: Optional[float] = None,
-                     upper_bound: Optional[UpperBound] = None
+                     upper_bound: Optional[UpperBound] = None,
+                     hold_mask: Optional[np.ndarray] = None,
+                     adjust_mask: Optional[np.ndarray] = None
                      ) -> Tuple[HeightMap, Dict[str, Any]]:
     """One shop-floor DA step from a measured part.
 
@@ -350,7 +352,10 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
     than `max_gap` [m], default 3 grid spacings, from any scan point are
     left without data) and the DA update ``c - alpha (scan - target)`` is
     applied where the scan has data, conditioned as in the module docstring
-    (`upper_bound` as for `displacement_adjustment`).
+    (`upper_bound`, `hold_mask` and `adjust_mask` as for
+    `displacement_adjustment`: by default the flange is held and the part
+    adjusted; a setup with a rim pass adjusts the flange strip it sweeps,
+    `precomp.fea.support.compensation_masks`).
 
     Returns (new commanded surface, report) with the alignment summary, the
     scan's error metrics over the part and the share of the part covered.
@@ -369,11 +374,15 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
         aligned = al.apply(pts)
         gap = 3.0 * target.grid.h if max_gap is None else max_gap
         measured = HeightMap.from_points(aligned, target.grid, max_gap=gap)
-    adjust = part_mask(target) & ~flange_mask(target)
+    adjust = part_mask(target) & ~flange_mask(target) if adjust_mask is None \
+        else np.asarray(adjust_mask, dtype=bool)
+    hold = flange_mask(target) if hold_mask is None else np.asarray(hold_mask, dtype=bool)
+    for name, m in (("hold_mask", hold), ("adjust_mask", adjust)):
+        if m.shape != target.grid.shape:
+            raise ValueError(f"{name} has shape {m.shape}, the target grid {target.grid.shape}")
     err = error_field(measured, target, direction)
     report["scan_error"] = metrics(err, adjust)
     report["coverage"] = float(np.mean(err.mask[adjust]))
-    hold = flange_mask(target)
     z_new = _apply_update(commanded, target, err, adjust, alpha, direction, smoothing)
     new = _condition(commanded, z_new, hold, target, max_wall_angle_deg, upper_bound)
     new.metadata["compensation"] = {"method": "update_from_scan", "alpha": alpha,

@@ -556,6 +556,44 @@ def test_a_model_refuses_a_setup_with_a_support_it_was_not_trained_on(base):
     assert union["fields"]["support"] == {"values": ["dsif", "none"]}
 
 
+def test_a_scan_update_adjusts_the_strip_the_rim_pass_sweeps(tmp_path, base, cone):
+    """update_from_scan takes the masks and the bound of displacement
+    adjustment, so a measured part gives the command FE-DA would: the swept
+    flange strip adjusted, the rim raised where the rim pass reaches."""
+    from precomp.cli import main
+    from precomp.compensation import update_from_scan
+
+    rim = base.replace(support="dsif", support_settings={"rim_pass": True, "radius": 1.5e-3})
+    pred = _sagging_predictor(cone)
+    hold, adjust = compensation_masks(rim, cone)
+    bound = command_upper_bound(rim, cone)
+    da = displacement_adjustment(cone, pred, iterations=1, hold_mask=hold, adjust_mask=adjust,
+                                 upper_bound=bound)
+    scan = pred(cone)
+    new, _ = update_from_scan(cone, scan, cone, hold_mask=hold, adjust_mask=adjust,
+                              upper_bound=bound)
+    assert np.array_equal(new.z, da.proposed.z) and new.z.max() > 3e-4
+    held, _ = update_from_scan(cone, scan, cone, upper_bound=bound)   # the whole flange held
+    fl = flange_mask(cone)
+    assert np.array_equal(held.z[fl], cone.z[fl]) and held.z.max() < 0.1 * new.z.max()
+    # the command line, given the next run's setup
+    rim_json = tmp_path / "rim.json"
+    rim_json.write_text(json.dumps(rim.to_dict()))
+    cone.save(tmp_path / "t.npz")
+    scan.save(tmp_path / "scan.npz")
+    X, Y = scan.grid.mesh()
+    pts = np.column_stack([X.ravel(), Y.ravel(), scan.z.ravel()])
+    np.savetxt(tmp_path / "scan.xyz", pts)
+    for extra, out in (([], "plain.npz"), (["--setup", str(rim_json)], "rim.npz")):
+        assert main(["scan", "update", "--scan", str(tmp_path / "scan.xyz"), "--commanded",
+                     str(tmp_path / "t.npz"), "--target", str(tmp_path / "t.npz"),
+                     "--align", "none", "--out", str(tmp_path / out)] + extra) == 0
+    plain = HeightMap.load(tmp_path / "plain.npz")
+    supported = HeightMap.load(tmp_path / "rim.npz")
+    assert plain.z.max() <= 0.0 and supported.z.max() > 3e-4
+    check_command(rim, supported, cone)
+
+
 def test_the_command_line_writes_and_simulates_a_supported_setup(tmp_path, base, cone, counter,
                                                                  capsys):
     from precomp.cli import main

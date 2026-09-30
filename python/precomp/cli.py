@@ -280,9 +280,17 @@ def cmd_scan_update(args: argparse.Namespace) -> int:
 
     target = _load_map(args.target)
     commanded = _load_map(args.commanded)
+    kw = {}
+    if args.setup:
+        from .fea.support import command_upper_bound, compensation_masks
+
+        setup = _load_setup(args.setup)
+        if setup.support != "none":
+            kw["upper_bound"] = command_upper_bound(setup, target)
+        kw["hold_mask"], kw["adjust_mask"] = compensation_masks(setup, target)
     new, report = update_from_scan(commanded, args.scan, target, alpha=args.alpha,
                                    scale=args.scale, align_mode=args.align,
-                                   fixture=args.fixture, smoothing=args.smoothing)
+                                   fixture=args.fixture, smoothing=args.smoothing, **kw)
     new.save(args.out)
     print(canonical_json(to_jsonable(report)), end="")
     return 0
@@ -431,6 +439,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--smoothing", type=float)
     s.add_argument("--align", choices=["rigid", "translation_z", "none"], default="rigid")
     s.add_argument("--fixture", choices=["all", "flange"], default="flange")
+    s.add_argument("--setup", help="FormingSetup JSON of the next run: with a DSIF rim pass "
+                                   "the flange strip it sweeps is adjusted and the command "
+                                   "may rise above the sheet plane where it reaches")
     s.add_argument("--out", required=True, help="new commanded surface .npz")
     s.set_defaults(func=cmd_scan_update)
 
