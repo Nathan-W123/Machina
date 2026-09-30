@@ -17,7 +17,7 @@ from precomp import PrecompError
 from precomp._util import canonical_json, read_json, sha256_bytes
 from precomp.compensation import FEAPredictor, displacement_adjustment
 from precomp.fea import FormingSetup, build_deck, deck_document, deck_hash, load_result, simulate
-from precomp.fea.support import (PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL, bottom_node_grid,
+from precomp.fea.support import (COMMAND_TOLERANCE, PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL, bottom_node_grid,
                                  check_command, command_upper_bound, compensation_masks,
                                  outline_distance, part_distance, plate_nodes, rim_band)
 from precomp.geometry import Grid, HeightMap, TruncatedCone
@@ -372,6 +372,35 @@ def test_displacement_adjustment_rises_above_the_plane_only_where_the_support_ca
     check_command(big, up.proposed.with_z(cut), cone)
     with pytest.raises(ValueError, match="upper_bound"):
         displacement_adjustment(cone, pred, iterations=1, upper_bound=-1.0)
+
+
+def test_a_command_within_a_micrometre_of_the_plane_is_taken_as_it_is(tmp_path, base, cone):
+    """1 um (COMMAND_TOLERANCE) is the one tolerance above the sheet plane:
+    a command no higher is accepted with every support, with or without a
+    target, and the forming path is made for it as it is (as before
+    supports existed); a higher one needs a rim pass, and without one it is
+    refused for what it is - not for a missing target."""
+    rim = base.replace(support="dsif", support_settings={"rim_pass": True})
+    setups = (base, base.replace(support="backing_plate"), base.replace(support="dsif"), rim)
+    noisy = cone.with_z(np.where(cone.z >= 0.0, 1e-8, cone.z))       # 10 nm over the flange
+    for i, s in enumerate(setups):
+        for target in (None, cone):
+            build_deck(s, noisy, tmp_path / f"{i}-{target is None}", target=target)
+    from precomp.fea.deck import forming_surface, make_toolpath
+    assert forming_surface(noisy) is noisy
+    d = tmp_path / "0-True"
+    assert pd.read_csv(d / "toolpath.csv")["z"].to_numpy() == pytest.approx(
+        make_toolpath(base, noisy).points[:, 2], abs=1e-15)
+    high = cone.with_z(np.where(cone.z >= 0.0, 1e-5, cone.z))        # 10 um
+    for s in setups[:3]:
+        for target in (None, cone):
+            with pytest.raises(PrecompError, match="nothing pushes the sheet up") as err:
+                check_command(s, high, target)
+            assert "target" not in str(err.value).split("(")[0]
+    with pytest.raises(PrecompError, match="pass the target"):
+        check_command(rim, high, None)
+    with pytest.raises(PrecompError, match="too high"):             # the flange beyond the band
+        check_command(rim, high, cone)
 
 
 def test_fea_prediction_forms_every_iterate_on_the_targets_fixture(tmp_path, base, cone,

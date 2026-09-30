@@ -67,7 +67,8 @@ from .._util import (PathLike, PrecompError, canonical_json, read_json, sha256_b
 from ..geometry.heightmap import HeightMap
 from ..toolpath import AIR, Toolpath, contour_toolpath, spiral_toolpath
 from .setup import CONTACT_KEYS, FORMING_SOLVER_KEYS, NEWTON_KEYS, FormingSetup
-from .support import RIM_PASS_WINDOW, SUPPORT_TOOL, SupportPlan, check_command, plan_support
+from .support import (COMMAND_TOLERANCE, RIM_PASS_WINDOW, SUPPORT_TOOL, SupportPlan,
+                      check_command, plan_support)
 
 DECK_FILE = "deck.json"
 TOOLPATH_FILE = "toolpath.csv"
@@ -80,8 +81,10 @@ def forming_surface(commanded: HeightMap) -> HeightMap:
     """The surface the forming tool's path is made for: the command where it
     lies below the sheet plane, the plane where it rises above it. The tool
     presses from above and cannot lift the sheet; only a support's rim pass
-    realises a command above the plane (`precomp.fea.support`)."""
-    if not (commanded.z > 0.0).any():
+    realises a command above the plane (`precomp.fea.support`). A command
+    that rises nowhere more than `COMMAND_TOLERANCE` above the plane (1 um of
+    round-off) is taken as it is, as before supports existed."""
+    if not (commanded.z > COMMAND_TOLERANCE).any():
         return commanded
     return commanded.with_z(np.minimum(commanded.z, 0.0))
 

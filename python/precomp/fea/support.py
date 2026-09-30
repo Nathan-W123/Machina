@@ -42,7 +42,8 @@ holding - `compensation_masks`) the command may rise above the plane, by at
 most `rim_max_raise` and no further than the support ball can push the
 commanded underside from below (`command_upper_bound`: a raised band
 narrower than the ball is out of its reach). Every other command is kept
-at z <= 0, and `build_deck` refuses one above the bound.
+at z <= 0 (to within `COMMAND_TOLERANCE`), and `build_deck` refuses one above
+the bound.
 
 All lengths are metres.
 """
@@ -69,7 +70,11 @@ SUPPORT_PATH_FILE = "support_path.csv"
 #: The rim pass runs over this pseudo-time window, after "unload" (which
 #: ends at most at 2: the forming tool's path spans [0, 1]).
 RIM_PASS_WINDOW = (2.0, 3.0)
-#: Commands within this of the bound are accepted [m].
+#: A command up to this far above what the tools realise is accepted [m]
+#: (round-off of the conditioning; far below the mesh's resolution): above
+#: the sheet plane without a rim pass, above `command_upper_bound` with one.
+COMMAND_TOLERANCE = 1e-6
+#: Changes of the bound's iteration below this are none [m].
 BOUND_TOLERANCE = 1e-9
 
 
@@ -390,31 +395,42 @@ def command_upper_bound(setup: FormingSetup, target: HeightMap):
 
 def check_command(setup: FormingSetup, commanded: HeightMap,
                   reference: Optional[HeightMap]) -> None:
-    """PrecompError if `commanded` rises above the sheet plane where no tool
-    of the setup can push it (`command_upper_bound`); a command above the
-    plane needs the target the fixture is made for."""
-    top = float(commanded.z[commanded.mask].max()) if commanded.mask.any() else 0.0
-    if top <= BOUND_TOLERANCE:
+    """PrecompError if `commanded` rises more than `COMMAND_TOLERANCE` above
+    what the setup's tools can realise (`command_upper_bound`): above the
+    sheet plane anywhere without a DSIF rim pass; with one, above the bound.
+    A command above the plane with a rim pass needs the target the fixture
+    is made for."""
+    raised = commanded.mask & (commanded.z > COMMAND_TOLERANCE)
+    if not raised.any():
         return
+    top = float(commanded.z[raised].max())
+    if not (setup.support == "dsif" and setup.resolved_support()["rim_pass"]):
+        raise PrecompError(
+            f"the commanded surface rises above what the tools can realise at "
+            f"{int(raised.sum())} nodes (up to {top * 1e3:.3f} mm above the sheet plane): the "
+            f"forming tool only pushes down, and with support {setup.support!r} nothing "
+            "pushes the sheet up (only a DSIF rim pass does, in a band around the target's "
+            "outline; precomp.fea.support.command_upper_bound)")
     if reference is None:
         raise PrecompError(
-            f"the commanded surface rises {top * 1e3:.3f} mm above the sheet plane; only a "
+            f"the commanded surface rises {top * 1e3:.3f} mm above the sheet plane; only the "
             "rim pass can realise that, in a band around the target's outline - pass the "
             "target to build the deck")
     ref = reference if reference.grid.matches(commanded.grid) else \
         reference.resample(commanded.grid)
     bound = command_upper_bound(setup, ref)(commanded.z)
-    over = commanded.mask & (commanded.z > bound + 1e-6)
+    over = commanded.mask & (commanded.z > bound + COMMAND_TOLERANCE)
     if over.any():
         worst = float((commanded.z - bound)[over].max())
         raise PrecompError(
             f"the commanded surface rises above what the tools can realise at {int(over.sum())} "
             f"nodes (up to {worst * 1e3:.3f} mm too high): the forming tool only pushes down, "
-            f"and with support {setup.support!r} nothing pushes the sheet up there "
+            "and the support ball cannot push the sheet up that far there "
             "(precomp.fea.support.command_upper_bound)")
 
 
 __all__ = ["PLATE_TOOL", "SUPPORT_TOOL", "SUPPORT_PATH_FILE", "RIM_PASS_WINDOW",
+           "COMMAND_TOLERANCE",
            "SupportPlan", "plan_support", "plate_nodes", "plate_tool", "support_tool",
            "dsif_trajectory", "command_upper_bound", "check_command", "compensation_masks",
            "rim_band", "bottom_node_grid", "part_distance", "outline_distance"]
