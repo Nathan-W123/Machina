@@ -546,6 +546,15 @@ def test_a_model_refuses_a_setup_with_a_support_it_was_not_trained_on(base):
     plate = base.replace(support="backing_plate")
     assert {m["field"] for m in setup_mismatch(setup_envelope([plate]), plate.replace(
         support_settings={"clearance": 2e-3}))} == {"support_settings"}
+    # a setting that spells out its default is that default, either way round
+    spelt = plate.replace(support_settings={"clearance": 1e-3})
+    assert setup_mismatch(setup_envelope([plate]), spelt) == []
+    assert setup_mismatch(setup_envelope([spelt]), plate) == []
+    assert setup_envelope([spelt])["fields"]["support_settings"] == {"values": [{}]}
+    assert setup_mismatch(setup_envelope([dsif]), dsif.replace(
+        support_settings={"squeeze": 0.0, "rim_pass": False, "thickness_law": "sine"})) == []
+    assert setup_mismatch(setup_envelope([dsif]), dsif.replace(
+        support_settings={"squeeze": 0.1}))[0]["field"] == "support_settings"
     # a model trained before the field existed was trained without support
     old = json.loads(json.dumps(env))
     del old["fields"]["support"], old["fields"]["support_settings"]

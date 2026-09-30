@@ -61,15 +61,39 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
 
 
+def explicit_support_settings(settings: Mapping[str, Any], support: str) -> Dict[str, Any]:
+    """`support_settings` without the keys that only spell out their default
+    (`precomp.fea.setup.SUPPORT_SETTINGS` of `support`): {} and
+    {"clearance": 1e-3} are the same backing plate."""
+    from ..fea.setup import SUPPORT_SETTINGS
+
+    defaults = SUPPORT_SETTINGS.get(support, {})
+    return {k: v for k, v in dict(settings or {}).items()
+            if not (k in defaults and defaults[k] is not None
+                    and canonical_json(v) == canonical_json(defaults[k]))}
+
+
+def _value_key(key: str, value: Any, doc: Mapping[str, Any]) -> str:
+    """The canonical text a setup field's value is compared by: a support
+    setting that spells out its default counts as the default."""
+    if key == "support_settings":
+        value = explicit_support_settings(value, doc.get("support", "none"))
+    return canonical_json(value)
+
+
 def setup_envelope(setups: Sequence[Any]) -> Dict[str, Any]:
     """What the training setups held: for every physics field of
     `FormingSetup` that no feature describes (blank, clamp, mesh, element,
     tool path style / spacing / direction, contact, increment, release,
-    kinematics, solver) its range (numbers) or its set of values; plus the
-    ranges of the process fields and the material names, for reference."""
+    kinematics, solver, support and its settings - these without the keys
+    that spell out a default, `explicit_support_settings`) its range
+    (numbers) or its set of values; plus the ranges of the process fields
+    and the material names, for reference."""
     docs = [as_setup(x).physics_dict() for x in setups]
     if not docs:
         raise ValueError("no setups")
+    for d in docs:
+        d["support_settings"] = explicit_support_settings(d["support_settings"], d["support"])
     fields: Dict[str, Any] = {}
     for key in docs[0]:
         if key in FEATURE_SETUP_FIELDS or key in LABEL_SETUP_FIELDS:
@@ -115,7 +139,7 @@ def setup_mismatch(envelope: Optional[Mapping[str, Any]], setup: Any) -> List[Di
     for key, rule in fields.items():
         v = doc.get(key)
         if "values" in rule:
-            if canonical_json(v) not in {canonical_json(x) for x in rule["values"]}:
+            if _value_key(key, v, doc) not in {_value_key(key, x, doc) for x in rule["values"]}:
                 out.append({"field": key, "value": v, "trained": rule["values"]})
         else:
             lo, hi = rule["min"], rule["max"]
@@ -627,4 +651,4 @@ def setup_envelope_union(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str
 
 __all__ = ["DeviationSurrogate", "train_surrogate", "transfer_surrogate", "calibrate",
            "fit_envelope", "model_prior", "setup_envelope", "setup_mismatch", "seen_ids",
-           "describe_prior", "SURROGATE_FORMAT"]
+           "describe_prior", "explicit_support_settings", "SURROGATE_FORMAT"]

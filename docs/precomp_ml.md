@@ -394,7 +394,8 @@ is recorded from the training setups (a range for numbers, the set of
 values otherwise); a query outside puts the part outside the envelope, with
 `setup.<field>` first among the reasons and the details in `setup_mismatch`.
 A model trained on single-point forming therefore refuses a backing plate
-or DSIF, and one trained on a support refuses another. A field the model
+or DSIF, and one trained on a support refuses another; a support setting
+that spells out its default counts as that default. A field the model
 does not record at all was added after it was trained: its runs had the
 field's default, so any other value is outside (the mismatch says so). (A
 setup whose tool path cannot form the part at all - a spiral on several
