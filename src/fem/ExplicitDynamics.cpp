@@ -1080,9 +1080,12 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   };
   struct Checkpoint {
     Vector u, v, a, f_int, f_ext, fc, reactions;
+    Vector scale, m, m_inverse;  // dynamic mass scaling changes them
     Scalar tau = 0, tau_base = 0, dt = 0, stored = 0;
     Scalar elastic = 0;
     Scalar max_penetration_ratio = 0;
+    Scalar min_time_step = 0;
+    int mass_updates = 0, step_updates = 0;
     long step = 0, since_base = 0;
     Scalar w_int = 0, w_ext = 0, w_cn = 0, w_ct = 0, w_damp = 0, w_mass = 0, kin = 0;
     std::vector<ContactNodeForce> contact_forces;
@@ -1099,12 +1102,18 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     saved.f_ext = f_ext;
     saved.fc = fc;
     saved.reactions = reactions;
+    saved.scale = scale;
+    saved.m = m;
+    saved.m_inverse = m_inverse;
     saved.tau = tau;
     saved.tau_base = tau_base;
     saved.dt = dt;
     saved.stored = stored;
     saved.elastic = elastic;
+    saved.min_time_step = res.min_time_step;
     saved.max_penetration_ratio = res.max_penetration_ratio;
+    saved.mass_updates = res.mass_updates;
+    saved.step_updates = res.step_updates;
     saved.step = step;
     saved.since_base = since_base;
     saved.w_int = w_int;
@@ -1129,12 +1138,21 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     f_ext = saved.f_ext;
     fc = saved.fc;
     reactions = saved.reactions;
+    if (res.mass_updates != saved.mass_updates) {
+      scale = saved.scale;
+      m = saved.m;
+      m_inverse = saved.m_inverse;
+      contact.set_masses(m);
+    }
     tau = saved.tau;
     tau_base = saved.tau_base;
     dt = saved.dt;
     stored = saved.stored;
     elastic = saved.elastic;
+    res.min_time_step = saved.min_time_step;
     res.max_penetration_ratio = saved.max_penetration_ratio;
+    res.mass_updates = saved.mass_updates;
+    res.step_updates = saved.step_updates;
     step = saved.step;
     since_base = saved.since_base;
     w_int = saved.w_int;

@@ -509,6 +509,61 @@ TEST_CASE("dynamic selective mass scaling holds the target step as elements thin
   REQUIRE_THROWS_AS(wrong.validate(), ConfigError);
 }
 
+TEST_CASE("a stopped run reports the mass of the state it keeps, not the mass added after it",
+          "[explicit]") {
+  // The crush of the dynamic scaling case, with no record before the end
+  // and a balance limit no run meets: the run stops at its last step and
+  // keeps its start state - whose mass is the start's, whatever dynamic
+  // scaling added on the way.
+  const FemModel model = finalised(
+      hex_block(2, 2, 2, 0.01, 0.01, 0.01), default_material(),
+      {clamp(box(-kInf, kInf, -kInf, kInf, -kInf, 1.0e-9)),
+       clamp(box(-kInf, kInf, -kInf, kInf, 0.01 - 1.0e-9, kInf), {2}, Vector3(0, 0, -0.003))});
+  const Assembler assembler(model);
+  const Index n = model.dofs().num_dofs();
+  const Vector zero = Vector::Zero(n);
+  NonlinearOptions nl;
+  ExplicitOptions probe;
+  const Scalar crit =
+      ExplicitDynamics(model, assembler, nl, {}, probe).element_time_steps(zero).minCoeff();
+  ExplicitOptions o;
+  o.mass_scaling.mode = MassScalingOptions::Mode::Selective;
+  o.mass_scaling.target_time_step = 1.2 * 0.9 * crit;
+  o.mass_scaling.dynamic = true;
+  o.stable_step.update_every = 20;
+  o.history_every = 1000000;
+  ExplicitDrive drive = held_drive(model, 600.0 * o.mass_scaling.target_time_step);
+  drive.fixed_start.setZero();
+  const ExplicitResult full =
+      ExplicitDynamics(model, assembler, nl, {}, o).run(drive, {zero, {}, {}, {}});
+  REQUIRE(full.completed);
+  REQUIRE(full.mass_updates > 0);
+  o.energy_tolerance = 1.0e-300;
+  o.energy_limit = 1.0e-300;
+  ExplicitDynamics dyn(model, assembler, nl, {}, o);
+  const ExplicitResult stopped = dyn.run(drive, {zero, {}, {}, {}});
+  INFO(stopped.termination);
+  REQUIRE_FALSE(stopped.completed);
+  REQUIRE(stopped.steps == 0);
+  REQUIRE(stopped.final_state.displacement == zero);
+  // The start's mass: no mass update, the start's added mass and scales.
+  o.mass_scaling.dynamic = false;
+  o.stable_step.update_every = 0;
+  drive.duration = o.mass_scaling.target_time_step;
+  o.energy_tolerance = 0.05;
+  o.energy_limit = 0.5;
+  const ExplicitResult start =
+      ExplicitDynamics(model, assembler, nl, {}, o).run(drive, {zero, {}, {}, {}});
+  REQUIRE(start.completed);
+  CHECK(stopped.mass_updates == 0);
+  CHECK(stopped.step_updates == 0);
+  CHECK(stopped.added_mass_fraction == start.added_mass_fraction);
+  CHECK(stopped.max_mass_scale == start.max_mass_scale);
+  CHECK(stopped.scaled_elements == start.scaled_elements);
+  CHECK(stopped.min_time_step == start.time_step);
+  CHECK(full.added_mass_fraction > stopped.added_mass_fraction);
+}
+
 // ---------------------------------------------------------------------------
 // 2. The dedicated Hex8 kernel
 // ---------------------------------------------------------------------------
