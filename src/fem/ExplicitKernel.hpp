@@ -25,8 +25,8 @@
 ///   points, when no material needs the general return's backstresses;
 /// * the eight points of an element are processed together, every array
 ///   running over them (and the force over the eight nodes), in plain loops
-///   the compiler vectorises (with an AVX2 clone on x86-64 GCC builds, the
-///   same operations in the same order - the same results);
+///   the compiler vectorises (with an x86-64-v3 clone - AVX2 and FMA - on
+///   x86-64 GCC builds, picked by the processor at load time);
 /// * the element forces are gathered per node over the node's elements in
 ///   ascending element order: NonlinearSystem's serial assembly sums them
 ///   in the same order, and the result does not depend on the thread count.

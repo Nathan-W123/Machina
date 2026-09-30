@@ -13,10 +13,12 @@
 #include <sstream>
 
 // The element kernel is compiled twice on x86-64 GCC builds - for the
-// baseline instruction set and for AVX2 (without FMA, so both round alike) -
-// and the processor picks at load time.
+// baseline instruction set and for x86-64-v3 (AVX2 with fused multiply-add,
+// about 10 % faster) - and the processor picks at load time. The two clones
+// round differently in the last bits (fused products); on one machine the
+// same clone always runs, so a run is still reproducible bit for bit.
 #if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__) && defined(__linux__)
-#define SPARLAB_KERNEL_CLONES __attribute__((target_clones("avx2", "default")))
+#define SPARLAB_KERNEL_CLONES __attribute__((target_clones("arch=x86-64-v3", "default")))
 #else
 #define SPARLAB_KERNEL_CLONES
 #endif
