@@ -225,6 +225,10 @@ sigma_f(0.2) / E, t, R, step-down and friction from the setup:
 It gives dz of 0.15-2.4 mm on the default five-material design, depends on the commanded
 shape (so DA on it is not trivial), and has local and global structure. It is
 labelled `proxy - not physics` in every sample, table, manifest and report.
+It knows single-point forming only: as a simulator or a model it refuses a
+setup with support from below (`FormingSetup.support`; a failed job for
+`run`) rather than give single-point numbers under the supported setup's
+name; as a `ResidualModel` prior it gives single-point dz for any setup.
 
 ## Models
 

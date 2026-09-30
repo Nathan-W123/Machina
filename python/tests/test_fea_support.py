@@ -556,6 +556,24 @@ def test_a_model_refuses_a_setup_with_a_support_it_was_not_trained_on(base):
     assert union["fields"]["support"] == {"values": ["dsif", "none"]}
 
 
+def test_the_proxy_refuses_a_setup_with_support(base, cone):
+    """The proxy knows single-point forming only; it does not give its
+    numbers under a supported setup's name."""
+    from precomp.ml import ProxySimulator
+
+    proxy = ProxySimulator()
+    assert proxy.deviation(cone, base).shape == cone.grid.shape
+    for s in (base.replace(support="backing_plate"), base.replace(support="dsif")):
+        with pytest.raises(PrecompError, match="no model of support"):
+            proxy.deviation(cone, s)
+        [out] = proxy.run([(s, cone, cone)])
+        assert not out.ok and "no model of support" in out.error
+        with pytest.raises(PrecompError, match="no model of support"):
+            proxy.predict_deviation(cone, s)
+        # as a prior it is a crude single-point estimate, for any setup
+        assert np.array_equal(proxy.prior_deviation(cone, s), proxy.deviation(cone, base))
+
+
 def test_a_scan_update_adjusts_the_strip_the_rim_pass_sweeps(tmp_path, base, cone):
     """update_from_scan takes the masks and the bound of displacement
     adjustment, so a measured part gives the command FE-DA would: the swept
