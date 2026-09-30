@@ -78,6 +78,7 @@ StudyOutcome study_rod_harmonic(const std::string& out_dir, json::Value& summary
 StudyOutcome study_rod_transient(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_nonlinear_oscillator(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_explicit_rod(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_explicit_dent(const std::string& out_dir, json::Value& summary);
 /// \}
 
 /// Quarter sections of a cylinder (verify_loads.cpp).
