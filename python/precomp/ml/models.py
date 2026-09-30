@@ -825,7 +825,11 @@ class FEAPrior:
     """A coarse finite-element prior: dz of a sparlab_form run of the commanded
     surface with `overrides` applied to the setup (e.g. {"element_size": 5e-3,
     "layers": 1}), through the run cache in `work_dir`. Needs the executable
-    whenever the prior is evaluated (training and prediction)."""
+    whenever the prior is evaluated (training and prediction). `target` is
+    the part a support's fixture is made for (`precomp.fea.simulate`): the
+    training table passes each sample's target (`Sample.target`), a
+    prediction the target it is given, so the prior forms a compensated
+    command on the same backing plate / rim pass band as the label runs."""
 
     work_dir: str
     overrides: Dict[str, Any] = field(default_factory=dict)
@@ -834,10 +838,11 @@ class FEAPrior:
     #: what the prior's values are
     data_source = "SparLab simulation"
 
-    def prior_deviation(self, commanded: HeightMap, setup: Any) -> np.ndarray:
+    def prior_deviation(self, commanded: HeightMap, setup: Any,
+                        target: Optional[HeightMap] = None) -> np.ndarray:
         from ..fea.runner import simulate
         s = as_setup(setup).replace(**self.overrides)
-        res = simulate(s, commanded, self.work_dir)
+        res = simulate(s, commanded, self.work_dir, target=target)
         formed = res.formed_surface(self.step, grid=commanded.grid)
         return formed.z - commanded.z
 
@@ -852,7 +857,9 @@ class ResidualModel:
     `prior` is an object with ``prior_deviation(commanded, setup) -> (ny, nx)``
     dz [m] (a coarse FE run, `FEAPrior`, or a closed-form estimate); the
     surrogate evaluates it on each commanded surface and appends its value
-    as the last feature column, `prior_dz`. The learner (a point model) sees
+    as the last feature column, `prior_dz`; a prior that takes ``target=``
+    gets the part a support's fixture is made for, in training (each
+    sample's target) and in prediction alike. The learner (a point model) sees
     that column as a feature too unless `prior_as_feature` is False. mean =
     prior + learner mean; std = learner std (the prior counts as exact).
     """

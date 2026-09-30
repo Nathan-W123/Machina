@@ -276,7 +276,13 @@ material and five process parameters the held-out error fell from 0.14 to
   prior's value as an extra feature column `prior_dz`; the prior is anything
   with `prior_deviation(commanded, setup)`: a coarse SparLab run
   (`FEAPrior(work_dir, {"element_size": 5e-3, "layers": 1})`, needing the
-  executable whenever evaluated) or a closed-form estimate. The prior - its
+  executable whenever evaluated) or a closed-form estimate. A prior that
+  takes `target=` (`FEAPrior` does) gets the part a support's fixture is
+  made for - each training sample's target, and at prediction the target
+  given to `predict_deviation(commanded, setup, target)` (as
+  `SurrogatePredictor`, `precomp.api.predict` and `compensate` pass it) - so
+  it simulates a compensated command on the same backing plate or rim pass
+  band as the label runs; without it, on the command's own outline. The prior - its
   class, settings and data source, e.g. `proxy - not physics` for
   `--prior proxy` - is recorded in `training["prior"]`, the manifest and
   `describe()`: a model trained on SparLab data around a proxy prior says so.

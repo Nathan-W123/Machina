@@ -38,7 +38,8 @@ from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping, Opti
 import numpy as np
 import pandas as pd
 
-from .._util import PathLike, PrecompError, canonical_json, read_json, safe_name, to_jsonable
+from .._util import (PathLike, PrecompError, call_with_target, canonical_json, read_json,
+                     safe_name, to_jsonable)
 from ..geometry.heightmap import Grid, HeightMap
 from ..toolpath import Toolpath
 from .features import (DEFAULT_CONFIG, PRIOR_FEATURE, REGION_NAMES, FeatureConfig, as_setup,
@@ -348,7 +349,9 @@ def sample_table(sample: Sample, config: FeatureConfig = DEFAULT_CONFIG, *,
     X = fm.gather(nodes)
     names = list(fm.names)
     if prior is not None:
-        p = np.asarray(prior.prior_deviation(sample.commanded, sample.forming_setup()), float)
+        # the prior simulates on the fixture the label run had: the sample's target's
+        p = np.asarray(call_with_target(prior.prior_deviation, sample.commanded,
+                                        sample.forming_setup(), target=sample.target), float)
         if p.shape != sample.grid.shape or not np.all(np.isfinite(p)):
             raise PrecompError("the prior returned a field of the wrong shape or non-finite "
                                "values")
@@ -375,7 +378,9 @@ def build_table(samples: Iterable[Sample], config: FeatureConfig = DEFAULT_CONFI
     rng : a Generator or a seed; each sample gets its own child stream in
         order, so the table is reproducible for the same samples and seed.
     prior : an object with ``prior_deviation(commanded, setup) -> (ny, nx)``
-        whose value is appended as the column `prior_dz` (hybrid models).
+        whose value is appended as the column `prior_dz` (hybrid models); a
+        prior that takes ``target=`` gets each sample's target (the part a
+        support's fixture is made for, `models.FEAPrior`).
     n_jobs : processes for featurisation (joblib); keep <= 2 on shared machines.
     """
     samples = list(samples)

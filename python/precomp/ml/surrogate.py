@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .._util import PrecompError, canonical_json
+from .._util import PrecompError, call_with_target, canonical_json
 from ..geometry.heightmap import HeightMap
 from .dataset import Sample, build_table, source_label
 from .features import (DEFAULT_CONFIG, PRIOR_FEATURE, FeatureConfig, FeatureMaps, as_setup,
@@ -167,12 +167,18 @@ def describe_prior(prior: Any) -> Dict[str, Any]:
     return d
 
 
-def _key(commanded: HeightMap, setup: Any) -> str:
+def _key(commanded: HeightMap, setup: Any, target: Optional[HeightMap] = None) -> str:
     h = hashlib.sha256()
     h.update(np.ascontiguousarray(commanded.z).tobytes())
     h.update(np.ascontiguousarray(commanded.mask).tobytes())
     h.update(canonical_json(commanded.grid.to_dict()).encode())
     h.update(canonical_json(as_setup(setup).physics_dict()).encode())
+    if target is not None and as_setup(setup).support != "none":
+        # the fixture a support is made for changes what the FE prior simulates
+        h.update(b"target")
+        h.update(np.ascontiguousarray(target.z).tobytes())
+        h.update(np.ascontiguousarray(target.mask).tobytes())
+        h.update(canonical_json(target.grid.to_dict()).encode())
     return h.hexdigest()
 
 
@@ -280,38 +286,46 @@ class DeviationSurrogate:
         return self._cached("maps:" + _key(commanded, setup),
                             lambda: feature_maps(commanded, setup, None, self.features))
 
-    def _point_matrix(self, commanded: HeightMap, setup: Any) -> np.ndarray:
+    def _point_matrix(self, commanded: HeightMap, setup: Any,
+                      target: Optional[HeightMap] = None) -> np.ndarray:
         X = self.feature_maps(commanded, setup).gather(None)
         prior = model_prior(self.model)
         if prior is not None:
-            p = np.asarray(prior.prior_deviation(commanded, as_setup(setup)), float)
+            p = np.asarray(call_with_target(prior.prior_deviation, commanded, as_setup(setup),
+                                            target=target), float)
             if p.shape != commanded.grid.shape or not np.all(np.isfinite(p)):
                 raise PrecompError("the model's prior returned a field of the wrong shape or "
                                    "non-finite values")
             X = np.column_stack([X, p.ravel()])
         return X
 
-    def predict_deviation(self, commanded: HeightMap, setup: Any
+    def predict_deviation(self, commanded: HeightMap, setup: Any,
+                          target: Optional[HeightMap] = None
                           ) -> Tuple[np.ndarray, np.ndarray]:
-        """(mean, std) of dz [m], (ny, nx), at every node of the commanded grid."""
+        """(mean, std) of dz [m], (ny, nx), at every node of the commanded grid.
+        `target`: the part a support's fixture is made for, which a model's
+        FE prior simulates with (`models.FEAPrior`; None: the commanded
+        surface's outline)."""
         def make():
             if self.kind == "field":
                 mu, sd = self.model.predict_field(commanded, setup)
                 return np.asarray(mu, float), np.asarray(sd, float)
-            X = self._point_matrix(commanded, setup)
+            X = self._point_matrix(commanded, setup, target)
             mu, sd = self.model.predict(X)
             shape = commanded.grid.shape
             return np.asarray(mu, float).reshape(shape), np.asarray(sd, float).reshape(shape)
-        mu, sd = self._cached("pred:" + _key(commanded, setup), make)
+        mu, sd = self._cached("pred:" + _key(commanded, setup, target), make)
         return mu.copy(), sd.copy()
 
-    def predict_interval(self, commanded: HeightMap, setup: Any, level: float = 0.9
+    def predict_interval(self, commanded: HeightMap, setup: Any, level: float = 0.9,
+                         target: Optional[HeightMap] = None
                          ) -> Tuple[np.ndarray, np.ndarray]:
-        """Conformal (lower, upper) bounds of dz [m] at coverage `level`."""
+        """Conformal (lower, upper) bounds of dz [m] at coverage `level`
+        (`target` as for `predict_deviation`)."""
         if self.calibrator is None or not self.calibrator.fitted:
             raise PrecompError("this surrogate has no conformal calibration; train it with "
                                "calibration samples")
-        mu, sd = self.predict_deviation(commanded, setup)
+        mu, sd = self.predict_deviation(commanded, setup, target)
         region = self.feature_maps(commanded, setup).region if self.calibrator.mondrian \
             else None
         return self.calibrator.intervals(mu, sd, level, region)
@@ -395,7 +409,7 @@ def calibrate(surrogate: DeviationSurrogate, samples: Sequence[Sample], *,
     rng = np.random.default_rng(seed)
     for s in samples:
         try:
-            mu, sd = surrogate.predict_deviation(s.commanded, s.setup)
+            mu, sd = surrogate.predict_deviation(s.commanded, s.setup, s.target)
             fm = surrogate.feature_maps(s.commanded, s.setup)
         except (ValueError, PrecompError) as exc:
             raise PrecompError(f"sample {s.sample_id}: {exc}") from exc

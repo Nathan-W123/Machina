@@ -45,7 +45,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.interpolate import griddata
 
-from ._util import PathLike, PrecompError
+from ._util import PathLike, PrecompError, call_with_target
 from .geometry.heightmap import HeightMap
 from .geometry.parts import MAX_WALL_ANGLE_DEG
 from .metrology import (align, flange_mask, metrics, part_mask, read_point_cloud,
@@ -391,7 +391,9 @@ class FieldModel(Protocol):
     ``predict_deviation(commanded, setup) -> (mean, std)``: the vertical
     deviation dz = z_formed - z_commanded [m] on the commanded grid, as
     (ny, nx) arrays; `std` [m] may be None when the model has no uncertainty.
-    `precomp.ml` models are adapted to this protocol.
+    `precomp.ml` models are adapted to this protocol. A model may also take
+    ``target=`` (the part a support's fixture is made for); the predictors
+    pass it only to a model that does (`precomp._util.call_with_target`).
     """
 
     def predict_deviation(self, commanded: HeightMap, setup: Any
@@ -434,17 +436,22 @@ class SurrogatePredictor:
 
     `model` follows `FieldModel`. `__call__` returns the mean prediction;
     `predict_with_uncertainty` also returns the model's std [m] (or None).
+    `target`, the part a support's fixture is made for, goes to a model
+    whose `predict_deviation` takes it (a precomp.ml model whose FE prior
+    simulates with that fixture, as its training runs did).
     """
 
-    def __init__(self, model: FieldModel, setup: Any):
+    def __init__(self, model: FieldModel, setup: Any, target: Optional[HeightMap] = None):
         if not hasattr(model, "predict_deviation"):
             raise TypeError("the model must implement predict_deviation(commanded, setup)")
         self.model = model
         self.setup = setup
+        self.target = target
 
     def predict_with_uncertainty(self, commanded: HeightMap
                                  ) -> Tuple[HeightMap, Optional[np.ndarray]]:
-        mean, std = self.model.predict_deviation(commanded, self.setup)
+        mean, std = call_with_target(self.model.predict_deviation, commanded, self.setup,
+                                     target=self.target)
         mean = np.asarray(mean, dtype=float)
         if mean.shape != commanded.grid.shape:
             raise PrecompError(f"the model returned a deviation of shape {mean.shape}, "
@@ -463,19 +470,23 @@ class CompositePredictor:
 
     formed = base(commanded) + residual.predict_deviation(commanded, setup)
     mean: the residual model learns what the base (e.g. a coarse simulation or
-    a closed-form estimate) gets wrong.
+    a closed-form estimate) gets wrong. `target` goes to the residual as for
+    `SurrogatePredictor`.
     """
 
-    def __init__(self, base: Predictor, residual: FieldModel, setup: Any):
+    def __init__(self, base: Predictor, residual: FieldModel, setup: Any,
+                 target: Optional[HeightMap] = None):
         self.base = base
         self.residual = residual
         self.setup = setup
+        self.target = target
 
     def __call__(self, commanded: HeightMap) -> HeightMap:
         f = self.base(commanded)
         if not f.grid.matches(commanded.grid):
             f = f.resample(commanded.grid)
-        mean, _ = self.residual.predict_deviation(commanded, self.setup)
+        mean, _ = call_with_target(self.residual.predict_deviation, commanded, self.setup,
+                                   target=self.target)
         out = f.with_z(f.z + np.asarray(mean, dtype=float))
         out.metadata["source"] = "composite"
         return out

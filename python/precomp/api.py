@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ._util import PathLike, PrecompError, to_jsonable, write_json
+from ._util import PathLike, PrecompError, call_with_target, to_jsonable, write_json
 from .compensation import (CompositePredictor, DAResult, FEAPredictor, FieldModel,
                            SurrogatePredictor, displacement_adjustment)
 from .fea.deck import make_toolpath
@@ -87,27 +87,35 @@ def _predictor(setup: FormingSetup, model: Optional[FieldModel], method: str,
     if method == "fea":
         return FEAPredictor(setup, work_dir, target=target)
     if method == "surrogate":
-        return SurrogatePredictor(model, setup)
+        return SurrogatePredictor(model, setup, target=target)
     if getattr(model, "target", "residual") == "dz":
         raise ValueError(
             "method 'hybrid' adds the model's prediction to a simulation, but this model "
             "predicts the total deviation dz (formed - commanded), not a residual over a "
             "simulation: the springback would be counted twice. Use method 'surrogate' (a "
             "precomp.ml ResidualModel runs its FE prior itself)")
-    return CompositePredictor(FEAPredictor(setup, work_dir, target=target), model, setup)
+    return CompositePredictor(FEAPredictor(setup, work_dir, target=target), model, setup,
+                              target=target)
 
 
 def predict(commanded: HeightMap, setup: FormingSetup, model: Optional[FieldModel] = None, *,
-            method: str = "fea", work_dir: Optional[PathLike] = None) -> PredictionResult:
+            method: str = "fea", work_dir: Optional[PathLike] = None,
+            target: Optional[HeightMap] = None) -> PredictionResult:
     """Predict the surface formed when `commanded` is followed with `setup`.
 
     method "fea" simulates with sparlab_form (cached in `work_dir`);
     "surrogate" evaluates `model`; "hybrid" simulates and adds the model's
     learned residual. `model` may be a model object or a `precomp.ml` bundle
     directory; its training data source is reported in `details`.
+    `target` is the part the fixture is made for: with a support
+    (`FormingSetup.support`) the backing plate's opening and the rim pass
+    band follow its outline in every simulation - the one of method "fea"
+    or "hybrid" and a model's FE prior (`precomp.ml.FEAPrior`) - as they do
+    in `compensate`; None takes the commanded surface's outline, a different
+    fixture for a compensated command.
     """
     model = resolve_model(model)
-    pred = _predictor(setup, model, method, work_dir)
+    pred = _predictor(setup, model, method, work_dir, target)
     std = None
     if isinstance(pred, SurrogatePredictor):
         formed, std = pred.predict_with_uncertainty(commanded)
@@ -285,11 +293,13 @@ def compensate(target: HeightMap, setup: FormingSetup, model: Optional[FieldMode
         # The interval of the learned deviation, placed around the
         # prediction: predicted + (bound - mean).
         try:
-            lo, hi = model.predict_interval(comp, setup, interval_level)
+            lo, hi = call_with_target(model.predict_interval, comp, setup, interval_level,
+                                      target=target)
         except PrecompError as exc:     # not calibrated, or too few parts for the level
             interval_note = str(exc)
         else:
-            mean = np.asarray(model.predict_deviation(comp, setup)[0], float)
+            mean = np.asarray(call_with_target(model.predict_deviation, comp, setup,
+                                               target=target)[0], float)
             interval = (da.formed.with_z(da.formed.z + np.asarray(lo, float) - mean),
                         da.formed.with_z(da.formed.z + np.asarray(hi, float) - mean))
     verification = None
