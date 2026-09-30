@@ -20,7 +20,7 @@ does *not* do is listed in [Limitations](#limitations).
 pip install -e .                 # the package `precomp` from python/precomp, and the `precomp` command
 pip install -e '.[dev]'          # + pytest
 pip install -e '.[torch]'        # + torch, for the neural models of precomp.ml only
-python3 -m pytest python/tests -q    # 153 tests (42 for precomp.ml), ~4 min on one core; the 6
+python3 -m pytest python/tests -q    # 165 tests (42 for precomp.ml), ~5 min on one core; the 6
                                      # integration tests (~2.5 min of it) skip without
                                      # build/bin/sparlab_form
 ```
