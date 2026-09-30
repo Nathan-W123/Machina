@@ -78,6 +78,21 @@ Matrix3 tensor_of(const Scalar* v, Scalar shear_factor) {
   return t;
 }
 
+/// Where the closed-form eigensolver's result is accepted: its residual
+/// |A Q - Q diag(mu)| and the loss of orthogonality |Q^T Q - I| (largest
+/// entries) within this many units of round-off of |A| (largest entry) and
+/// of 1 - the backward error of the iterative solver's order, so that
+/// ln(A), a Lipschitz function of A, keeps the iterative solver's accuracy.
+constexpr Scalar kDirectTolerance = 64.0 * std::numeric_limits<Scalar>::epsilon();
+
+bool direct_accurate(const Matrix3& a, const Vector3& mu, const Matrix3& q) {
+  const Scalar scale = a.cwiseAbs().maxCoeff();
+  const Scalar residual = (a * q - q * mu.asDiagonal()).cwiseAbs().maxCoeff();
+  const Scalar orthogonality = (q.transpose() * q - Matrix3::Identity()).cwiseAbs().maxCoeff();
+  return residual <= kDirectTolerance * scale && orthogonality <= kDirectTolerance &&
+         std::isfinite(residual);
+}
+
 /// E_log (engineering Voigt, into `strain`) of the Green-Lagrange strain
 /// `green`, and the point's axes and divided differences.
 /// \throws SolverError as logarithmic_strain() does.
@@ -87,7 +102,15 @@ void point_log(const Scalar* green, Scalar* strain, PointLog& out) {
       throw SolverError("the logarithmic strain met a non-finite Green-Lagrange strain");
     }
   }
-  const Eigen::SelfAdjointEigenSolver<Matrix3> eigen(tensor_of(green, 0.5));
+  // The closed-form solver (a third of the iterative one's cost), checked:
+  // where it loses accuracy - nearly equal eigenvalues - its residual or
+  // its axes' orthogonality shows it, and the iterative solver decides.
+  const Matrix3 tensor = tensor_of(green, 0.5);
+  Eigen::SelfAdjointEigenSolver<Matrix3> eigen;
+  eigen.computeDirect(tensor);
+  if (!direct_accurate(tensor, eigen.eigenvalues(), eigen.eigenvectors())) {
+    eigen.compute(tensor);
+  }
   const Vector3 mu = eigen.eigenvalues();
   out.axes = eigen.eigenvectors();
   Vector3 principal;

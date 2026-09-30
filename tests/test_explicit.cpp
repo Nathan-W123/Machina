@@ -621,6 +621,52 @@ TEST_CASE("the dedicated Hex8 kernel gives the internal forces of the element di
   WARN("largest relative difference of the dedicated kernel: " << worst);
 }
 
+TEST_CASE("the dedicated kernel's logarithmic strain holds at equal and nearly equal principal "
+          "stretches",
+          "[explicit]") {
+  // The kernel takes the closed-form eigensolver and falls back to the
+  // iterative one where that loses accuracy: equal stretches (a uniform
+  // dilatation, an equibiaxial stretch), stretches equal to 1e-9, tiny and
+  // large strains, unrotated and rotated - against the element dispatch.
+  // (Rotated by 0.7 rad, E = (H + H^T + H^T H) / 2 sums terms of order 1
+  // to a strain of order 1e-7: both paths then carry a round-off of 1e-9
+  // of the strain in their Green-Lagrange strain, whatever the eigensolver,
+  // so the rotated cases start at a strain of 1e-2.)
+  const FemModel model =
+      finalised(hex_block(2, 2, 1, 0.002, 0.002, 0.001), j2_material(), {clamp(box(-kInf, 1e-9))});
+  const Assembler assembler(model);
+  NonlinearOptions nl;
+  nl.kinematics = Kinematics::FiniteLogarithmic;
+  ExplicitDynamics dyn(model, assembler, nl, {}, ExplicitOptions());
+  REQUIRE(dyn.dedicated());
+  const Matrix3 rotation = Eigen::AngleAxisd(0.7, Vector3(3, -1, 2).normalized()).matrix();
+  Scalar worst = 0.0;
+  for (const Scalar magnitude : {1.0e-7, 1.0e-4, 1.0e-2, 0.3}) {
+    for (const Vector3& shape : {Vector3(1, 1, 1), Vector3(1, 1, -0.5), Vector3(1, 1 + 1e-9, 0.5),
+                                 Vector3(-0.5, 1, 1 + 1e-12)}) {
+      for (const bool rotated : {false, true}) {
+        if (rotated && magnitude < 1.0e-2) continue;
+        INFO("stretch 1 + " << magnitude << " x (" << shape.transpose() << ")"
+                            << (rotated ? ", rotated" : ""));
+        const Matrix3 f = (rotated ? rotation : Matrix3::Identity()) *
+                          (Matrix3::Identity() + magnitude * Matrix3(shape.asDiagonal()));
+        Vector u(model.dofs().num_dofs());
+        for (Index node = 0; node < model.mesh().num_nodes(); ++node) {
+          const Vector3 x = model.mesh().node(node);
+          u.segment<3>(3 * node) = (f - Matrix3::Identity()) * x;
+        }
+        const Vector fd = dyn.internal_force(u, {}, false);
+        const Vector fg = dyn.internal_force(u, {}, true);
+        const Scalar diff = (fd - fg).cwiseAbs().maxCoeff() / fg.cwiseAbs().maxCoeff();
+        INFO("relative difference " << diff);
+        REQUIRE(diff < 1.0e-13);
+        worst = std::max(worst, diff);
+      }
+    }
+  }
+  WARN("largest relative difference at equal stretches: " << worst);
+}
+
 TEST_CASE("other elements, laws and kinematics take the generic element dispatch",
           "[explicit]") {
   const FemModel model = finalised(hex_block(2, 1, 1, 0.002, 0.001, 0.001), j2_material(),
