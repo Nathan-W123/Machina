@@ -11,7 +11,8 @@
 ///                         collapse plateau, and the stress field on it against
 ///                         the exact fully plastic field - for Q4, Hex8 and
 ///                         Tet10 with mean dilatation, and without it (with
-///                         Tri3) to show volumetric locking;
+///                         Tri3) to show volumetric locking, and the Hex8
+///                         with incompatible modes (reported);
 ///   * `plastic-bending`   pure bending of a plane-stress beam by prescribed end
 ///                         rotations: the moment-curvature relation of an
 ///                         elastic-perfectly plastic rectangle, then unloading
@@ -96,10 +97,21 @@ struct CylinderVariant {
   bool mean_dilatation;
   std::vector<Index> ladder;  ///< cells through the wall
   bool recommended;           ///< the default choice for the element: judged
+  ElementFormulation formulation = ElementFormulation::Standard;
 };
 
 std::string variant_name(const CylinderVariant& v) {
+  if (v.formulation == ElementFormulation::IncompatibleModes) {
+    return to_string(v.type) + " incompatible modes";
+  }
   return to_string(v.type) + (v.mean_dilatation ? " mean dilatation" : " standard");
+}
+
+/// The element column of the cylinder's CSV files.
+std::string element_label(const CylinderVariant& v) {
+  return v.formulation == ElementFormulation::IncompatibleModes
+             ? to_string(v.type) + "_incompatible_modes"
+             : to_string(v.type);
 }
 
 }  // namespace
@@ -133,7 +145,8 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
       {ElementType::Tet10, false, {2, 4, 8}, true},
       {ElementType::Quad4, false, {4, 8, 16}, false},
       {ElementType::Tet10, true, {2, 4, 8}, false},
-      {ElementType::Tri3, false, {4, 8, 16}, false}};
+      {ElementType::Tri3, false, {4, 8, 16}, false},
+      {ElementType::Hex8, false, {4, 8, 16}, false, ElementFormulation::IncompatibleModes}};
   // The arc-length path runs past the collapse (target 1.5 p_L is never
   // reached by a locking-free element): 60 steps whose arc length may grow to
   // five times the first reach the plateau and run along it for a stretch.
@@ -168,9 +181,11 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
       const Index nt = 2 * nr;
       Mesh mesh = sector_mesh(v.type, nr, nt, a, b);
       const int dim = mesh.dim();
+      IntegrationOptions integration;
+      integration.formulation = v.formulation;
       FemModel model(std::move(mesh), material, 1.0,
                      dim == 2 ? StressState::PlaneStrain : StressState::ThreeDimensional,
-                     IntegrationOptions());
+                     integration);
       add_quarter_supports(model);
       LoadCaseSpec load;
       load.name = "bore_pressure";
@@ -220,7 +235,7 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
       const Scalar error = top - 1.0;
 
       for (const NonlinearStep& s : r.steps) {
-        paths.raw_row({to_string(v.type), v.mean_dilatation ? "yes" : "no",
+        paths.raw_row({element_label(v), v.mean_dilatation ? "yes" : "no",
                        fmt(static_cast<Scalar>(nr)), fmt(static_cast<Scalar>(s.index)),
                        fmt(s.load_factor, 12), fmt(s.monitors[0], 8),
                        fmt(static_cast<Scalar>(s.yielding_points))});
@@ -247,7 +262,7 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
         err_sq += (s_r - exact_r) * (s_r - exact_r) + (s_t - exact_t) * (s_t - exact_t) +
                   (szz - exact_z) * (szz - exact_z);
         if (finest) {
-          profile.raw_row({to_string(v.type), v.mean_dilatation ? "yes" : "no",
+          profile.raw_row({element_label(v), v.mean_dilatation ? "yes" : "no",
                            fmt(static_cast<Scalar>(nr)), fmt(radius, 8), fmt(s_r, 10),
                            fmt(s_t, 10), fmt(szz, 10), fmt(exact_r, 10), fmt(exact_t, 10),
                            fmt(exact_z, 10)});
@@ -267,7 +282,7 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
                                     stress_errors[last])
                    : std::nan("");
       const Scalar bore_disp = r.steps.empty() ? 0.0 : r.steps.back().monitors[0];
-      csv.raw_row({to_string(v.type), v.mean_dilatation ? "yes" : "no",
+      csv.raw_row({element_label(v), v.mean_dilatation ? "yes" : "no",
                    fmt(static_cast<Scalar>(nr)), fmt(static_cast<Scalar>(nt)), fmt(hs.back(), 8),
                    fmt(static_cast<Scalar>(model.dofs().num_dofs()), 9), fmt(top, 12),
                    fmt(error, 6), fmt(order, 4), fmt(rise, 4), fmt(bore_disp, 6),
@@ -332,7 +347,9 @@ StudyOutcome study_plastic_cylinder(const std::string& out_dir, json::Value& sum
                 "sigma_z at the final state against the fully plastic field sigma_r = "
                 "(2/sqrt 3) sigma_y ln(r/b), sigma_theta = sigma_r + 2 sigma_y/sqrt 3, "
                 "sigma_z = (sigma_r + sigma_theta)/2, RMS over sigma_y. Symmetry supports; "
-                "the 3-D sections one cell deep with u_z = 0."));
+                "the 3-D sections one cell deep with u_z = 0. Reported, not judged: the "
+                "Hex8 with incompatible modes, without mean dilatation (its modes relax the "
+                "isochoric constraint)."));
   summary.set("plastic_cylinder", block);
 
   note << "p_L = " << app::format(p_limit, 6) << " Pa, first yield "
