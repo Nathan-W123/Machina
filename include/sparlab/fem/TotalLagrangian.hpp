@@ -58,6 +58,10 @@ struct TotalLagrangianElement {
   /// [N]; empty without a temperature.
   Vector thermal_force_rate;
   Scalar energy = 0.0;    ///< \f$\int W\,t\,dV_0\f$ [J]
+  /// An element with internal modes: their parameters at this displacement
+  /// [m] and the local iterations that found them (Elastoplastic.hpp).
+  Vector internal;
+  int internal_iterations = 0;
 };
 
 /// Evaluate element `e` of `model` at element displacements `ue` (node-major,
@@ -66,11 +70,16 @@ struct TotalLagrangianElement {
 /// \param temperature nodal temperatures [K] or nullptr; the temperature
 ///        change entering the law is `temperature_scale * (T - T_ref)`.
 /// \param want_tangent assemble the tangent as well.
-/// \throws SolverError when an element inverts under a neo-Hookean law.
+/// \param internal an element with internal modes (the incompatible-mode
+///        Hex8): their committed parameters, the start of the local Newton
+///        iteration (IncompatibleModes.hpp; null: zero).
+/// \throws SolverError when an element inverts under a neo-Hookean law, or
+///         the local iteration of internal modes fails.
 TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
                                                 const Vector& ue, HyperelasticModel law,
                                                 const Vector* temperature,
-                                                Scalar temperature_scale, bool want_tangent);
+                                                Scalar temperature_scale, bool want_tangent,
+                                                const Vector* internal = nullptr);
 
 /// Stresses of element `e` averaged over its stiffness quadrature points:
 /// the second Piola-Kirchhoff stress and the Cauchy stress (Voigt), and the
@@ -83,8 +92,10 @@ struct TotalLagrangianStress {
   Scalar min_jacobian = 1.0;      ///< smallest det F over the element's points
 };
 
+/// With internal modes, `internal` holds their committed parameters.
 TotalLagrangianStress total_lagrangian_stress(const FemModel& model, Index e, const Vector& ue,
                                               HyperelasticModel law, const Vector* temperature,
-                                              Scalar temperature_scale);
+                                              Scalar temperature_scale,
+                                              const Vector* internal = nullptr);
 
 }  // namespace sparlab

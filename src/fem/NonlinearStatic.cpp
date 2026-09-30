@@ -870,6 +870,8 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
   }
   result.symmetric_tangent = factor.symmetric();
   result.linear_solver = factor.name();
+  result.max_local_iterations = system.max_local_iterations();
+  result.max_converged_local_iterations = system.max_committed_local_iterations();
   result.displacement = u;
   result.load_factor = lambda;
   result.completed = arc ? lambda >= target * (1.0 - 1.0e-12) : path_completed;
@@ -965,7 +967,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
     if (system.routed_through_return(e)) {
       const ElastoplasticStress st =
           elastoplastic_stress(model_, e, ue, system.committed(e), system.averaged(e),
-                               temperature, lambda, options_.kinematics);
+                               temperature, lambda, options_.kinematics, system.internal(e));
       result.element_cauchy.col(e) = own_voigt(st.cauchy);
       result.element_piola_kirchhoff.col(e) = own_voigt(st.piola_kirchhoff);
       if (dim == 2) result.element_cauchy_zz(e) = st.cauchy(2);
@@ -987,8 +989,9 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
       }
       continue;
     }
-    const TotalLagrangianStress st =
-        total_lagrangian_stress(model_, e, ue, options_.law, temperature, lambda);
+    const TotalLagrangianStress st = total_lagrangian_stress(model_, e, ue, options_.law,
+                                                             temperature, lambda,
+                                                             system.internal(e));
     result.element_cauchy.col(e) = st.cauchy;
     result.element_piola_kirchhoff.col(e) = st.piola_kirchhoff;
     result.element_cauchy_zz(e) = st.cauchy_zz;
@@ -1030,7 +1033,7 @@ NonlinearResult NonlinearStaticAnalysis::solve(std::size_t load_case) {
            "and 3-D, depending on the mesh pattern (a collapse load comes out too high); "
            "check one against Q4 or Hex8 with mean dilatation, or Tet10");
     } else if ((type == ElementType::Quad4 || type == ElementType::Hex8) &&
-               !result.mean_dilatation) {
+               !result.mean_dilatation && model_.element().num_internal_dofs() == 0) {
       warn("without mean dilatation the fully integrated " + to_string(type) +
            " locks under isochoric plastic flow in plane strain and 3-D: a collapse load "
            "comes out too high and the plastic plateau keeps rising");

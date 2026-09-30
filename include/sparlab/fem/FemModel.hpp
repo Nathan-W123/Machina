@@ -11,6 +11,9 @@
 /// and a positive thickness; a 3-D mesh takes `StressState::ThreeDimensional`
 /// and no thickness (the value must be 1). Either mismatch is rejected in the
 /// constructor, so a deck cannot pair a solid mesh with a plane idealisation.
+/// The element is that of `integration.formulation` (Element.hpp), and a
+/// through-thickness rule (`integration.thickness_points`) is accepted for a
+/// Hex8 mesh only.
 #pragma once
 
 #include "sparlab/core/Types.hpp"
@@ -125,6 +128,11 @@ class FemModel {
   Vector element_volumes() const;
 
  private:
+  /// Validates the sheet integration of `integration_` (thickness points:
+  /// Hex8 only, their range) and warns about elements whose natural thickness
+  /// axis is not along the global axis of the same index.
+  void check_sheet_integration() const;
+
   Mesh mesh_;
   std::vector<IsotropicMaterial> materials_;
   std::vector<int> element_material_;  ///< empty: every element uses materials_[0]

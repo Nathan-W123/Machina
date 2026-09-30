@@ -30,6 +30,11 @@
 /// integrated with the stiffness rule of the element, so that a field of
 /// free expansion that the element can represent (a uniform or linear
 /// \f$\Delta T\f$ on affine cells) is reproduced exactly with zero stress.
+/// An element with condensed internal modes (the incompatible-mode Hex8)
+/// takes the condensed operator, \f$f_{th} = \int\hat B^TD\varepsilon_0\f$
+/// (Element.hpp, InternalCondensation); the modes take no load from a
+/// uniform \f$\varepsilon_0\f$, whose \f$\int\tilde B^TD\varepsilon_0\f$
+/// vanishes.
 #pragma once
 
 #include "sparlab/core/Types.hpp"
@@ -53,7 +58,12 @@ Vector resolve_region_temperatures(const Mesh& mesh, const TemperatureSpec& spec
 /// Thermal equivalent load of a nodal temperature field.
 struct ThermalLoad {
   Vector force;              ///< f_th [N]
-  Scalar self_energy = 0.0;  ///< 1/2 int eps0^T D eps0 dV [J]
+  /// 1/2 int eps0^T D eps0 dV [J], less, for an element with internal
+  /// modes, the energy their relaxation releases,
+  /// \f$\tfrac12 f_\alpha^T K_{\alpha\alpha}^{-1} f_\alpha\f$ with
+  /// \f$f_\alpha = \int\tilde B^T D\varepsilon_0\f$: the elastic energy
+  /// is then \f$\tfrac12 u^TK^*u - f_{th}^Tu + \f$ it.
+  Scalar self_energy = 0.0;
 };
 
 /// Assemble \f$f_{th}\f$ and the self energy for nodal temperatures
@@ -66,6 +76,21 @@ ThermalLoad assemble_thermal_load(const FemModel& model, const Vector& temperatu
 /// point of an element for nodal temperatures `temperature` [K].
 Vector element_thermal_strain(const FemModel& model, Index element, const NaturalPoint& point,
                               const Vector& temperature);
+
+/// The internal (incompatible-mode) parameters of element e of a linear
+/// elastic model at the element displacement `ue`, with the thermal strain
+/// of the nodal temperatures `temperature` (nullptr: none):
+/// \f$\alpha = K_{\alpha\alpha}^{-1}(\int\tilde B^TD\varepsilon_0\,dV -
+/// K_{\alpha u}u_e)\f$ (Element.hpp, InternalCondensation). Empty for an
+/// element without internal modes. A stiffness factor on D cancels.
+Vector linear_internal_parameters(const FemModel& model, Index e, const Vector& ue,
+                                  const Vector* temperature);
+
+/// The small strain \f$Bu_e + \tilde B\alpha\f$ at a natural point of
+/// element e, with the internal parameters of `linear_internal_parameters`
+/// (empty: the compatible \f$Bu_e\f$ alone).
+Vector linear_point_strain(const FemModel& model, Index e, const NaturalPoint& point,
+                           const Vector& ue, const Vector& alpha);
 
 /// Temperature change \f$T - T_{ref}\f$ at a natural point of an element.
 Scalar element_temperature_change(const FemModel& model, Index element,

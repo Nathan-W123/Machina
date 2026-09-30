@@ -15,7 +15,7 @@ is a stronger statement than asserting agreement.
 Reproduce everything below with:
 
 ```bash
-make test              # the Catch2 suite: 293 cases, 21 454 assertions
+make test              # the Catch2 suite: 354 cases, 29 648 assertions
 make verify            # the studies, which exit non-zero if any tolerance is missed
 make cross-validation  # the same problems in CalculiX and scikit-fem, node by node
 ```
@@ -65,6 +65,10 @@ All numbers in this document come from `results/verification/summary.json`,
 | Harmonic response of a rod vs the exact discrete and continuum solutions (Q4, Hex8) | verification | largest relative difference to the exact discrete solution (continuum order `>= 1.9` on the finest pair also required) | `2.94e-10` | `1e-9` | PASS |
 | Transient of a rod under a ramped end force vs the exact continuum solution (Q4, Hex8) | verification | smallest observed convergence order, `h` and `dt` halved together | `2.004` | `>= 1.9` | PASS |
 | Non-linear oscillators, finite-strain elastic and elastoplastic, vs exact motion (Q4, Hex8) | verification | largest relative difference to the scalar HHT-alpha recursion (order `>= 1.8` to the exact motion also required) | `1.74e-11` | `1e-9` | PASS |
+| Slender cantilever, one incompatible-mode Hex8 through the depth, vs Timoshenko | validation | `|tip / Timoshenko - 1|` on 20 x 1 x 1, `nu = 0` (every `nx >= 20`, `nu` and `L/h` up to 1000 within 5 % also required) | `1.62e-03` | `0.02` | PASS |
+| MacNeal-Harder straight beam, incompatible-mode Hex8 | validation | worst `|tip / reference - 1|`: rectangular cells, both loads; parallelogram cells, in plane | `2.71e-02` | `0.03` | PASS |
+| Thin square plate, `t/a = 1/50`, two incompatible-mode Hex8 layers, vs Kirchhoff | validation | worst `|centre / Kirchhoff - 1|` on 16 x 16 x 2, clamped and simply supported | `9.25e-03` | `0.03` | PASS |
+| Elastoplastic bending and springback, one incompatible-mode layer, 2 x 2 x 5 rule, vs beam theory | verification | relative springback error vs `M/(E I)` (2 x 2 x 7 within 2 %, the 8-layer standard mesh within 0.5 % and half the standard one-layer error also required) | `3.46e-02` | `0.05` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -2128,6 +2132,159 @@ The forming analysis (`docs/forming.md`) is checked in `tests/test_forming.cpp`
 Every one of them also passes in a build without SuiteSparse
 (`-DSPARLAB_WITH_CHOLMOD=OFF`).
 
+## 27. The Hex8 with incompatible modes and the rule through a sheet
+
+The element of `docs/formulation.md` ("The Hex8 with incompatible modes",
+"A sheet's rule through its thickness") is checked in
+`tests/test_incompatible_modes.cpp` (28 cases, 2 895 assertions; the whole
+suite now has 354 cases and 29 648 assertions) and by four studies
+(`apps/verify_elements.cpp`) and a variant of a fifth.
+
+**Unit tests**, each against an exact answer, a central difference or an
+invariant:
+
+* *quadrature*: the 1- to 7-point line rules integrate polynomials of
+  degree `2n - 1` exactly; the box rule with equal orders is the cube rule
+  bit for bit, and puts its thickness points along the axis asked for; a
+  Hex8 with 5 thickness points has 20 stiffness and stress points, and on
+  a box (where 2 x 2 x 2 is exact) the same stiffness; a 3-D deck's
+  thickness rule gives 20 plastic points per element;
+* *the condensed stiffness* is symmetric with exactly six zero eigenvalues
+  on a box and a distorted cell; the modes take no part in a linear field on
+  a distorted cell (`alpha = 0`, exact strains); one element in pure bending
+  (`nu = 0.3`, `L/h = 1, 10, 100`) reproduces the exact 3-D field at its
+  nodes to round-off where the standard Hex8 locks; the stiffness is frame
+  invariant (`K(RX) = R K R^T`) and independent of the node numbering; 2-,
+  3- and 4-point rules agree on a box;
+* *patch tests*: the linear constant-strain patch on meshes perturbed by 0,
+  0.15 and 0.30, a free thermal expansion (uniform and linear) stress-free,
+  and a homogeneous finite deformation (elastic, J2, Hill48, all three
+  kinematics) with `alpha = 0` and the standard element's forces;
+* *consistent tangents* by central differences (`h = 1e-8`, relative
+  `1e-6`) after a committed step: small strain, finite (Green-Lagrange) and
+  logarithmic, each elastic, J2, Hill48 (through a 3- or 5-point thickness
+  rule) and Chaboche (non-symmetric, asserted so); the elastic forces are the
+  derivative of the stored energy; Saint Venant-Kirchhoff and neo-Hookean
+  through the total Lagrangian path; the thermal load rate is the derivative
+  of the force in the load factor;
+* *objectivity*: a rigid turn of 0.7 rad gives no force and no modes, and a
+  turn superposed on a plastic state turns the force and the parameters;
+  the tangent at rest is the linear `K*` under every kinematics;
+* *the local iteration*: one iteration for elastic small strain; at most
+  three for every converged step of a strip bent past yield and unloaded,
+  whose springback equals the linear elastic solution (`1e-8`); a reversal
+  to six times the strain of a committed plastic step in one increment
+  converges in 3 (small strain, J2 and Chaboche), 9 (logarithmic, J2) and
+  12 (logarithmic, Chaboche) iterations; a reversal of 2 % logarithmic
+  strain to 12 to 30 % (perfectly plastic J2, hardening J2, Chaboche,
+  Hill48; 5 and 7 thickness points), where `K_aa` is indefinite, in 9 to
+  18;
+* *the non-linear small-strain solution* of an elastic cantilever equals
+  the linear one (`1e-9`), within 2 % of Timoshenko on 8 x 1 x 1 cells;
+* *the history*: `evaluate` is bitwise identical on one and three threads;
+  a forming restart from the state after a bend reproduces the one-run
+  result to `1e-12`, and without the committed parameters to `1e-8`; a
+  state of the other formulation is refused;
+* *stability*: a neo-Hookean cube in uniaxial compression - the tangent of
+  the compression test loses definiteness between the stretches 0.66 and
+  0.65 (hourglassing), the standard Hex8's stays positive to 0.3; equibiaxial
+  thinning to a thickness stretch below 0.5 stays stable; a J2 cube
+  (logarithmic strains) in uniaxial compression, the lateral faces free,
+  between 0.80 and 0.79 without hardening and between 0.62 and 0.61 with
+  `H = 300 MPa`, always below the standard element's smallest eigenvalue;
+* *strain recovery*: the strain at a point includes the modes' thermal part
+  when given the temperature, and the stress there is `D (strain - thermal
+  strain)`;
+* *configuration*: the deck keys, the refusals (unknown formulation, 8 or -1
+  thickness points, an unknown direction, a Tet or plane mesh, mean
+  dilatation `all`, a one-point in-plane or thickness rule with the modes).
+
+**Slender cantilever** (`--study im-cantilever`). `L = 1 m`, `h = 0.1 m` (one
+element), `b = 0.05 m` (one element), `E = 70 GPa`, clamped root face, a
+`-1000 N` tip resultant; mean tip deflection over Timoshenko's:
+
+| Mesh | Incompatible modes, `nu = 0` | `nu = 0.3` | Standard, `nu = 0` | `nu = 0.3` |
+|------|---:|---:|---:|---:|
+| 10 x 1 x 1 | `0.9965` | `0.9870` | `0.666` | `0.658` |
+| 20 x 1 x 1 | `0.9984` | `0.9930` | `0.888` | `0.818` |
+| 40 x 1 x 1 | `0.9989` | `0.9953` | `0.969` | `0.872` |
+
+Against Euler-Bernoulli the incompatible 20 x 1 x 1 mesh gives `1.0044`. At
+`L/h = 100` and `1000` (20 x 1 x 1, `nu = 0`) the incompatible modes give
+`0.99937` and `0.99957` of Timoshenko, the standard Hex8 `0.0741` and
+`0.00080`: its error grows as `(L/h)^2`, the modes' does not. (At
+`L/h = 1000` the relative force balance of the direct solve is `2e-4`, from
+the conditioning; the solve accepts `1e-3`.)
+
+**MacNeal-Harder straight beam** (`--study im-macneal-harder`; MacNeal and
+Harder 1985). 6 x 0.2 x 0.1, `E = 1e7`, `nu = 0.3`, 6 x 1 x 1 cells, unit tip
+loads; tip deflection over the references `0.1081` (in plane) and
+`0.4321` (out of plane):
+
+| Cells | Incompatible, in plane | out of plane | Standard, in plane | out of plane |
+|-------|---:|---:|---:|---:|
+| rectangular | `0.978` | `0.973` | `0.093` | `0.025` |
+| parallelogram (45 deg) | `0.978` | `0.836` | `0.021` | `0.013` |
+| trapezoidal (+-45 deg) | `0.047` | `0.030` | `0.026` | `0.010` |
+
+Judged: rectangular cells and the parallelogram in plane (affine cells, on
+which Taylor's modes are exact in pure bending). Reported: the parallelogram
+out of plane, whose inclined clamped root couples bending with twist (the
+same body on 48 x 8 x 8 cells gives `0.945` out of plane and `0.950` in
+plane: it is not the reference beam), and the trapezoidal cells, which are
+not affine and on which the modes lose most of their effect (MacNeal 1987).
+
+**Thin plate** (`--study im-plate`). A square plate `a = 1 m`, `t = 0.02 m`
+(`t/a = 1/50`), steel, `1e4 Pa` on the top face, a quarter on `n x n x 2`
+cells; the centre deflection over Kirchhoff's `0.00126 q a^4/D` (clamped side
+faces) and `0.00406 q a^4/D` (`u_z = 0` on the edges' mid-surface nodes):
+
+| `n` | Incompatible, clamped | simply supported | Standard, clamped | simply supported |
+|----:|---:|---:|---:|---:|
+| 4 | `0.831` | `0.919` | `0.091` | `0.128` |
+| 8 | `0.977` | `1.000` | `0.276` | `0.366` |
+| 16 | `0.996` | `1.009` | `0.587` | `0.682` |
+
+The 3-D plate differs from Kirchhoff's by its transverse shear and its 3-D
+supports, of order `(t/a)^2`; the simply supported plate converges from
+above for that reason.
+
+**Springback of a strip** (`--study im-springback`). A steel strip 20 x 2 x
+2 mm (`E = 200 GPa`, `nu = 0.3`, `sigma_y = 250 MPa`, linear hardening
+`1 GPa`), small strain, bent by end rotations to `4 k_y` and released onto
+statically determinate supports by the forming driver; springback = change
+of the end-face relative rotation over `L`. Reference: beam theory,
+`M/(E I) = 1.85168 1/m` with the moment of the bilinear uniaxial stress over
+the section (the unloading elastic: the surface stress after it is
+`-117 MPa`), checked by the standard Hex8 on 8 layers of cubic cells (19 683
+unknowns): `1.85333 1/m`, `8.9e-4` from it (judged within `5e-3`). Its
+elastic core boundary `|z| = t/8` lies on an element boundary; a Richardson
+extrapolation from 4 and 8 layers, used before, gave `1.8468 1/m`, `2.7e-3`
+on the wrong side, because on 4 layers the kink lies inside the elements
+and their quadrature error is no `h^2` term:
+
+| Model | Unknowns | Springback [1/m] | Error |
+|-------|---:|---:|---:|
+| incompatible, 1 layer, 2 x 2 x 5 | 132 | `1.7877` | `3.46e-2` |
+| incompatible, 1 layer, 2 x 2 x 7 | 132 | `1.8356` | `8.7e-3` |
+| incompatible, 1 layer, 2 x 2 x 2 | 132 | `2.1792` | `0.18` |
+| incompatible, 2 layers, 2 x 2 x 3 | 198 | `1.8261` | `1.4e-2` |
+| standard, 1 layer, 2 x 2 x 5 | 132 | `2.1788` | `0.18` |
+
+One incompatible-mode layer represents the linear strain through the
+thickness and unloads exactly (`M/(E I)`); what is left is the Gauss
+quadrature of the kinked stress: the moment of a rigid-plastic shell outside
+the elastic core (`|z| < t/8`) is short by `3.5e-2` with 5 points and
+`8.8e-3` with 7, which the measured errors match. Two points a layer are
+far from enough. The 8-layer mesh takes 140 s of the study's 141 s (2
+threads, load average about 6).
+
+**Plastic collapse** (`--study plastic-cylinder`, reported variant). The
+incompatible-mode Hex8 without mean dilatation does not lock under the
+isochoric flow: collapse pressure within `3.52e-4` of the exact limit load
+on the finest mesh (order `2.00`), plateau rise `9e-10`, fully plastic
+stress `5.4e-4` of `sigma_y` (the averaged Hex8: `4.82e-4`, `6.0e-4`).
+
 ## What is not covered
 
 Stated plainly, since the absence matters as much as the presence:
@@ -2232,6 +2389,12 @@ Stated plainly, since the absence matters as much as the presence:
 * the mesh readers are tested on files written by the tests and by Gmsh
   4.15.2; files from other generators (Abaqus/CAE, HyperMesh, Salome) use the
   same keywords but have not been tried;
+* the incompatible-mode Hex8 is verified on patch tests, exact pure bending,
+  tangents and invariants, and validated in bending against beam and plate
+  theory and one converged springback case; the export to CalculiX
+  (`C3D8I`) is not cross-validated (whether CalculiX applies Taylor's
+  correction on distorted cells is not known here), and no forming run with
+  it is compared with another code or with a measured part;
 * no convergence study of the *optimised topology* against mesh size in the
   verification suite - that lives in the design study, where the
   `mesh_fixed_r` and `mesh_fixed_cells` arms address it directly.

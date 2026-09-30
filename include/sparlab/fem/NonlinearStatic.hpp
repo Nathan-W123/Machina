@@ -249,6 +249,11 @@ struct NonlinearResult {
   /// integration points have yielded.
   bool plastic = false;
   bool mean_dilatation = false;
+  /// Elements with internal modes (the incompatible-mode Hex8): the most
+  /// local Newton iterations an element took for its modes in any
+  /// evaluation, and in the evaluations of converged steps; 0 otherwise.
+  int max_local_iterations = 0;
+  int max_converged_local_iterations = 0;
   Vector element_plastic_strain;
   Scalar max_plastic_strain = 0.0;
   int plastic_points = 0;

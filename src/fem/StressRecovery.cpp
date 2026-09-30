@@ -86,19 +86,22 @@ Vector3 principal_stresses_3d(const Vector& s) {
 }
 
 Vector element_strain_at(const FemModel& model, Index element, const NaturalPoint& point,
-                         const Vector& displacement) {
+                         const Vector& displacement, const Vector* temperature) {
   check_displacement(model, displacement);
   Vector ue;
   gather_element_displacement(model, element, displacement, ue);
   const StrainOperator op =
       model.element().strain_operator(model.mesh().element_coordinates(element), point);
-  return op.b * ue;
+  if (model.element().num_internal_dofs() == 0) return op.b * ue;
+  // The internal modes relax the thermal strain as well.
+  return linear_point_strain(model, element, point, ue,
+                             linear_internal_parameters(model, element, ue, temperature));
 }
 
 Vector element_stress_at(const FemModel& model, Index element, const NaturalPoint& point,
                          const Vector& displacement, Scalar stiffness_scale,
                          const Vector* temperature) {
-  Vector strain = element_strain_at(model, element, point, displacement);
+  Vector strain = element_strain_at(model, element, point, displacement, temperature);
   if (temperature != nullptr) strain -= element_thermal_strain(model, element, point, *temperature);
   return stiffness_scale * (model.constitutive_of(element) * strain);
 }
@@ -151,6 +154,7 @@ StressField recover_stresses(const FemModel& model, const Assembler& assembler,
   const std::vector<IntegrationPoint> rule = model.element().integration_rule(model.integration());
   const Scalar t = mesh.dim() == 2 ? model.thickness() : 1.0;
 
+  const bool internal = model.element().num_internal_dofs() > 0;
   Vector ue;
   for (Index e = 0; e < ne; ++e) {
     gather_element_displacement(model, e, displacement, ue);
@@ -159,13 +163,22 @@ StressField recover_stresses(const FemModel& model, const Assembler& assembler,
     const IsotropicMaterial& material = model.material_of(e);
     const Matrix& d = model.constitutive_of(e);
     const bool thermal = temperature != nullptr && material.thermal_expansion() != 0.0;
+    // The condensed internal modes of the element (incompatible modes), which
+    // the strain at a point includes.
+    const Vector alpha =
+        internal ? linear_internal_parameters(model, e, ue, thermal ? temperature : nullptr)
+                 : Vector();
 
     Vector strain_avg = Vector::Zero(nv);
     Vector eps0_avg = Vector::Zero(nv);
     Scalar dt_avg = 0.0;
     for (const NaturalPoint& p : points) {
-      const StrainOperator op = model.element().strain_operator(coords, p);
-      strain_avg += op.b * ue;
+      if (internal) {
+        strain_avg += linear_point_strain(model, e, p, ue, alpha);
+      } else {
+        const StrainOperator op = model.element().strain_operator(coords, p);
+        strain_avg += op.b * ue;
+      }
       if (temperature != nullptr) {
         const Scalar dt = element_temperature_change(model, e, p, *temperature);
         dt_avg += dt;
@@ -224,8 +237,9 @@ StressField recover_stresses(const FemModel& model, const Assembler& assembler,
       Scalar energy = 0.0;
       for (const IntegrationPoint& ip : rule) {
         const StrainOperator op = model.element().strain_operator(coords, ip.point);
-        const Vector elastic =
-            op.b * ue - element_thermal_strain(model, e, ip.point, *temperature);
+        const Vector strain =
+            internal ? linear_point_strain(model, e, ip.point, ue, alpha) : Vector(op.b * ue);
+        const Vector elastic = strain - element_thermal_strain(model, e, ip.point, *temperature);
         energy += 0.5 * t * ip.weight * op.detJ * elastic.dot(d * elastic);
       }
       field.element_strain_energy(e) = s * energy;

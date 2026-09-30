@@ -2,6 +2,7 @@
 
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
+#include "sparlab/elements/Quadrature.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -781,6 +782,25 @@ Configuration parse_configuration(const json::Value& document, const std::string
     // the existing 2-D decks.
     config.integration.edge_points =
         integ.integer_or("face_points", integ.integer_or("edge_points", 2));
+    // A Hex8 sheet's rule through its thickness (0: the in-plane count) and
+    // the element formulation; FemModel checks them against the mesh.
+    config.integration.thickness_points = integ.integer_or("thickness_points", 0);
+    if (config.integration.thickness_points < 0 ||
+        config.integration.thickness_points > kMaxThicknessPoints) {
+      std::ostringstream os;
+      os << "'" << integ.path() << ".thickness_points' is "
+         << config.integration.thickness_points << "; it must be 1 to " << kMaxThicknessPoints;
+      throw ConfigError(os.str());
+    }
+    const std::string direction = integ.string_or("thickness_direction", "z");
+    if (direction == "x" || direction == "y" || direction == "z") {
+      config.integration.thickness_axis = direction[0] - 'x';
+    } else {
+      throw ConfigError("'" + integ.path() + ".thickness_direction' is \"" + direction +
+                        "\"; expected \"x\", \"y\" or \"z\"");
+    }
+    config.integration.formulation =
+        parse_element_formulation(model.string_or("element_formulation", "standard"));
   }
 
   // --- boundary conditions ------------------------------------------------

@@ -193,6 +193,9 @@ struct FormingOptions {
 struct AnalysisState {
   Vector displacement;                                ///< full, from the reference [m]
   std::vector<std::vector<PlasticState>> plastic;     ///< [element][point]; empty: elastic
+  /// [element]: the committed parameters of the incompatible modes [m]
+  /// (IncompatibleModes.hpp); empty for the standard element formulation.
+  std::vector<Vector> internal;
   ToolHistory friction;                               ///< per tool, keyed by node
   Scalar time = 0.0;                                  ///< pseudo-time [s]
   /// The last converged full residual f_int - f_c (the reactions at the

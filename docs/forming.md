@@ -443,8 +443,35 @@ What the numbers say:
 * **Hex8 through the thickness.** A sheet meshed with a few fully integrated
   Hex8 layers is stiff in bending (shear locking grows with the element
   aspect ratio); mean dilatation cures volumetric, not shear, locking.
-  Several layers and moderate aspect ratios are needed for springback
-  accuracy; there is no enhanced-strain or solid-shell element.
+  `model.element_formulation: "incompatible_modes"` gives the Hex8 that
+  bends with one element through the sheet, and
+  `model.integration.thickness_points` up to seven Gauss points through each
+  layer (`docs/formulation.md`; the springback study of `docs/verification.md`,
+  section 27: one layer with 5 / 7 points within 3.5 % / 0.9 % of beam
+  theory, the standard layer 18 %). The committed mode
+  parameters are part of the restartable state. On the smoke deck
+  (`spif_smoke.json`, 2 threads, load average 3.4 to 3.9 from other jobs):
+  the standard 2-layer mesh (mean dilatation) runs in 111 s and springs
+  back by up to 0.181 mm; with incompatible modes on 2 layers 171 s (180
+  increments and 1 619 Newton iterations against 137 and 1 274, 3 cuts),
+  0.210 mm; on 1 layer with a 2 x 2 x 5 rule 111 s, 0.204 mm (the standard
+  element on that mesh: 89 s, 0.164 mm). With the logarithmic strain the
+  incompatible-mode 1-layer run takes 338 s (298 increments, 16 cuts: 11
+  from the local iteration of the modes, 5 element inversions; springback
+  0.193 mm), where the Green-Lagrange one takes 169 s (124 increments, no
+  cut; 0.203 mm; both 2 threads, load average 5.1 to 5.8): the remaining
+  local failures are at global trial states under the tool where all 20
+  points yield and `K_aa` is nearly singular (smallest eigenvalue about
+  `1e-6` of the largest, changing sign between iterations) - the hourglass
+  instability of the modes in compression (`docs/formulation.md`), which the
+  step cut resolves. One element evaluation (J2, a single pinned thread,
+  load average about 6, three local iterations) costs 2.5 times the
+  averaged standard one on 8 points (65 against 26 us), 2.3 times on 20
+  (145 against 63 us), and 1.9 and 1.8 times under logarithmic strains
+  (114 against 59, 265 against 149 us). There is
+  no solid-shell element (assumed natural strain), which curved thin walls
+  with tapered cells would need: the modes lose their effect on trapezoidal
+  cells, and in large compression the finite element can hourglass.
 * **No remeshing, no trimming, no element deletion**; no thermal effects (the
   analysis applies no temperature); no tool spin (tools translate, so the
   friction direction is that of the translation only); no tool wear or

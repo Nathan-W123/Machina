@@ -1,5 +1,6 @@
 #include "sparlab/fem/TotalLagrangian.hpp"
 
+#include "IncompatibleModes.hpp"
 #include "sparlab/core/Exceptions.hpp"
 
 #include <Eigen/Dense>
@@ -79,11 +80,17 @@ Matrix green_lagrange_operator(const Matrix& f, const Matrix& g) {
 TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
                                                 const Vector& ue, HyperelasticModel law,
                                                 const Vector* temperature,
-                                                Scalar temperature_scale, bool want_tangent) {
+                                                Scalar temperature_scale, bool want_tangent,
+                                                const Vector* internal) {
   const Mesh& mesh = model.mesh();
   const Element& element = model.element();
   if (model.dofs_per_node() != model.dim()) {
     throw ConfigError("the total Lagrangian formulation is written for continuum elements");
+  }
+  if (element.num_internal_dofs() > 0) {
+    return detail::incompatible_total_lagrangian_element(model, e, ue, law, temperature,
+                                                         temperature_scale, want_tangent,
+                                                         internal);
   }
   const int dim = mesh.dim();
   const int n = mesh.nodes_per_elem();
@@ -156,9 +163,13 @@ TotalLagrangianElement total_lagrangian_element(const FemModel& model, Index e,
 
 TotalLagrangianStress total_lagrangian_stress(const FemModel& model, Index e, const Vector& ue,
                                               HyperelasticModel law, const Vector* temperature,
-                                              Scalar temperature_scale) {
+                                              Scalar temperature_scale, const Vector* internal) {
   const Mesh& mesh = model.mesh();
   const Element& element = model.element();
+  if (element.num_internal_dofs() > 0) {
+    return detail::incompatible_total_lagrangian_stress(model, e, ue, law, temperature,
+                                                        temperature_scale, internal);
+  }
   const int dim = mesh.dim();
   const int n = mesh.nodes_per_elem();
   const int nv = voigt_components(dim);

@@ -2,10 +2,13 @@
 
 #include "sparlab/core/Exceptions.hpp"
 #include "sparlab/core/Logging.hpp"
+#include "sparlab/elements/Hex8.hpp"
+#include "sparlab/elements/Quadrature.hpp"
 #include "sparlab/fem/HeatConduction.hpp"
 #include "sparlab/fem/LinearSolver.hpp"
 #include "sparlab/fem/Loads.hpp"
 
+#include <cmath>
 #include <numeric>
 #include <sstream>
 #include <utility>
@@ -27,7 +30,7 @@ FemModel::FemModel(Mesh mesh, IsotropicMaterial material, Scalar thickness,
       thickness_(thickness),
       stress_state_(stress_state),
       integration_(integration),
-      element_(make_element(mesh_.element_type())),
+      element_(make_element(mesh_.element_type(), integration)),
       d_{materials_.front().constitutive(stress_state)},
       dofs_(mesh_.num_nodes(), element_->dofs_per_node()) {
   if (stress_state_dimension(stress_state_) != mesh_.dim()) {
@@ -50,6 +53,81 @@ FemModel::FemModel(Mesh mesh, IsotropicMaterial material, Scalar thickness,
     throw ConfigError(os.str());
   }
   mesh_.validate();
+  check_sheet_integration();
+}
+
+void FemModel::check_sheet_integration() const {
+  const IntegrationOptions& opts = integration_;
+  // The gradients of the incompatible modes vanish at the element centre, so
+  // a one-point rule along any natural axis leaves the modes without
+  // stiffness there (K_aa singular).
+  if (opts.formulation == ElementFormulation::IncompatibleModes &&
+      (opts.stiffness_points == 1 || opts.thickness_points == 1)) {
+    throw ConfigError(std::string("the incompatible-mode Hex8 needs at least two integration "
+                                  "points along every natural axis: the gradients of its modes "
+                                  "vanish at the element centre and a one-point rule leaves "
+                                  "them without stiffness; set 'model.integration.") +
+                      (opts.stiffness_points == 1 ? "stiffness_points'" : "thickness_points'") +
+                      " to 2 or more");
+  }
+  if (opts.thickness_points == 0) return;
+  if (mesh_.element_type() != ElementType::Hex8) {
+    throw ConfigError("'model.integration.thickness_points' sets the stiffness rule through "
+                      "the thickness of a Hex8 sheet; the mesh is " +
+                      to_string(mesh_.element_type()) + ": remove the key");
+  }
+  if (opts.thickness_points < 1 || opts.thickness_points > kMaxThicknessPoints) {
+    std::ostringstream os;
+    os << "'model.integration.thickness_points' is " << opts.thickness_points
+       << "; it must be 1 to " << kMaxThicknessPoints;
+    throw ConfigError(os.str());
+  }
+  if (opts.thickness_axis < 0 || opts.thickness_axis > 2) {
+    std::ostringstream os;
+    os << "the thickness axis is " << opts.thickness_axis << "; expected 0, 1 or 2 (x, y, z)";
+    throw ConfigError(os.str());
+  }
+  if (opts.stiffness_points < 1 || opts.stiffness_points > 4) {
+    std::ostringstream os;
+    os << "'model.integration.stiffness_points' is " << opts.stiffness_points
+       << "; it must be 1 to 4";
+    throw ConfigError(os.str());
+  }
+  // The rule refines the element's natural axis thickness_axis, which the
+  // structured generator aligns with the global axis of the same index. An
+  // element whose natural axis is not the one closest to that global axis
+  // (a mesh from a file with another node order) gets its extra points along
+  // another direction: still a valid rule, but not the one meant.
+  const int axis = opts.thickness_axis;
+  const Eigen::Matrix<Scalar, 8, 3> dn = hex8_shape_gradients_natural(0.0, 0.0, 0.0);
+  Index misaligned = 0;
+  Index first = -1;
+  for (Index e = 0; e < mesh_.num_elements(); ++e) {
+    const Matrix3 jac = mesh_.element_coordinates(e) * dn;  // column k: dx/dxi_k
+    int best = 0;
+    Scalar best_cos = -1.0;
+    for (int k = 0; k < 3; ++k) {
+      const Scalar norm = jac.col(k).norm();
+      const Scalar c = norm > 0.0 ? std::abs(jac(axis, k)) / norm : 0.0;
+      if (c > best_cos) {
+        best_cos = c;
+        best = k;
+      }
+    }
+    if (best != axis) {
+      if (first < 0) first = e;
+      ++misaligned;
+    }
+  }
+  if (misaligned > 0) {
+    static const char* const kAxis[3] = {"x", "y", "z"};
+    static const char* const kNatural[3] = {"xi", "eta", "zeta"};
+    log::warn(misaligned, " of ", mesh_.num_elements(), " Hex8 element(s) (the first is element ",
+              first, ") have their ", kNatural[axis], " axis, which carries the ",
+              opts.thickness_points, " thickness points, not along ", kAxis[axis],
+              ": their extra points refine another direction; order the nodes so that ",
+              kNatural[axis], " crosses the sheet, or change thickness_direction");
+  }
 }
 
 void FemModel::set_material(const IsotropicMaterial& material) {

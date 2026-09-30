@@ -90,6 +90,7 @@ add_library(sparlab STATIC
   src/elements/Element.cpp
   src/elements/Quad4.cpp
   src/elements/Hex8.cpp
+  src/elements/Hex8Incompatible.cpp
   src/elements/Tri3.cpp
   src/elements/Tet4.cpp
   src/elements/Tet10.cpp
@@ -111,6 +112,7 @@ add_library(sparlab STATIC
   src/fem/TotalLagrangian.cpp
   src/fem/NonlinearStatic.cpp
   src/fem/Elastoplastic.cpp
+  src/fem/IncompatibleModes.cpp
   src/fem/Dynamics.cpp
   src/fem/Contact.cpp
   src/fem/RigidTool.cpp
@@ -212,7 +214,7 @@ if(SPARLAB_BUILD_APPS)
   target_include_directories(sparlab_form PRIVATE ${CMAKE_BINARY_DIR}/generated)
   target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp
                                      apps/verify_plasticity.cpp apps/verify_logarithmic.cpp
-                                     apps/verify_dynamics.cpp)
+                                     apps/verify_dynamics.cpp apps/verify_elements.cpp)
 endif()
 
 # ----------------------------------------------------------------------------

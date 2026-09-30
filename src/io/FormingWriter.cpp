@@ -261,6 +261,9 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
   json::Value jm = json::Value::make_object();
   jm.set("source", str(config.describe_mesh()));
   jm.set("element_type", str(to_string(mesh.element_type())));
+  jm.set("element_formulation", str(to_string(model.integration().formulation)));
+  jm.set("stiffness_rule_points",
+         num(static_cast<Scalar>(model.element().integration_rule(model.integration()).size())));
   jm.set("dim", num(dim));
   jm.set("nodes", num(mesh.num_nodes()));
   jm.set("elements", num(mesh.num_elements()));
