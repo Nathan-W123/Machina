@@ -621,14 +621,42 @@ TEST_CASE("the dedicated Hex8 kernel gives the internal forces of the element di
   WARN("largest relative difference of the dedicated kernel: " << worst);
 }
 
-TEST_CASE("other elements and kinematics take the generic element dispatch", "[explicit]") {
+TEST_CASE("other elements, laws and kinematics take the generic element dispatch",
+          "[explicit]") {
   const FemModel model = finalised(hex_block(2, 1, 1, 0.002, 0.001, 0.001), j2_material(),
                                    {clamp(box(-kInf, 1.0e-9))});
   const Assembler assembler(model);
   NonlinearOptions nl;
   nl.kinematics = Kinematics::FiniteLogarithmic;
+  // Logarithmic kinematics: in the kernel for elastoplastic elements, not
+  // for elastic ones.
   ExplicitDynamics log_kin(model, assembler, nl, {}, ExplicitOptions());
-  REQUIRE_FALSE(log_kin.dedicated());
+  REQUIRE(log_kin.dedicated());
+  const FemModel elastic = finalised(hex_block(2, 1, 1, 0.002, 0.001, 0.001), default_material(),
+                                     {clamp(box(-kInf, 1.0e-9))});
+  const Assembler elastic_assembler(elastic);
+  REQUIRE_FALSE(ExplicitDynamics(elastic, elastic_assembler, nl, {}, ExplicitOptions()).dedicated());
+  // Neo-Hookean elastic elements at finite strain.
+  NonlinearOptions neo;
+  neo.law = HyperelasticModel::NeoHookean;
+  REQUIRE_FALSE(ExplicitDynamics(elastic, elastic_assembler, neo, {}, ExplicitOptions()).dedicated());
+  // A Q4 mesh.
+  StructuredMeshSpec spec;
+  spec.nx = 2;
+  spec.ny = 1;
+  spec.lx = 0.002;
+  spec.ly = 0.001;
+  FemModel quad(make_structured_quad_mesh(spec), default_material(), 0.001,
+                StressState::PlaneStrain, IntegrationOptions());
+  quad.constraints() = {clamp(box(-kInf, 1.0e-9), {0, 1})};
+  LoadCaseSpec none;
+  none.name = "none";
+  none.prescribed_displacement_only = true;
+  quad.load_case_specs().push_back(none);
+  quad.finalize();
+  const Assembler quad_assembler(quad);
+  REQUIRE_FALSE(ExplicitDynamics(quad, quad_assembler, small_strain(), {}, ExplicitOptions())
+                    .dedicated());
   ExplicitOptions off;
   off.dedicated_kernel = false;
   ExplicitDynamics generic(model, assembler, small_strain(), {}, off);
