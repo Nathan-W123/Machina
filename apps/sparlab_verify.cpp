@@ -2551,7 +2551,8 @@ int main(int argc, char** argv) {
             "bimetal-strip | self-weight | elastica | hyperelastic-cylinder | "
             "arch-snap-through | plastic-cylinder | plastic-bending | plastic-cycle | "
             "chaboche-cycle | hill-directional | logarithmic-uniaxial | logarithmic-tube | "
-            "transient-modal | rod-harmonic | rod-transient | nonlinear-oscillator"},
+            "transient-modal | rod-harmonic | rod-transient | nonlinear-oscillator | "
+            "im-cantilever | im-macneal-harder | im-plate | im-springback"},
            {"--output <dir>", "output directory (default results/verification)"},
            {"--sensitivity-tolerance <t>",
             "pass threshold on the max relative gradient error (default 1e-5)"},
@@ -2692,6 +2693,18 @@ int main(int argc, char** argv) {
     }
     if (all || study == "nonlinear-oscillator") {
       outcomes.push_back(verify::study_nonlinear_oscillator(out_dir, summary));
+    }
+    if (all || study == "im-cantilever") {
+      outcomes.push_back(verify::study_im_cantilever(out_dir, summary));
+    }
+    if (all || study == "im-macneal-harder") {
+      outcomes.push_back(verify::study_im_macneal_harder(out_dir, summary));
+    }
+    if (all || study == "im-plate") {
+      outcomes.push_back(verify::study_im_plate(out_dir, summary));
+    }
+    if (all || study == "im-springback") {
+      outcomes.push_back(verify::study_im_springback(out_dir, summary));
     }
     if (outcomes.empty()) {
       throw ConfigError("unknown study '" + study +

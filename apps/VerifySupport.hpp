@@ -5,7 +5,8 @@
 /// volume, pressure and thermal loads live in verify_loads.cpp, those of the
 /// geometrically non-linear analysis in verify_nonlinear.cpp, those of
 /// plasticity in verify_plasticity.cpp and those of dynamics in
-/// verify_dynamics.cpp. All report a
+/// verify_dynamics.cpp, those of the incompatible-mode Hex8 in
+/// verify_elements.cpp. All report a
 /// `StudyOutcome` that the driver prints and writes to summary.json.
 #pragma once
 
@@ -77,6 +78,15 @@ StudyOutcome study_transient_modal(const std::string& out_dir, json::Value& summ
 StudyOutcome study_rod_harmonic(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_rod_transient(const std::string& out_dir, json::Value& summary);
 StudyOutcome study_nonlinear_oscillator(const std::string& out_dir, json::Value& summary);
+/// \}
+
+/// Studies of the incompatible-mode Hex8 and the through-thickness rule in
+/// bending (verify_elements.cpp).
+/// \{
+StudyOutcome study_im_cantilever(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_im_macneal_harder(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_im_plate(const std::string& out_dir, json::Value& summary);
+StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summary);
 /// \}
 
 /// Quarter sections of a cylinder (verify_loads.cpp).

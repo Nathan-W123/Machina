@@ -214,7 +214,7 @@ if(SPARLAB_BUILD_APPS)
   target_include_directories(sparlab_form PRIVATE ${CMAKE_BINARY_DIR}/generated)
   target_sources(sparlab_verify PRIVATE apps/verify_loads.cpp apps/verify_nonlinear.cpp
                                      apps/verify_plasticity.cpp apps/verify_logarithmic.cpp
-                                     apps/verify_dynamics.cpp)
+                                     apps/verify_dynamics.cpp apps/verify_elements.cpp)
 endif()
 
 # ----------------------------------------------------------------------------
