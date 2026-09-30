@@ -615,6 +615,7 @@ void parse_explicit_step(const ConfigNode& ex, FormingStep& step, const std::str
     o.mass_scaling.target_time_step = ms.number_or("target_time_step", 0.0);
     o.mass_scaling.max_added_mass_fraction =
         ms.number_or("max_added_mass_fraction", o.mass_scaling.max_added_mass_fraction);
+    o.mass_scaling.dynamic = ms.boolean_or("dynamic", o.mass_scaling.dynamic);
   }
   const ConfigNode ss = ex.child("stable_step");
   if (ss.exists()) {

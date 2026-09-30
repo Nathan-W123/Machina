@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <sstream>
 
@@ -718,7 +719,8 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
   const Mesh& mesh = model_.mesh();
   const Index* connectivity = mesh.element_nodes(0);
   const StressState state = model_.stress_state();
-  std::string failure;
+  // The first failure, rethrown as it was (its type and message).
+  std::exception_ptr failure;
 #ifdef SPARLAB_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -753,14 +755,19 @@ void ExplicitInternalForce::dedicated_forces(const Vector& u, Scalar lambda, boo
         }
       }
       element_energy_[ue] = element_kernel(job, element_force_.data() + ue * 24);
+    } catch (const SolverError&) {
+#ifdef SPARLAB_HAVE_OPENMP
+#pragma omp critical(sparlab_explicit_failure)
+#endif
+      if (!failure) failure = std::current_exception();
     } catch (const std::exception& ex) {
 #ifdef SPARLAB_HAVE_OPENMP
 #pragma omp critical(sparlab_explicit_failure)
 #endif
-      if (failure.empty()) failure = ex.what();
+      if (!failure) failure = std::make_exception_ptr(SolverError(ex.what()));
     }
   }
-  if (!failure.empty()) throw SolverError(failure);
+  if (failure) std::rethrow_exception(failure);
 
   // Gather: every node sums its elements' forces in ascending element order.
   if (internal.size() != 3 * nn_) internal.resize(3 * nn_);

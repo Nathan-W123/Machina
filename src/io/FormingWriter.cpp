@@ -92,13 +92,14 @@ std::vector<std::string> write_forming_step(const ResultWriter& writer, const Fe
     CsvWriter csv(writer.file(stem + "_energy.csv"),
                   {"step", "t_s", "pseudo_t_s", "time_step_s", "kinetic_J", "internal_work_J",
                    "stored_J", "plastic_dissipation_J", "contact_normal_work_J",
-                   "contact_friction_work_J", "damping_J", "external_work_J", "energy_error_J",
-                   "kinetic_internal_ratio"});
+                   "contact_friction_work_J", "damping_J", "external_work_J",
+                   "mass_scaling_work_J", "energy_error_J", "kinetic_internal_ratio"});
     for (const ExplicitRecord& r : s.explicit_result.records) {
       csv.raw_row({std::to_string(r.step), number(r.time), number(r.pseudo_time),
                    number(r.time_step), number(r.kinetic), number(r.internal), number(r.stored),
                    number(r.plastic), number(r.contact_normal), number(r.contact_friction),
-                   number(r.damping), number(r.external), number(r.error),
+                   number(r.damping), number(r.external), number(r.mass_scaling),
+                   number(r.error),
                    number(r.internal > 0.0 ? r.kinetic / r.internal : 0.0)});
     }
     csv.close();
@@ -258,6 +259,8 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
       je.set("step_updates", num(er.step_updates));
       je.set("mass_scaling", str(to_string(eo.mass_scaling.mode)));
       je.set("target_time_step_s", num(eo.mass_scaling.target_time_step));
+      je.set("dynamic_mass_scaling", json::Value::make_bool(eo.mass_scaling.dynamic));
+      je.set("mass_updates", num(er.mass_updates));
       je.set("mass_scale_max", num(er.max_mass_scale));
       je.set("scaled_elements", num(er.scaled_elements));
       je.set("physical_mass_kg", num(er.physical_mass));

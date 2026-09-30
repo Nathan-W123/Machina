@@ -40,7 +40,11 @@
 /// selective (conventional, per element),
 /// \f$s_e = \max\big(1, (\Delta t_{target}/\Delta t_e)^2\big)\f$, which adds
 /// mass only to the elements that limit the step (the added mass is
-/// reported, and warned about above a fraction). Mass scaling and a faster
+/// reported, and warned about above a fraction); with `dynamic` selective
+/// scaling the scales are raised at every stable-step update where an
+/// element's step has fallen below the target (as a sheet thins under the
+/// tool), keeping the velocities and booking the added kinetic energy
+/// \f$W_m = \tfrac12\sum\Delta m\,v^2\f$ in the balance. Mass scaling and a faster
 /// tool (time scaling) raise the inertia forces alike - by \f$s\f$ and by
 /// \f$v^2\f$ - so the measure of a run's dynamics is the equivalent speed
 /// \f$v\sqrt{s}\f$, and its cost (the number of steps) is inversely
@@ -90,7 +94,7 @@
 /// (normal and friction parts, on the body) W_c - trapezoidal sums
 /// \f$\Delta u\cdot(f_n + f_{n+1})/2\f$ - and the damping dissipation
 /// \f$D = \sum\Delta u\cdot\alpha M v_{n+1/2}\f$:
-/// \f$E_{err} = T - T_0 + W_{int} + D - W_{ext} - W_c\f$, relative to the
+/// \f$E_{err} = T - T_0 + W_{int} + D - W_{ext} - W_c - W_m\f$, relative to the
 /// largest energy of the run so far. The plastic dissipation is W_int less
 /// the change of the stored (elastic and hardening) energy. Quasi-static
 /// validity is judged by \f$T/W_{int}\f$ after the first contact and by the
@@ -160,6 +164,11 @@ struct MassScalingOptions {
   Mode mode = Mode::None;
   Scalar target_time_step = 0.0;          ///< [s]; required with a mode other than None
   Scalar max_added_mass_fraction = 0.05;  ///< added / physical mass above which a run warns
+  /// Selective, finite kinematics: at every stable-step update, raise the
+  /// scale of the elements whose step (thinned, distorted) has fallen below
+  /// the target, so the step stays at the target (the velocities are kept;
+  /// the added mass's kinetic energy is booked in the balance).
+  bool dynamic = false;
 };
 std::string to_string(MassScalingOptions::Mode mode);
 /// "none", "uniform" or "selective".
@@ -265,6 +274,8 @@ struct ExplicitRecord {
   Scalar contact_normal = 0.0;    ///< work of the normal contact forces on the body [J]
   Scalar contact_friction = 0.0;  ///< work of the friction forces on the body [J]
   Scalar damping = 0.0;      ///< D [J]
+  /// Kinetic energy of the mass added by dynamic mass scaling [J].
+  Scalar mass_scaling = 0.0;
   Scalar external = 0.0;     ///< W_ext: loads and reactions [J]
   Scalar error = 0.0;        ///< E_err [J]
   Scalar max_displacement = 0.0;    ///< [m]
@@ -293,8 +304,11 @@ struct ExplicitResult {
   /// The same with the scaled mass [s].
   Scalar scaled_stable_time_step = 0.0;
   int step_updates = 0;              ///< stable-step re-estimates
+  int mass_updates = 0;              ///< updates that added mass (dynamic scaling)
   Scalar physical_mass = 0.0;        ///< [kg]
-  Scalar scaled_mass = 0.0;          ///< [kg]
+  /// The scaled mass [kg] and what follows from it - at the end of the run
+  /// (with dynamic scaling; the start's otherwise, the same).
+  Scalar scaled_mass = 0.0;
   Scalar added_mass_fraction = 0.0;  ///< (scaled - physical) / physical
   Scalar max_mass_scale = 1.0;       ///< largest s_e
   int scaled_elements = 0;           ///< elements with s_e > 1

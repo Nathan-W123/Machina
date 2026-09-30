@@ -2,8 +2,9 @@
 // "Explicit forming"): configs/forming/spif_cone_60.json with its `form` and
 // `retract` steps integrated by central differences (`form_explicit`) - the
 // tool travelling along its path at 1 m/s, the mass scaled selectively to a
-// 1 us time step - and the springback released implicitly onto the same 3-2-1
-// supports. The same 60 x 60 x 1 mm blank (60 x 60 x 2 Hex8), 5 mm tool and
+// 1 us time step and raised where the thinning wall's elements would lower it
+// (dynamic scaling) - and the springback released implicitly onto the same
+// 3-2-1 supports. The same 60 x 60 x 1 mm blank (60 x 60 x 2 Hex8), 5 mm tool and
 // ten 1 mm contours to 10 mm depth (spif_cone_60_toolpath.csv).
 {
   "name": "spif_cone_60_explicit",
@@ -25,7 +26,7 @@
       { "name": "form", "type": "form_explicit", "tools": ["tool"], "time": [0.0, 11.9],
         "explicit": { "tool_speed": 1.0,
                       "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6,
-                                        "max_added_mass_fraction": 1000.0 },
+                                        "max_added_mass_fraction": 1000.0, "dynamic": true },
                       "history_every": 200 },
         "boundary_conditions": [
           { "name": "frame", "fix": ["x", "y", "z"], "mode": "hold",
@@ -34,7 +35,7 @@
       { "name": "retract", "type": "form_explicit", "tools": ["tool"], "time": [11.9, 12.0],
         "explicit": { "tool_speed": 1.0,
                       "mass_scaling": { "mode": "selective", "target_time_step": 1.0e-6,
-                                        "max_added_mass_fraction": 1000.0 },
+                                        "max_added_mass_fraction": 1000.0, "dynamic": true },
                       "history_every": 200 },
         "boundary_conditions": [
           { "name": "frame", "fix": ["x", "y", "z"], "mode": "hold",

@@ -435,6 +435,10 @@ void ExplicitOptions::validate(const std::string& what) const {
                              "(stable_step method \"element_eigenvalue\" or \"element_length\"); "
                              "power iteration estimates the whole model's only");
   }
+  if (mass_scaling.dynamic && mass_scaling.mode != MassScalingOptions::Mode::Selective) {
+    throw ConfigError(what + ": 'mass_scaling.dynamic' raises the scales of selective mass "
+                             "scaling during the run; it needs mode \"selective\"");
+  }
   if (!(mass_scaling.max_added_mass_fraction >= 0.0) ||
       !finite(mass_scaling.max_added_mass_fraction)) {
     throw ConfigError(what + ": 'mass_scaling.max_added_mass_fraction' must be >= 0");
@@ -805,7 +809,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     }
     dt = options_.time_step;
   }
-  const Vector m = assembler_.assemble_mass(MassType::Lumped, &scale).diagonal();
+  Vector m = assembler_.assemble_mass(MassType::Lumped, &scale).diagonal();
   res.physical_mass = assembler_.total_mass();
   res.scaled_mass = assembler_.total_mass(&scale);
   res.added_mass_fraction = (res.scaled_mass - res.physical_mass) / res.physical_mass;
@@ -823,13 +827,17 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     res.warnings.push_back(os.str());
     log::warn("explicit: ", os.str());
   }
-  const Vector m_inverse = m.cwiseInverse();
+  Vector m_inverse = m.cwiseInverse();
   contact.set_masses(m);
+  const Scalar initial_added_mass = res.added_mass_fraction;
   res.time_step = dt;
   res.min_time_step = dt;
   const bool update =
       nonlinear_.kinematics != Kinematics::SmallStrain && sso.update_every > 0 &&
       options_.time_step == 0.0;
+  // Dynamic selective scaling: at the updates, mass is added where an
+  // element's step (thinned, distorted) has fallen below the target.
+  const bool rescale = update && mso.mode == MassScalingOptions::Mode::Selective && mso.dynamic;
   log::info("explicit: ", mesh.num_elements(), " elements, stable step ", res.stable_time_step,
             " s (", to_string(sso.method), "), ", to_string(mso.mode), " mass scaling (added ",
             100.0 * res.added_mass_fraction, " %), time step ", dt, " s, duration ", duration,
@@ -935,6 +943,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
 
   // --- energies, records, checkpoints -------------------------------------
   Scalar w_int = 0.0, w_ext = 0.0, w_cn = 0.0, w_ct = 0.0, w_damp = 0.0;
+  Scalar w_mass = 0.0;  // kinetic energy of the mass added during the run
   Scalar kin = kinetic_start;
   Scalar energy_scale = std::max(kin, 0.0);
   long step = 0;
@@ -958,7 +967,8 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     r.contact_friction = w_ct;
     r.damping = w_damp;
     r.external = w_ext;
-    r.error = kin - kinetic_start + w_int + w_damp - w_ext - w_cn - w_ct;
+    r.mass_scaling = w_mass;
+    r.error = kin - kinetic_start + w_int + w_damp - w_ext - w_cn - w_ct - w_mass;
     Scalar top = 0.0;
     for (Index node = 0; node < mesh.num_nodes(); ++node) {
       top = std::max(top, u.segment(node * dim, dim).norm());
@@ -988,7 +998,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     Vector u, v, a, f_int, f_ext, fc, reactions;
     Scalar tau = 0, tau_base = 0, dt = 0, stored = 0;
     long step = 0, since_base = 0;
-    Scalar w_int = 0, w_ext = 0, w_cn = 0, w_ct = 0, w_damp = 0, kin = 0;
+    Scalar w_int = 0, w_ext = 0, w_cn = 0, w_ct = 0, w_damp = 0, w_mass = 0, kin = 0;
     std::vector<ContactNodeForce> contact_forces;
     std::vector<ContactToolState> tool_state;
     PenaltyContact::Saved friction;
@@ -1014,6 +1024,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     saved.w_cn = w_cn;
     saved.w_ct = w_ct;
     saved.w_damp = w_damp;
+    saved.w_mass = w_mass;
     saved.kin = kin;
     saved.contact_forces = contact_forces;
     saved.tool_state = tool_state;
@@ -1041,6 +1052,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     w_cn = saved.w_cn;
     w_ct = saved.w_ct;
     w_damp = saved.w_damp;
+    w_mass = saved.w_mass;
     kin = saved.kin;
     contact_forces = saved.contact_forces;
     tool_state = saved.tool_state;
@@ -1213,7 +1225,8 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
         stop("the state is no longer finite (the step is unstable)");
         break;
       }
-      const Scalar error = kin - kinetic_start + w_int + w_damp - w_ext - w_cn - w_ct;
+      const Scalar error =
+          kin - kinetic_start + w_int + w_damp - w_ext - w_cn - w_ct - w_mass;
       energy_scale = std::max({energy_scale, kin, std::abs(w_int),
                                std::abs(w_ext) + std::abs(w_cn) + std::abs(w_ct)});
       const Scalar relative = energy_scale > 0.0 ? std::abs(error) / energy_scale : 0.0;
@@ -1237,14 +1250,51 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
       ScopedTimer st(timing, "stable_step");
       Scalar crit = 0.0;
       try {
-        crit = power ? power_iteration_time_step(u, &scale)
-                     : element_time_steps(u, &scale).minCoeff();
+        if (power) {
+          crit = power_iteration_time_step(u, &scale);
+        } else {
+          Vector steps = element_time_steps(u, &scale);
+          if (rescale) {
+            // Raise the scale of every element whose usable step fell below
+            // the target (dt_e grows as sqrt(s_e)); the velocities are kept,
+            // the kinetic energy of the added mass is booked as W_mass.
+            bool changed = false;
+            for (Index e = 0; e < ne; ++e) {
+              const Scalar usable_e = sso.safety * limit_step(2.0 / steps(e), alpha, s_c);
+              if (usable_e < mso.target_time_step) {
+                const Scalar factor = std::pow(mso.target_time_step / usable_e, 2);
+                scale(e) *= factor;
+                steps(e) *= std::sqrt(factor);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const Vector m_new = assembler_.assemble_mass(MassType::Lumped, &scale).diagonal();
+              Scalar added = 0.0;
+              for (Index d = 0; d < n; ++d) {
+                const Scalar dm = m_new(d) - m(d);
+                if (dm == 0.0) continue;
+                added += dm * v(d) * v(d);
+                // The free DOFs' acceleration from the same forces.
+                if (!fixed[static_cast<std::size_t>(d)]) a(d) *= m(d) / m_new(d);
+              }
+              w_mass += 0.5 * added;
+              m = m_new;
+              m_inverse = m.cwiseInverse();
+              contact.set_masses(m);
+              kin = kinetic();
+              ++res.mass_updates;
+            }
+          }
+          crit = steps.minCoeff();
+        }
       } catch (const SolverError& ex) {
         stop(ex.what());
         break;
       }
       const Scalar fresh = sso.safety * limit_step(2.0 / crit, alpha, s_c);
-      const Scalar next = std::min(fresh, kStepGrowth * dt);
+      Scalar next = std::min(fresh, kStepGrowth * dt);
+      if (mso.mode != MassScalingOptions::Mode::None) next = std::min(next, mso.target_time_step);
       ++res.step_updates;
       if (next != dt) {
         dt = next;
@@ -1268,6 +1318,22 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   } else {
     res.completed = true;
     res.termination = "reached the end of its duration";
+  }
+  if (res.mass_updates > 0) {
+    // The mass at the end of the run (dynamic selective scaling).
+    res.scaled_mass = assembler_.total_mass(&scale);
+    res.added_mass_fraction = (res.scaled_mass - res.physical_mass) / res.physical_mass;
+    res.max_mass_scale = scale.maxCoeff();
+    res.scaled_elements = static_cast<int>((scale.array() > 1.0).count());
+    if (res.added_mass_fraction > mso.max_added_mass_fraction &&
+        !(initial_added_mass > mso.max_added_mass_fraction)) {
+      std::ostringstream os;
+      os << "dynamic selective mass scaling raised the added mass to "
+         << 100.0 * res.added_mass_fraction << " % of the physical mass, above the "
+         << 100.0 * mso.max_added_mass_fraction << " % threshold";
+      res.warnings.push_back(os.str());
+      log::warn("explicit: ", os.str());
+    }
   }
   res.steps = step;
   res.duration = tau;

@@ -451,6 +451,64 @@ TEST_CASE("selective mass scaling reaches its target step with the added mass it
   REQUIRE(std::sqrt(w1) == Approx(std::sqrt(w0 / s)).epsilon(1.0e-10));
 }
 
+TEST_CASE("dynamic selective mass scaling holds the target step as elements thin, and books "
+          "the added mass's energy",
+          "[explicit]") {
+  // A block crushed to 70 % of its height (finite kinematics): its elements
+  // thin and stiffen, and their stable steps fall.
+  const FemModel model = finalised(
+      hex_block(2, 2, 2, 0.01, 0.01, 0.01), default_material(),
+      {clamp(box(-kInf, kInf, -kInf, kInf, -kInf, 1.0e-9)),
+       clamp(box(-kInf, kInf, -kInf, kInf, 0.01 - 1.0e-9, kInf), {2}, Vector3(0, 0, -0.003))});
+  const Assembler assembler(model);
+  const Vector zero = Vector::Zero(model.dofs().num_dofs());
+  NonlinearOptions nl;  // finite
+  ExplicitOptions probe;
+  const Scalar crit = ExplicitDynamics(model, assembler, nl, {}, probe)
+                          .element_time_steps(zero)
+                          .minCoeff();
+  ExplicitOptions o;
+  o.mass_scaling.mode = MassScalingOptions::Mode::Selective;
+  o.mass_scaling.target_time_step = 1.2 * 0.9 * crit;
+  o.stable_step.update_every = 20;
+  o.history_every = 20;
+  const Scalar target = o.mass_scaling.target_time_step;
+  const auto run = [&](bool dynamic) {
+    ExplicitOptions oo = o;
+    oo.mass_scaling.dynamic = dynamic;
+    ExplicitDynamics dyn(model, assembler, nl, {}, oo);
+    ExplicitDrive drive = held_drive(model, 600.0 * target);
+    drive.fixed_start.setZero();
+    return dyn.run(drive, ExplicitState{zero, {}, {}, {}});
+  };
+  const ExplicitResult fixed = run(false);
+  const ExplicitResult dynamic = run(true);
+  REQUIRE(fixed.completed);
+  REQUIRE(dynamic.completed);
+  INFO("fixed: smallest step " << fixed.min_time_step / target << " of the target; dynamic: "
+                               << dynamic.mass_updates << " mass updates, added mass "
+                               << fixed.added_mass_fraction << " -> "
+                               << dynamic.added_mass_fraction << ", energy error "
+                               << dynamic.max_energy_error);
+  // Without it the step falls below the target; with it the step stays at
+  // the target and the added mass grows.
+  REQUIRE(fixed.mass_updates == 0);
+  REQUIRE(fixed.min_time_step < 0.95 * target);  // 0.933 of it
+  REQUIRE(dynamic.mass_updates > 0);
+  REQUIRE(dynamic.min_time_step >= target * (1.0 - 1.0e-12));
+  REQUIRE(dynamic.steps < fixed.steps);
+  REQUIRE(dynamic.added_mass_fraction > fixed.added_mass_fraction);
+  REQUIRE(dynamic.max_mass_scale > fixed.max_mass_scale);
+  // The kinetic energy of the added mass is in the balance, which closes.
+  REQUIRE(dynamic.records.back().mass_scaling > 0.0);
+  REQUIRE(dynamic.max_energy_error < 1.0e-2);
+  // The dynamic option belongs to selective scaling.
+  ExplicitOptions wrong = o;
+  wrong.mass_scaling.mode = MassScalingOptions::Mode::Uniform;
+  wrong.mass_scaling.dynamic = true;
+  REQUIRE_THROWS_AS(wrong.validate(), ConfigError);
+}
+
 // ---------------------------------------------------------------------------
 // 2. The dedicated Hex8 kernel
 // ---------------------------------------------------------------------------
@@ -935,7 +993,7 @@ const char* kExplicitForming = R"({
         {"name": "press", "type": "form_explicit", "tools": ["punch"], "time": [0, 1],
          "explicit": {"tool_speed": 0.05,
                       "mass_scaling": {"mode": "selective", "target_time_step": 2e-7,
-                                       "max_added_mass_fraction": 20},
+                                       "max_added_mass_fraction": 20, "dynamic": true},
                       "stable_step": {"method": "element_eigenvalue", "safety": 0.8,
                                       "update_every": 100, "power_iterations": 40},
                       "damping": 1000, "contact_stiffness": 0.2, "history_every": 50,
@@ -984,6 +1042,7 @@ TEST_CASE("the explicit block of a form_explicit step is read in full, strictly"
   CHECK(e.mass_scaling.mode == MassScalingOptions::Mode::Selective);
   CHECK(e.mass_scaling.target_time_step == 2e-7);
   CHECK(e.mass_scaling.max_added_mass_fraction == 20.0);
+  CHECK(e.mass_scaling.dynamic);
   CHECK(e.stable_step.method == StableStepOptions::Method::ElementEigenvalue);
   CHECK(e.stable_step.safety == 0.8);
   CHECK(e.stable_step.update_every == 100);
@@ -1019,6 +1078,8 @@ TEST_CASE("the explicit block of a form_explicit step is read in full, strictly"
   refuse(R"("method": "element_eigenvalue")", R"("method": "power_iteration")",
          "selective mass scaling needs a time step per element");
   refuse(R"("safety": 0.8)", R"("safety": 1.5)", "'stable_step.safety' must lie in (0, 1]");
+  refuse(R"("mode": "selective")", R"("mode": "uniform")",
+         "'mass_scaling.dynamic' raises the scales of selective mass scaling");
   refuse(R"("contact_stiffness": 0.2)", R"("contact_stiffness": 2)", "'contact_stiffness'");
   refuse(R"("tool_speed": 0.05)", R"("tool_speed": -1)", "must be positive");
   refuse(R"("damping": 1000)", R"("damping": 1000, "dampnig": 1)", "dampnig");
@@ -1069,7 +1130,7 @@ TEST_CASE("a form_explicit run writes the step files, its energy history and its
     CHECK(first_line(stem + "_energy.csv") ==
           "step,t_s,pseudo_t_s,time_step_s,kinetic_J,internal_work_J,stored_J,"
           "plastic_dissipation_J,contact_normal_work_J,contact_friction_work_J,damping_J,"
-          "external_work_J,energy_error_J,kinetic_internal_ratio");
+          "external_work_J,mass_scaling_work_J,energy_error_J,kinetic_internal_ratio");
   }
   CHECK(lines("step_1_press_energy.csv") ==
         1 + static_cast<int>(r.steps[0].explicit_result.records.size()));
