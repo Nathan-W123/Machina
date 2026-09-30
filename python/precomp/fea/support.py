@@ -16,8 +16,9 @@ from below, with the existing rigid tools of `sparlab_form`
   opening cannot go below the plate; nothing holds it down onto the plate.
   On the mesh the opening is the union of the elements it touches, up to
   one element wider than asked: `plate_nodes` reports the clearance the
-  mesh realises. The plate is active in "form" and removed with the tool
-  in "unload" (clamp still on), before the 3-2-1 release.
+  mesh realises, the smallest distance of a carried node to the outline
+  (`outline_distance`). The plate is active in "form" and removed with the
+  tool in "unload" (clamp still on), before the 3-2-1 release.
 * ``"dsif"`` - double-sided incremental forming: a second ball (the
   support) under the sheet, on the bottom faces of the free window,
   following `precomp.toolpath.dsif_support_points` - opposite the forming
@@ -112,8 +113,9 @@ def bottom_node_grid(setup: FormingSetup) -> Tuple[np.ndarray, np.ndarray, np.nd
 
 def part_distance(reference: HeightMap, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Distance [m] from points (x, y) to the nearest part node of
-    `reference` (nodes deeper than 1 um): 0 on the part, to within the grid
-    spacing of the distance to its outline outside it."""
+    `reference` (nodes deeper than 1 um): 0 on the part's nodes. Half a grid
+    spacing more than the distance to the outline outside the part
+    (`outline_distance`)."""
     part = reference.mask & (reference.z < -1e-6)
     if not part.any():
         raise PrecompError("the reference surface has no part: a backing plate needs an "
@@ -124,22 +126,46 @@ def part_distance(reference: HeightMap, x: np.ndarray, y: np.ndarray) -> np.ndar
     return d.reshape(np.shape(x))
 
 
+def outline_distance(reference: HeightMap, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Signed distance [m] from points (x, y) to the outline of the part of
+    `reference` (its nodes deeper than 1 um): negative inside, positive
+    outside, the outline half-way between the last part node and the first
+    node off it - `precomp.toolpath.signed_outline_distance` at the grid's
+    nodes, and between them from the nearest part and non-part nodes (a
+    point is inside when its nearest node is a part node)."""
+    part = reference.mask & (reference.z < -1e-6)
+    if not part.any():
+        raise PrecompError("the reference surface has no part: a backing plate needs an "
+                           "outline to follow")
+    X, Y = reference.grid.mesh()
+    q = np.column_stack([np.ravel(x), np.ravel(y)])
+    d_part, _ = cKDTree(np.column_stack([X[part], Y[part]])).query(q)
+    if (~part).any():
+        d_off, _ = cKDTree(np.column_stack([X[~part], Y[~part]])).query(q)
+    else:
+        d_off = np.full(len(q), np.inf)
+    half = 0.5 * reference.grid.h
+    sd = np.where(d_part < d_off, -(d_off - half), d_part - half)
+    return sd.reshape(np.shape(x))
+
+
 def plate_nodes(setup: FormingSetup, reference: HeightMap,
                 clearance: Optional[float] = None) -> Tuple[List[int], Dict[str, Any]]:
     """The bottom nodes the backing plate carries, and a report.
 
     A bottom face (cell) is carried when its four corners lie farther than
-    `clearance` (default the setup's) from the part of `reference`; the
-    nodes are the corners of the carried cells (so every listed node is a
-    slave node of a carried face and sparlab_form's face selection - every
-    node of a face in the region - picks exactly those faces). The report
-    gives the clearance asked, the one the mesh realises (the smallest
-    distance of a carried node to the part), and the counts.
+    `clearance` (default the setup's) outside the outline of the part of
+    `reference` (`outline_distance`); the nodes are the corners of the
+    carried cells (so every listed node is a slave node of a carried face
+    and sparlab_form's face selection - every node of a face in the region -
+    picks exactly those faces). The report gives the clearance asked, the
+    one the mesh realises (the smallest distance of a carried node to the
+    outline, never less than asked), and the counts.
     """
     s = setup.resolved_support()
     c = float(s["clearance"] if clearance is None else clearance)
     ids, X, Y = bottom_node_grid(setup)
-    d = part_distance(reference, X, Y)
+    d = outline_distance(reference, X, Y)
     out = d > c
     cell = out[:-1, :-1] & out[1:, :-1] & out[:-1, 1:] & out[1:, 1:]
     carried = np.zeros_like(out)
@@ -391,4 +417,4 @@ def check_command(setup: FormingSetup, commanded: HeightMap,
 __all__ = ["PLATE_TOOL", "SUPPORT_TOOL", "SUPPORT_PATH_FILE", "RIM_PASS_WINDOW",
            "SupportPlan", "plan_support", "plate_nodes", "plate_tool", "support_tool",
            "dsif_trajectory", "command_upper_bound", "check_command", "compensation_masks",
-           "rim_band", "bottom_node_grid", "part_distance"]
+           "rim_band", "bottom_node_grid", "part_distance", "outline_distance"]

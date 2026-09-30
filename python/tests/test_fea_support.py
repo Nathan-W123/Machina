@@ -19,8 +19,9 @@ from precomp.compensation import FEAPredictor, displacement_adjustment
 from precomp.fea import FormingSetup, build_deck, deck_document, deck_hash, load_result, simulate
 from precomp.fea.support import (PLATE_TOOL, SUPPORT_PATH_FILE, SUPPORT_TOOL, bottom_node_grid,
                                  check_command, command_upper_bound, compensation_masks,
-                                 part_distance, plate_nodes, rim_band)
+                                 outline_distance, part_distance, plate_nodes, rim_band)
 from precomp.geometry import Grid, HeightMap, TruncatedCone
+from precomp.geometry.parts import part_from_dict
 from precomp.materials import get_material
 from precomp.metrology import flange_mask, part_mask
 from precomp.toolpath import AIR, reach_from_below, signed_outline_distance
@@ -118,7 +119,13 @@ def test_the_backing_plate_carries_the_bottom_faces_outside_the_opening(tmp_path
     n = setup.elements_per_side
     assert grid_ids.max() == (n + 1) ** 2 - 1 and set(ids) <= set(grid_ids.ravel())
     listed = np.isin(grid_ids, ids)
-    dist = part_distance(cone, X, Y)
+    # the clearance is measured to the outline (signed_outline_distance: half
+    # way between the last part node and the first flange node), not to the
+    # part's nodes, which lie up to a grid spacing inside it
+    dist = outline_distance(cone, X, Y)
+    sd = signed_outline_distance(cone)
+    assert np.allclose(dist, sd.interpolate(X, Y), atol=1e-12)       # the mesh on grid nodes
+    assert np.allclose(dist[dist > 0], part_distance(cone, X, Y)[dist > 0] - 0.5 * cone.grid.h)
     assert np.all(dist[listed] > 1e-3)                       # outside the opening ...
     # ... and every node outside it whose cell is wholly outside is listed
     out = dist > 1e-3
@@ -126,11 +133,51 @@ def test_the_backing_plate_carries_the_bottom_faces_outside_the_opening(tmp_path
     assert listed[:-1, :-1][cell].all() and listed[1:, 1:][cell].all()
     assert not listed[dist < 1e-3].any()
     info = read_json(d / "precomp_deck.json")["support"]
+    assert info["plate"]["realised_clearance_m"] == pytest.approx(dist[listed].min())
     assert info["plate"]["realised_clearance_m"] >= 1e-3
     assert info["plate"]["realised_clearance_m"] < 1e-3 + setup.element_size * np.sqrt(2)
     assert info["outline_from"] == "target"
     # a wider clearance carries fewer faces
     assert len(plate_nodes(setup, cone, 3e-3)[0]) < len(ids)
+
+
+PYRAMID = {"family": "pyramid", "half_width_x": 0.007445503572002053,
+           "half_width_y": 0.008327501218765975, "corner_radius": 0.006246182421222329,
+           "wall_angle_deg": 34.65761963278055, "depth": 0.003382830085232854,
+           "top_fillet": 0.001299202023074031, "bottom_fillet": 0.0013530378779396416}
+
+
+@pytest.mark.parametrize("clearance", [0.0, 1e-3, 2.5e-3])
+def test_the_plate_opening_follows_a_non_circular_outline(tmp_path, base, clearance):
+    """On a rounded-rectangle pyramid (pyramid-s2026-0000 of the springback
+    benchmark, 14.9 x 16.7 mm) the plate carries exactly the bottom faces
+    whose corners all lie farther than the clearance outside the outline:
+    none nearer, none missed, and the faces sparlab_form's selection takes
+    (every node of a face listed) are exactly those."""
+    setup = base.replace(support="backing_plate", support_settings={"clearance": clearance})
+    target = part_from_dict(PYRAMID).heightmap(Grid.centered(setup.meshed_blank_size, 2.5e-4))
+    ids, info = plate_nodes(setup, target)
+    grid_ids, X, Y = bottom_node_grid(setup)
+    listed = np.isin(grid_ids, ids)
+    dist = outline_distance(target, X, Y)
+    out = dist > clearance
+    cell = out[:-1, :-1] & out[1:, :-1] & out[:-1, 1:] & out[1:, 1:]
+    selected = listed[:-1, :-1] & listed[1:, :-1] & listed[:-1, 1:] & listed[1:, 1:]
+    assert np.array_equal(selected, cell) and cell.sum() == info["carried_faces"]
+    assert np.all(dist[listed] > clearance) and info["realised_clearance_m"] > clearance
+    # every carried node belongs to a carried face (no stray node)
+    corner = np.zeros_like(listed)
+    for a, b in ((slice(None, -1), slice(None, -1)), (slice(1, None), slice(None, -1)),
+                 (slice(None, -1), slice(1, None)), (slice(1, None), slice(1, None))):
+        corner[a, b] |= cell
+    assert np.array_equal(corner, listed)
+    # the opening is not a circle: along the pyramid's short axis (x) the
+    # plate comes nearer the centre than along its long axis (y)
+    on_x = listed & (np.abs(Y) < 1e-9)
+    on_y = listed & (np.abs(X) < 1e-9)
+    assert np.abs(X[on_x]).min() <= np.abs(Y[on_y]).min()
+    d = build_deck(setup, target, tmp_path / "pyr", target=target)
+    assert forming(d)["tools"][1]["surface"]["node_ids"] == ids
 
 
 def test_the_plate_follows_the_target_not_the_compensated_command(tmp_path, base, cone):
@@ -156,7 +203,7 @@ def test_the_plate_node_ids_follow_the_structured_numbering(tmp_path, base, cone
     ids = res.summary and read_json(res.directory / "config.json")["forming"]["tools"][1][
         "surface"]["node_ids"]
     assert np.allclose(nodes[ids, 2], -T)
-    assert np.all(part_distance(cone, nodes[ids, 0], nodes[ids, 1]) > 1e-3)
+    assert np.all(outline_distance(cone, nodes[ids, 0], nodes[ids, 1]) > 1e-3)
     assert res.step_names == ["form", "unload", "release"]
     f = res.forming_forces()
     assert set(f["tool"]) == {"tool", PLATE_TOOL}
