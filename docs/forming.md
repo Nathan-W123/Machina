@@ -703,7 +703,58 @@ What it shows:
 
 ### 7.4 Cost
 
-COST_PLACEHOLDER
+Measured with `sparlab_form --threads 2` on the development machine (four
+cores shared with other jobs; the load average is given with each number,
+and above 4 the other jobs take cores from the run - a spinning OpenMP
+barrier then waits for a descheduled thread, so the loaded runs are 2 to 3
+times slower than the unloaded rate), GCC 13 `-O3`.
+
+**Per time step** (`configs/forming/spif_cone_60_explicit.json`, the first
+1 518 time steps: 7 200 Hex8, 33 489 DOFs, plastic, frictional contact;
+load average 2.7 to 2.9 before each run):
+
+| Threads | Time steps / s | ns per element and step (total) | of which internal forces | integration (vector updates, energies) | contact | stable-step updates |
+|---|---|---|---|---|---|---|
+| 1 | 158 | 879 | 715 | 0.93 s (12 %) | 0.12 s | 0.50 s |
+| 2 | 296 | 470 | 358 | 0.69 s (13 %) | 0.10 s | 0.26 s |
+| 4 | (see below) | | | | | |
+
+The internal forces - the dedicated kernel's `3 000` instructions an element
+and step, vectorised over the eight points - take 80 % and scale with the
+threads; the vector updates are memory-bound (33 000 DOFs, a dozen arrays).
+The step loop allocates nothing (tested); the stable-step updates (every
+1 000 steps, an eigenvalue problem per element) and the records allocate.
+
+**The full cone** (`configs/forming/spif_cone_60_explicit.json`: 622 mm of
+toolpath, ten contours to 10 mm, 7 200 Hex8; selective mass scaling to
+1 us, scale about 224, `max_kinetic_ratio` 0.012 at 2 m/s and 0.005 at
+1 m/s, energy balance `2e-5` to `3e-5`):
+
+| Run | Tool speed | Time steps | Wall [s] (load) | Result |
+|---|---|---|---|---|
+| fixed scaling | 2 m/s | 367 800 | 1 871 (3.5 to 8.7) | stopped at pseudo-time 9.70 s of 11.9 (88 % of the path): element 1777 inverted; the step fell from 1 us to 0.43 us as the wall thinned |
+| dynamic scaling | 1 m/s | 539 600 | 4 598 (5 to 11) | stopped at the same place, the same element; the step held at 1 us (538 mass updates; added mass 224 to 261 times the physical, the largest element scale 1 262) |
+| logarithmic kinematics, dynamic scaling | 2 m/s | (running) | | |
+
+Both Green-Lagrange runs stop at the same point of the path - the tool's
+step-down from the ninth contour to the tenth, its tip pressing the part's
+floor at 7 mm radius - at the same element under it, whatever the speed and
+the mass scaling: the limit is the model's, not the integration's (the
+additive Green-Lagrange elastoplastic law at plastic strains above 1 - 1.04
+there - on 1 mm elements under a 5 mm tool; the implicit analysis has not
+been run this far, at about 7 hours). With the unloaded rate above (296
+time steps a second on two threads) the full path takes 305 000 steps
+(17 minutes) at 2 m/s and 610 000 (34 minutes) at 1 m/s with dynamic
+scaling on two threads - against the implicit analysis's estimated 7 hours.
+
+**Choosing the speed for a part.** The cone's kinetic energy ratio stays far
+below the 0.1 warning even at 2 m/s (0.012, against 0.25 on the smoke case
+at the same equivalent speed): a large part's internal work grows with its
+plastic zone while the kinetic energy stays with the material near the
+tool. The ratio is a necessary check only; the springback error at a given
+equivalent speed is what the smoke study measured (section 7.3: 23 % of the
+springback at 28 m/s, 9 % at 14 m/s, 4 % at 7 m/s), and a part's own
+convergence check (halving the speed once) is the sufficient one.
 
 ### 7.5 Limitations
 
