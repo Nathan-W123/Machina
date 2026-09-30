@@ -76,15 +76,22 @@
 /// node j and tool: where the gap \f$g < 0\f$, the normal force
 /// \f$f_N = -k_j g\,n\f$ with the mass-based penalty
 /// \f$k_j = s_c m_j/\Delta t^2\f$ (\f$m_j\f$ the node's lumped mass, \f$s_c\f$
-/// `contact_stiffness`, default 0.1 - the "soft constraint" of explicit
+/// `contact_stiffness`, default 0.5 - the "soft constraint" of explicit
 /// codes, LS-DYNA theory manual): it adds at most \f$s_c/\Delta t^2\f$ to
 /// \f$\omega^2\f$, so it never lowers the stable step by more than that,
-/// unlike the implicit law \f$\kappa = sE/h\f$, which is 10 to 50 times
-/// stiffer and would. Friction: regularised Coulomb friction with a committed
+/// unlike the implicit law \f$\kappa = sE/h\f$, which is stiffer still and
+/// would. Its penetration, about \f$f\,\Delta t^2/(s_c m_j)\f$, does not
+/// shrink with the tool speed (with mass scaling, \f$m_j/\Delta t^2\f$ is
+/// fixed by the target step): it biases the formed shape by about the
+/// penetration, so the largest penetration relative to the node's element
+/// thickness is reported and warned about (`penetration_warning`).
+/// Friction: regularised Coulomb friction with a committed
 /// tangential force per node, transported onto the current tangent plane,
 /// incremented by \f$-k_T P\,\Delta_{rel}\f$ (\f$k_T = \rho_T k_j\f$,
 /// \f$\Delta_{rel}\f$ the node's motion relative to the tool over the step)
-/// and returned onto the cone \f$|F_T| \le \mu|f_N|\f$. The tool's
+/// and returned onto the cone \f$|F_T| \le \mu|f_N|\f$; the stable step
+/// reserves \f$s_c\max(1, \rho_T)\f$ (the stiffer of the two directions)
+/// for a frictional tool. The tool's
 /// reference point follows its trajectory at the pseudo-time the drive maps
 /// the physical time to (ExplicitTimeMap).
 ///
@@ -185,14 +192,17 @@ struct ExplicitOptions {
   /// its energy balance fails.
   Scalar time_step = 0.0;
   Scalar mass_damping = 0.0;       ///< alpha of C = alpha M [1/s], >= 0
-  /// s_c of the contact penalty k_j = s_c m_j / dt^2, in (0, 4 (1 - safety^2)).
-  Scalar contact_stiffness = 0.1;
+  /// s_c of the contact penalty k_j = s_c m_j / dt^2, in (0, 1].
+  Scalar contact_stiffness = 0.5;
   int history_every = 100;         ///< record every this many steps (and the last)
   int snapshot_every = 0;          ///< keep the displacement every this many steps (0: none)
   Scalar energy_tolerance = 0.05;  ///< relative energy balance error warned about
   Scalar energy_limit = 0.5;       ///< relative energy balance error that stops the run
   /// T over the internal energy after the first contact warned about.
   Scalar kinetic_ratio_warning = 0.1;
+  /// The largest contact penetration over the element thickness at the
+  /// node (volume over largest face of its thinnest element) warned about.
+  Scalar penetration_warning = 0.01;
   /// Use the dedicated Hex8 kernel where it applies (false: the generic
   /// element dispatch everywhere, for comparison).
   bool dedicated_kernel = true;
@@ -261,6 +271,8 @@ struct ExplicitToolRecord {
   int active_nodes = 0;
   int slipping_nodes = 0;
   Scalar max_penetration = 0.0;          ///< [m]
+  /// The largest penetration over the node's element thickness [-].
+  Scalar max_penetration_ratio = 0.0;
   Scalar area = 0.0;                     ///< sum of the contact nodes' tributary areas [m^2]
 };
 
@@ -322,6 +334,9 @@ struct ExplicitResult {
   /// contact whose internal energy exceeds 1 % of its value at the end (0
   /// without contact).
   Scalar max_kinetic_ratio = 0.0;
+  /// The largest contact penetration over the node's element thickness,
+  /// over every time step [-].
+  Scalar max_penetration_ratio = 0.0;
   Scalar max_energy_error = 0.0;     ///< largest relative |E_err|
   bool contact = false;              ///< some tool touched the body
   std::vector<ExplicitRecord> records;

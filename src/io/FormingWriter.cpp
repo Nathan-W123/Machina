@@ -198,6 +198,7 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
       jt.set("energy_tolerance", num(st.explicit_options.energy_tolerance));
       jt.set("energy_limit", num(st.explicit_options.energy_limit));
       jt.set("kinetic_ratio_warning", num(st.explicit_options.kinetic_ratio_warning));
+      jt.set("penetration_warning", num(st.explicit_options.penetration_warning));
       jt.set("max_added_mass_fraction",
              num(st.explicit_options.mass_scaling.max_added_mass_fraction));
       jt.set("stable_step_safety", num(st.explicit_options.stable_step.safety));
@@ -272,6 +273,8 @@ json::Value forming_summary_json(const Configuration& config, const FemModel& mo
       je.set("contact", json::Value::make_bool(er.contact));
       je.set("max_kinetic_ratio", num(er.max_kinetic_ratio));
       je.set("kinetic_ratio_warning", num(eo.kinetic_ratio_warning));
+      je.set("max_penetration_ratio", num(er.max_penetration_ratio));
+      je.set("penetration_warning", num(eo.penetration_warning));
       je.set("max_energy_error", num(er.max_energy_error));
       je.set("energy_tolerance", num(eo.energy_tolerance));
       je.set("energy_limit", num(eo.energy_limit));

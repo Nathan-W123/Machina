@@ -824,6 +824,134 @@ TEST_CASE("the time map moves the fastest tool at the tool speed and skips stand
 }
 
 // ---------------------------------------------------------------------------
+// 3b. Contact: penalty, penetration, stability
+// ---------------------------------------------------------------------------
+namespace {
+
+/// A 4 x 4 x 2 block (1 x 1 x 0.5 mm elements) clamped at its base and
+/// pressed 20 um by a plane from 2 um above its top, at about 1 m/s.
+struct PunchCase {
+  FemModel model;
+  std::vector<RigidTool> tools;
+  PunchCase(Scalar friction = 0.0, Scalar tangential = 1.0)
+      : model(finalised(hex_block(4, 4, 2, 0.004, 0.004, 0.001), j2_material(),
+                        {clamp(box(-kInf, kInf, -kInf, kInf, -kInf, 1.0e-9))})) {
+    RigidTool t;
+    t.name = "punch";
+    t.shape = RigidTool::Shape::Plane;
+    t.normal = Vector3(0, 0, -1);
+    t.surface = box(-kInf, kInf, -kInf, kInf, 0.001 - 1e-9, kInf);
+    t.friction = friction;
+    t.tangential_ratio = tangential;
+    t.trajectory.times = {0.0, 1.0};
+    t.trajectory.points = {Vector3(0.002, 0.002, 0.001002), Vector3(0.0021, 0.002, 0.00098)};
+    tools.push_back(t);
+  }
+  ExplicitDrive drive(Scalar duration = 2.2e-5) const {
+    ExplicitDrive d = held_drive(model, duration);
+    d.active = {1};
+    d.time_map = ExplicitTimeMap::linear(0.0, 1.0, duration);
+    return d;
+  }
+  ExplicitResult run(const ExplicitOptions& o, Scalar duration = 2.2e-5) const {
+    const Assembler assembler(model);
+    ExplicitDynamics dyn(model, assembler, NonlinearOptions(), tools, o);
+    return dyn.run(drive(duration),
+                   ExplicitState{Vector::Zero(model.dofs().num_dofs()), {}, {}, {}});
+  }
+};
+
+}  // namespace
+
+TEST_CASE("the contact penetration is measured against the element thickness, falls as the "
+          "penalty stiffens, and is warned about",
+          "[explicit]") {
+  const PunchCase c;
+  ExplicitOptions o;
+  o.history_every = 1;  // every step recorded: the largest penetration is in the records
+  const ExplicitResult r = c.run(o);
+  REQUIRE(r.completed);
+  REQUIRE(r.contact);
+  Scalar largest = 0.0;
+  for (const ExplicitRecord& rec : r.records) {
+    for (const ExplicitToolRecord& t : rec.tools) {
+      INFO("step " << rec.step);
+      // Volume over largest face of the 1 x 1 x 0.5 mm elements: 0.5 mm.
+      REQUIRE(t.max_penetration_ratio == Approx(t.max_penetration / 0.5e-3).epsilon(1.0e-12));
+      largest = std::max(largest, t.max_penetration_ratio);
+    }
+  }
+  REQUIRE(largest > 0.0);
+  REQUIRE(r.max_penetration_ratio == largest);
+  const auto warned = [](const ExplicitResult& x) {
+    for (const std::string& w : x.warnings) {
+      if (w.find("penetration") != std::string::npos) return true;
+    }
+    return false;
+  };
+  REQUIRE_FALSE(warned(r));  // below the default 1 %
+  ExplicitOptions strict = o;
+  strict.penetration_warning = 0.5 * largest;
+  REQUIRE(warned(c.run(strict)));
+  // The penetration is about f dt^2 / (s_c m): four times the stiffness,
+  // about a quarter of the penetration (dt^2 changes with s_c: 4.3 times).
+  ExplicitOptions soft = o;
+  soft.contact_stiffness = 0.1;
+  ExplicitOptions stiff = o;
+  stiff.contact_stiffness = 0.4;
+  const Scalar ratio = c.run(soft).max_penetration_ratio / c.run(stiff).max_penetration_ratio;
+  INFO("penetration ratio " << ratio);
+  REQUIRE(ratio > 3.0);
+  REQUIRE(ratio < 6.0);
+  // The default penalty.
+  REQUIRE(ExplicitOptions().contact_stiffness == 0.5);
+  ExplicitOptions bad;
+  bad.penetration_warning = 0.0;
+  REQUIRE_THROWS_AS(bad.validate(), ConfigError);
+}
+
+TEST_CASE("the stable step reserves the stiffer of the normal and tangential contact penalties",
+          "[explicit]") {
+  // No mass scaling or damping: dt = safety sqrt(4 - s) / omega_max with s
+  // the penalty's share, s_c or s_c times a frictional tool's tangential
+  // penalty ratio where that is larger.
+  ExplicitOptions o;
+  o.history_every = 1000000;
+  const auto first_step = [&](Scalar friction, Scalar tangential) {
+    const PunchCase c(friction, tangential);
+    const ExplicitResult r = c.run(o, 1.0e-6);
+    REQUIRE(r.completed);
+    return r.time_step;
+  };
+  const Scalar s_c = o.contact_stiffness;
+  const Scalar base = first_step(0.1, 1.0);
+  CHECK(first_step(0.1, 0.5) == base);                   // a softer tangential spring
+  CHECK(first_step(0.0, 3.0) == base);                   // no friction, no tangential spring
+  CHECK(first_step(0.1, 3.0) ==
+        Approx(base * std::sqrt((4.0 - 3.0 * s_c) / (4.0 - s_c))).epsilon(1.0e-12));
+  // A share of 4 or more leaves no stable step.
+  const PunchCase too_stiff(0.1, 8.0);
+  REQUIRE_THROWS_AS(too_stiff.run(o, 1.0e-6), ConfigError);
+}
+
+TEST_CASE("the energy balance is not judged in the first time steps after the first contact",
+          "[explicit]") {
+  // At the first touch the new contact forces' half-step kick is in the
+  // kinetic energy a step before their work is in the balance: a relative
+  // error of order 1 when that kick is all the energy there is. Recorded at
+  // every step, with the stiffest penalty, the run must not stop there.
+  const PunchCase c;
+  ExplicitOptions o;
+  o.history_every = 1;
+  o.contact_stiffness = 1.0;
+  const ExplicitResult r = c.run(o);
+  INFO(r.termination);
+  REQUIRE(r.completed);
+  REQUIRE(r.contact);
+  REQUIRE(r.max_energy_error < 0.05);
+}
+
+// ---------------------------------------------------------------------------
 // 4. Determinism and allocations
 // ---------------------------------------------------------------------------
 namespace {

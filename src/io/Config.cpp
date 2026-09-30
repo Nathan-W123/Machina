@@ -632,6 +632,7 @@ void parse_explicit_step(const ConfigNode& ex, FormingStep& step, const std::str
   o.energy_tolerance = ex.number_or("energy_tolerance", o.energy_tolerance);
   o.energy_limit = ex.number_or("energy_limit", o.energy_limit);
   o.kinetic_ratio_warning = ex.number_or("kinetic_ratio_warning", o.kinetic_ratio_warning);
+  o.penetration_warning = ex.number_or("penetration_warning", o.penetration_warning);
   o.validate(label + ", '" + ex.path() + "'");
 }
 

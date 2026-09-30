@@ -33,6 +33,12 @@ constexpr Index kChunk = 4096;
 /// The kinetic-to-internal energy ratio counts over the records whose
 /// internal work exceeds this fraction of its value at the end.
 constexpr Scalar kRatioFloor = 0.01;
+/// The energy balance is not judged over this many time steps after the
+/// first contact: the new contact forces' half-step kick enters the kinetic
+/// energy a step before their work enters the balance - the scheme's
+/// second-order lag, of the order of all the energy there is at the first
+/// touch (a relative error of 1 there, 1e-2 ten steps on).
+constexpr long kOnsetSteps = 10;
 
 /// A deterministic pseudo-random number in [-1, 1] (splitmix64 of `i`).
 Scalar noise(std::uint64_t i) {
@@ -75,6 +81,7 @@ struct ContactToolState {
   int active_nodes = 0;
   int slipping_nodes = 0;
   Scalar max_penetration = 0.0;
+  Scalar max_penetration_ratio = 0.0;  ///< over the node's element thickness
   Scalar area = 0.0;
 };
 
@@ -93,6 +100,17 @@ class PenaltyContact {
       slaves_[k].friction.assign(slaves_[k].nodes.size(), Vector3::Zero());
       slaves_[k].touching.assign(slaves_[k].nodes.size(), 0);
       slaves_[k].mass.assign(slaves_[k].nodes.size(), 0.0);
+      slaves_[k].thickness.assign(slaves_[k].nodes.size(), 1.0);
+    }
+  }
+
+  /// The element thickness at every node (per node of the mesh), which the
+  /// penetrations are measured against.
+  void set_thickness(const std::vector<Scalar>& per_node) {
+    for (Slaves& s : slaves_) {
+      for (std::size_t i = 0; i < s.nodes.size(); ++i) {
+        s.thickness[i] = per_node[static_cast<std::size_t>(s.nodes[i])];
+      }
     }
   }
 
@@ -257,6 +275,7 @@ class PenaltyContact {
         ++res.active_nodes;
         if (slipping) ++res.slipping_nodes;
         res.max_penetration = std::max(res.max_penetration, -g);
+        res.max_penetration_ratio = std::max(res.max_penetration_ratio, -g / s.thickness[i]);
         res.area += s.area[i];
       }
     }
@@ -286,6 +305,7 @@ class PenaltyContact {
     std::vector<Index> nodes;
     std::vector<Scalar> area;  ///< tributary areas [m^2]
     std::vector<Scalar> mass;
+    std::vector<Scalar> thickness;  ///< element thickness at the node [m]
     std::vector<Vector3> friction;  ///< committed tangential force on the node
     std::vector<char> touching;     ///< in contact at the last step
   };
@@ -375,6 +395,30 @@ Scalar characteristic_length(ElementType type, const Matrix& x) {
                     "Hex8, Tet4); use the element eigenvalue estimate");
 }
 
+/// Per node, the thickness of its thinnest element in the reference
+/// configuration: the characteristic length (volume over largest face) of
+/// a linear element, the dim-th root of the measure of any other [m].
+std::vector<Scalar> node_thickness(const FemModel& model) {
+  const Mesh& mesh = model.mesh();
+  const ElementType type = mesh.element_type();
+  const bool linear = type == ElementType::Hex8 || type == ElementType::Tet4 ||
+                      type == ElementType::Quad4 || type == ElementType::Tri3;
+  const int npe = mesh.nodes_per_elem();
+  std::vector<Scalar> out(static_cast<std::size_t>(mesh.num_nodes()),
+                          std::numeric_limits<Scalar>::infinity());
+  for (Index e = 0; e < mesh.num_elements(); ++e) {
+    const Scalar length =
+        linear ? characteristic_length(type, mesh.element_coordinates(e))
+               : std::pow(mesh.element_measure(e), 1.0 / static_cast<Scalar>(mesh.dim()));
+    const Index* nodes = mesh.element_nodes(e);
+    for (int a = 0; a < npe; ++a) {
+      Scalar& t = out[static_cast<std::size_t>(nodes[a])];
+      t = std::min(t, length);
+    }
+  }
+  return out;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -452,7 +496,11 @@ void ExplicitOptions::validate(const std::string& what) const {
   if (!(contact_stiffness > 0.0 && contact_stiffness <= 1.0)) {
     throw ConfigError(what + ": 'contact_stiffness' s_c must lie in (0, 1]: the penalty "
                              "k = s_c m / dt^2 adds s_c to (omega dt)^2, and the time step "
-                             "shrinks to keep that below 4 (0.1 is the usual choice)");
+                             "shrinks to keep that below 4 (0.5 is the default)");
+  }
+  if (!(penetration_warning > 0.0) || !finite(penetration_warning)) {
+    throw ConfigError(what + ": 'penetration_warning' (penetration over element thickness) "
+                             "must be positive");
   }
   if (history_every < 1 || snapshot_every < 0) {
     throw ConfigError(what + ": 'history_every' must be >= 1 and 'snapshot_every' >= 0");
@@ -734,6 +782,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   force_->set_history(start.history);
   PenaltyContact contact(model_, tools_);
   contact.import_friction(start.friction);
+  if (nt > 0) contact.set_thickness(node_thickness(model_));
   res.kernel = force_->dedicated() ? "dedicated Hex8" : "generic element dispatch";
 
   // The dedicated kernel must reproduce the element dispatch.
@@ -759,7 +808,31 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   Vector scale = Vector::Ones(ne);
   Scalar dt = 0.0;
   Scalar omega = 0.0;
-  const Scalar s_c = any_tool ? options_.contact_stiffness : 0.0;
+  // The penalty's share of the stability limit: s_c, or s_c times the
+  // tangential penalty ratio of a frictional tool where that is stiffer
+  // (the normal and the tangential springs act in orthogonal directions).
+  Scalar s_c = 0.0;
+  if (any_tool) {
+    Scalar reserve = 1.0;
+    std::string stiffest;
+    for (std::size_t k = 0; k < nt; ++k) {
+      if (!drive.active[k] || !(tools_[k].friction > 0.0)) continue;
+      if (tools_[k].tangential_ratio > reserve) {
+        reserve = tools_[k].tangential_ratio;
+        stiffest = tools_[k].name;
+      }
+    }
+    s_c = options_.contact_stiffness * reserve;
+    if (!(s_c < 4.0)) {
+      std::ostringstream os;
+      os << "the contact penalty's share of the stability limit, contact_stiffness "
+         << options_.contact_stiffness << " times tool '" << stiffest
+         << "''s tangential_penalty " << reserve << " = " << s_c
+         << ", must stay below 4 (keep it below 1 or so: the time step shrinks as "
+            "sqrt(4 - s)); lower either";
+      throw ConfigError(os.str());
+    }
+  }
   const Scalar alpha = options_.mass_damping;
   const bool power = sso.method == StableStepOptions::Method::PowerIteration;
   {
@@ -988,6 +1061,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
       tr.active_nodes = tool_state[k].active_nodes;
       tr.slipping_nodes = tool_state[k].slipping_nodes;
       tr.max_penetration = tool_state[k].max_penetration;
+      tr.max_penetration_ratio = tool_state[k].max_penetration_ratio;
       tr.area = tool_state[k].area;
       r.tools.push_back(tr);
       mean_force[k].setZero();
@@ -998,6 +1072,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   struct Checkpoint {
     Vector u, v, a, f_int, f_ext, fc, reactions;
     Scalar tau = 0, tau_base = 0, dt = 0, stored = 0;
+    Scalar max_penetration_ratio = 0;
     long step = 0, since_base = 0;
     Scalar w_int = 0, w_ext = 0, w_cn = 0, w_ct = 0, w_damp = 0, w_mass = 0, kin = 0;
     std::vector<ContactNodeForce> contact_forces;
@@ -1018,6 +1093,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     saved.tau_base = tau_base;
     saved.dt = dt;
     saved.stored = stored;
+    saved.max_penetration_ratio = res.max_penetration_ratio;
     saved.step = step;
     saved.since_base = since_base;
     saved.w_int = w_int;
@@ -1046,6 +1122,7 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     tau_base = saved.tau_base;
     dt = saved.dt;
     stored = saved.stored;
+    res.max_penetration_ratio = saved.max_penetration_ratio;
     step = saved.step;
     since_base = saved.since_base;
     w_int = saved.w_int;
@@ -1202,7 +1279,11 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     ++step;
     ++since_base;
     tau = tau_new;
-    for (std::size_t k = 0; k < nt; ++k) mean_force[k] += h * tool_state[k].force;
+    for (std::size_t k = 0; k < nt; ++k) {
+      mean_force[k] += h * tool_state[k].force;
+      res.max_penetration_ratio =
+          std::max(res.max_penetration_ratio, tool_state[k].max_penetration_ratio);
+    }
     mean_time += h;
     if (first_contact < 0) {
       for (const ContactToolState& s : tool_state) {
@@ -1230,7 +1311,9 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
           kin - kinetic_start + w_int + w_damp - w_ext - w_cn - w_ct - w_mass;
       energy_scale = std::max({energy_scale, kin, std::abs(w_int),
                                std::abs(w_ext) + std::abs(w_cn) + std::abs(w_ct)});
-      const Scalar relative = energy_scale > 0.0 ? std::abs(error) / energy_scale : 0.0;
+      const bool onset = first_contact >= 0 && step - first_contact < kOnsetSteps;
+      const Scalar relative =
+          energy_scale > 0.0 && !onset ? std::abs(error) / energy_scale : 0.0;
       if (relative > options_.energy_limit) {
         std::ostringstream os;
         os << "the energy balance is off by " << relative << " of the largest energy (limit "
@@ -1363,6 +1446,15 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
     res.warnings.push_back(os.str());
     log::warn("explicit: ", os.str());
   }
+  if (res.max_penetration_ratio > options_.penetration_warning) {
+    std::ostringstream os;
+    os << "the contact penetration reached " << res.max_penetration_ratio
+       << " of the element thickness at the node (warning above "
+       << options_.penetration_warning << "): the formed shape is biased by about that "
+       << "much, at any tool speed - raise 'contact_stiffness' (up to 1)";
+    res.warnings.push_back(os.str());
+    log::warn("explicit: ", os.str());
+  }
   if (res.max_energy_error > options_.energy_tolerance) {
     std::ostringstream os;
     os << "the energy balance error reached " << res.max_energy_error
@@ -1387,7 +1479,8 @@ ExplicitResult ExplicitDynamics::run(const ExplicitDrive& drive, const ExplicitS
   timing.add("total", wall.elapsed_seconds());
   log::info("explicit run ", res.completed ? "completed" : "STOPPED", ": ", step, " steps, ",
             wall.elapsed_seconds(), " s (", wall.elapsed_seconds() / std::max<long>(step, 1) * 1e3,
-            " ms a step), kinetic/internal ", res.max_kinetic_ratio, ", energy error ",
+            " ms a step), kinetic/internal ", res.max_kinetic_ratio,
+            ", penetration/thickness ", res.max_penetration_ratio, ", energy error ",
             res.max_energy_error, ", added mass ", 100.0 * res.added_mass_fraction, " %");
   return res;
 }
