@@ -736,7 +736,6 @@ StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summar
       {"incompatible, 1 layer, 2x2x2", ElementFormulation::IncompatibleModes, 0, 10, 1, 1, false},
       {"incompatible, 2 layers, 2x2x3", ElementFormulation::IncompatibleModes, 3, 10, 1, 2, false},
       {"standard, 1 layer, 2x2x5", ElementFormulation::Standard, 5, 10, 1, 1, false},
-      {"standard, 4 layers, 2x2x2", ElementFormulation::Standard, 0, 40, 4, 4, true},
       {"standard, 8 layers, 2x2x2", ElementFormulation::Standard, 0, 80, 8, 8, true},
   };
   CsvWriter csv(path_join(out_dir, "im_springback.csv"),
@@ -766,16 +765,29 @@ StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summar
     records.push_back(rec);
   }
   csv.close();
-  // The reference: Richardson extrapolation of the 4- and 8-layer standard
-  // meshes (second order), and its distance to the 8-layer value as the
-  // reference's own uncertainty.
+  // The reference: the springback of beam theory, M / (E I) with the moment
+  // of the bilinear uniaxial stress sigma(kappa z) over the rectangular
+  // section (the unloading is elastic: the surface stress after it is
+  // -117 MPa, inside the yield stress); exact for the uniaxial stress state
+  // of the strip. The standard Hex8 on 8 layers of cubic cells checks the
+  // 3-D strip against it; its elastic core boundary |z| = t/8 falls on an
+  // element boundary, so its Gauss points integrate a smooth stress per
+  // element. (A Richardson extrapolation from 4 and 8 layers, used before,
+  // is biased: on 4 layers the kink lies inside the elements and their
+  // quadrature error is no h^2 term.)
   const auto springback_of = [&](std::size_t i) {
     return results[i].loaded_curvature - results[i].released_curvature;
   };
-  const Scalar s4 = springback_of(5);
-  const Scalar s8 = springback_of(6);
-  const Scalar reference = s8 + (s8 - s4) / 3.0;
-  const Scalar uncertainty = std::abs(reference - s8) / std::abs(reference);
+  const Scalar tangent = youngs * p.hardening_modulus / (youngs + p.hardening_modulus);
+  const Scalar h = 0.5 * thickness;
+  const Scalar core = kappa_y / kappa * h;  // the half-height of the elastic core [m]
+  const Scalar moment =
+      2.0 * width *
+      (youngs * kappa * core * core * core / 3.0 +
+       (sy - tangent * sy / youngs) * (h * h - core * core) / 2.0 +
+       tangent * kappa * (h * h * h - core * core * core) / 3.0);
+  const Scalar reference = moment / (youngs * width * thickness * thickness * thickness / 12.0);
+  const Scalar fine_mesh = std::abs(springback_of(5) - reference) / std::abs(reference);
   const auto error_of = [&](std::size_t i) {
     return results[i].completed ? std::abs(springback_of(i) - reference) / std::abs(reference)
                                 : 1.0;
@@ -799,10 +811,10 @@ StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summar
   bool completed = true;
   for (const StripResult& r : results) completed = completed && r.completed;
   json::Value block = json::Value::make_object();
-  block.set("kind", str("verification (converged fine mesh)"));
+  block.set("kind", str("verification (beam theory, checked by a fine mesh)"));
   block.set("records", records);
   block.set("reference_springback_per_m", num(reference));
-  block.set("reference_uncertainty", num(uncertainty));
+  block.set("error_standard_8_layers", num(fine_mesh));
   block.set("error_incompatible_1_layer_2x2x5", num(judged));
   block.set("error_incompatible_1_layer_2x2x7", num(seven));
   block.set("error_incompatible_1_layer_2x2x2", num(error_of(2)));
@@ -816,8 +828,11 @@ StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summar
                 "L/2)(z - t/2) to k = 4 k_y (k_y = 2 sigma_y/(E t)), then released onto "
                 "statically determinate supports (the forming driver's release). The "
                 "curvature is the relative rotation of the end faces (least-squares du_x/dz) "
-                "over L; the springback is its change on release. Reference: the standard "
-                "Hex8 on 4 and 8 layers of cubic cells, Richardson-extrapolated. One "
+                "over L; the springback is its change on release. Reference: beam theory, "
+                "M / (E I) with the moment of the bilinear uniaxial stress over the section "
+                "(the unloading elastic), checked by the standard Hex8 on 8 layers of cubic "
+                "cells (error_standard_8_layers; the elastic core boundary on an element "
+                "boundary). One "
                 "incompatible-mode layer represents the linear strain through the "
                 "thickness and unloads exactly (M / (E I)); what is left is the Gauss "
                 "quadrature of the kinked elastic-plastic stress through the thickness, "
@@ -827,18 +842,18 @@ StudyOutcome study_im_springback(const std::string& out_dir, json::Value& summar
   StudyOutcome o;
   o.name = "elastoplastic bending and springback, one incompatible-mode layer, 2x2x5 rule";
   o.kind = "verification";
-  o.metric = "relative springback error vs the extrapolated fine standard mesh (2x2x7 <= 2 %)";
+  o.metric = "relative springback error vs beam theory M/(EI) (2x2x7 <= 2 %, 8-layer mesh <= 0.5 %)";
   o.value = judged;
   o.tolerance = 0.05;
-  o.passed = completed && judged <= o.tolerance && seven <= 0.02 && uncertainty <= 0.01 &&
+  o.passed = completed && judged <= o.tolerance && seven <= 0.02 && fine_mesh <= 0.005 &&
              judged < 0.5 * standard_one_layer;
   std::ostringstream note;
   note << "2x2x7: " << app::format(seven, 3) << "; 1 layer 2x2x2: "
        << app::format(error_of(2), 3) << "; standard 1 layer 2x2x5: "
        << app::format(standard_one_layer, 3) << "; quadrature estimate 5 / 7 points "
        << app::format(moment_quadrature_error(5), 3) << " / "
-       << app::format(moment_quadrature_error(7), 3) << "; reference uncertainty "
-       << app::format(uncertainty, 3);
+       << app::format(moment_quadrature_error(7), 3) << "; standard 8 layers vs beam theory "
+       << app::format(fine_mesh, 3);
   o.note = note.str();
   return o;
 }

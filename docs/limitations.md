@@ -238,7 +238,7 @@ is within 1 % of Kirchhoff (`docs/verification.md`, section 27). Its limits:
 `model.integration.thickness_points` gives a Hex8 sheet 1 to 7 Gauss points
 through each layer; the one springback study (a strip bent to four times its
 first-yield curvature) measures the error of one incompatible-mode layer at
-3.2 % with 5 points and 0.6 % with 7 against a converged fine mesh, which is
+3.5 % with 5 points and 0.9 % with 7 against beam theory, which is
 the Gauss quadrature of the kinked stress; the rule refines the elements'
 natural axis, so a mesh from a file must have it across the sheet (warned
 about otherwise), and a state transferred between rules would need a

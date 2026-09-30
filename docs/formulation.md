@@ -417,8 +417,8 @@ the stress-evaluation points and every consumer follow the rule, in the
 point order of the other rules (`zeta` the slowest index, `xi` the fastest).
 The integration of the moment of a rigid-plastic shell outside an elastic
 core of a quarter of the half-thickness (bending to `4 k_y`) is short by
-3.5 % with 5 points and 0.9 % with 7; the springback study measures 3.2 %
-and 0.6 % (`docs/verification.md`, section 27). The CalculiX export refuses
+3.5 % with 5 points and 0.9 % with 7; the springback study measures 3.5 %
+and 0.9 % against beam theory (`docs/verification.md`, section 27). The CalculiX export refuses
 the rule (CalculiX's `C3D8`/`C3D8I` have the fixed 2 x 2 x 2 rule).
 
 ### The linear simplices

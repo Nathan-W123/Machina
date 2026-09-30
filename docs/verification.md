@@ -68,7 +68,7 @@ All numbers in this document come from `results/verification/summary.json`,
 | Slender cantilever, one incompatible-mode Hex8 through the depth, vs Timoshenko | validation | `|tip / Timoshenko - 1|` on 20 x 1 x 1, `nu = 0` (every `nx >= 20`, `nu` and `L/h` up to 1000 within 5 % also required) | `1.62e-03` | `0.02` | PASS |
 | MacNeal-Harder straight beam, incompatible-mode Hex8 | validation | worst `|tip / reference - 1|`: rectangular cells, both loads; parallelogram cells, in plane | `2.71e-02` | `0.03` | PASS |
 | Thin square plate, `t/a = 1/50`, two incompatible-mode Hex8 layers, vs Kirchhoff | validation | worst `|centre / Kirchhoff - 1|` on 16 x 16 x 2, clamped and simply supported | `9.25e-03` | `0.03` | PASS |
-| Elastoplastic bending and springback, one incompatible-mode layer, 2 x 2 x 5 rule, vs a converged fine standard mesh | verification | relative springback error (2 x 2 x 7 within 2 %, the reference within 1 % and half the standard one-layer error also required) | `3.20e-02` | `0.05` | PASS |
+| Elastoplastic bending and springback, one incompatible-mode layer, 2 x 2 x 5 rule, vs beam theory | verification | relative springback error vs `M/(E I)` (2 x 2 x 7 within 2 %, the 8-layer standard mesh within 0.5 % and half the standard one-layer error also required) | `3.46e-02` | `0.05` | PASS |
 
 Supporting measurements from the same runs:
 
@@ -2253,25 +2253,31 @@ above for that reason.
 2 mm (`E = 200 GPa`, `nu = 0.3`, `sigma_y = 250 MPa`, linear hardening
 `1 GPa`), small strain, bent by end rotations to `4 k_y` and released onto
 statically determinate supports by the forming driver; springback = change
-of the end-face relative rotation over `L`. Reference: the standard Hex8 on
-4 and 8 layers of cubic cells (3 075 and 19 683 unknowns),
-Richardson-extrapolated to `1.8468 1/m` (the 8-layer value is `3.6e-3` from
-it):
+of the end-face relative rotation over `L`. Reference: beam theory,
+`M/(E I) = 1.85168 1/m` with the moment of the bilinear uniaxial stress over
+the section (the unloading elastic: the surface stress after it is
+`-117 MPa`), checked by the standard Hex8 on 8 layers of cubic cells (19 683
+unknowns): `1.85333 1/m`, `8.9e-4` from it (judged within `5e-3`). Its
+elastic core boundary `|z| = t/8` lies on an element boundary; a Richardson
+extrapolation from 4 and 8 layers, used before, gave `1.8468 1/m`, `2.7e-3`
+on the wrong side, because on 4 layers the kink lies inside the elements
+and their quadrature error is no `h^2` term:
 
 | Model | Unknowns | Springback [1/m] | Error |
 |-------|---:|---:|---:|
-| incompatible, 1 layer, 2 x 2 x 5 | 132 | `1.7877` | `3.2e-2` |
-| incompatible, 1 layer, 2 x 2 x 7 | 132 | `1.8356` | `6.0e-3` |
+| incompatible, 1 layer, 2 x 2 x 5 | 132 | `1.7877` | `3.46e-2` |
+| incompatible, 1 layer, 2 x 2 x 7 | 132 | `1.8356` | `8.7e-3` |
 | incompatible, 1 layer, 2 x 2 x 2 | 132 | `2.1792` | `0.18` |
-| incompatible, 2 layers, 2 x 2 x 3 | 198 | `1.8261` | `1.1e-2` |
+| incompatible, 2 layers, 2 x 2 x 3 | 198 | `1.8261` | `1.4e-2` |
 | standard, 1 layer, 2 x 2 x 5 | 132 | `2.1788` | `0.18` |
 
 One incompatible-mode layer represents the linear strain through the
 thickness and unloads exactly (`M/(E I)`); what is left is the Gauss
 quadrature of the kinked stress: the moment of a rigid-plastic shell outside
 the elastic core (`|z| < t/8`) is short by `3.5e-2` with 5 points and
-`8.8e-3` with 7. Two points a layer are far from enough. The 8-layer
-reference takes 125 s of the study's 131 s (2 threads, load average 2 to 4).
+`8.8e-3` with 7, which the measured errors match. Two points a layer are
+far from enough. The 8-layer mesh takes 140 s of the study's 141 s (2
+threads, load average about 6).
 
 **Plastic collapse** (`--study plastic-cylinder`, reported variant). The
 incompatible-mode Hex8 without mean dilatation does not lock under the
