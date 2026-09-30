@@ -262,10 +262,11 @@ it (section 5 of `docs/forming.md`). Explicit forming steps (`form_explicit`,
 section 7) converge to the implicit springback as the equivalent tool speed
 falls (23 %, 9 %, 4 % and 1.3 % of the smoke case's springback at 28, 14,
 7 and 3.5 m/s) and run the cone's toolpath at about 300 time steps a second
-on two threads (0.47 us an element and step), some 17 minutes for its
-305 000 steps at 2 m/s - though with the Green-Lagrange elastoplastic law
-the cone stops at 88 % of its path, an element under the tool collapsing
-at plastic strains above 1 (section 7.4).
+on two threads (0.47 us an element and step) with the Green-Lagrange law -
+which, softening in compression, lets an element under the tool collapse at
+88 % of the path - and complete the whole cone with the logarithmic
+kinematics at 4 m/s in 68 minutes on two threads of a loaded machine
+(section 7.4).
 
 ### Benchmarks
 
