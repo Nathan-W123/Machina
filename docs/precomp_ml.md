@@ -378,12 +378,17 @@ first), then the largest contributions to the Mahalanobis distance.
 
 **Setup fields.** Every `FormingSetup` field that no feature describes -
 blank and clamp, mesh, element, tool path style, spacing and direction,
-contact, increment, release, kinematics, solver - is recorded from the
-training setups (a range for numbers, the set of values otherwise); a query
-outside puts the part outside the envelope, with `setup.<field>` first among
-the reasons and the details in `setup_mismatch`. (A setup whose tool path
-cannot form the part at all - a spiral on several pockets - raises instead:
-the features need the path.)
+contact, increment, release, kinematics, solver, the rim support and its
+settings (`support`, `support_settings`; `docs/precomp.md`, "Rim support") -
+is recorded from the training setups (a range for numbers, the set of
+values otherwise); a query outside puts the part outside the envelope, with
+`setup.<field>` first among the reasons and the details in `setup_mismatch`.
+A model trained on single-point forming therefore refuses a backing plate
+or DSIF, and one trained on a support refuses another. A field the model
+does not record at all was added after it was trained: its runs had the
+field's default, so any other value is outside (the mismatch says so). (A
+setup whose tool path cannot form the part at all - a spiral on several
+pockets - raises instead: the features need the path.)
 
 **What it detects.** New **descriptors**, not new family names. Leaving each
 family out in turn (see [Results](#results-on-proxy-data)), only freeform -
