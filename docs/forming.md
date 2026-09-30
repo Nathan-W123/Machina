@@ -720,7 +720,16 @@ load average 2.7 to 2.9 before each run):
 |---|---|---|---|---|---|---|
 | 1 | 158 | 879 | 715 | 0.93 s (12 %) | 0.12 s | 0.50 s |
 | 2 | 296 | 470 | 358 | 0.69 s (13 %) | 0.10 s | 0.26 s |
-| 4 | (see below) | | | | | |
+| 4 | 195 (27 with the default active wait) | 711 | 548 | 1.17 s | 0.12 s | 0.29 s |
+
+The four-thread row was measured with other jobs holding about three of the
+four cores (load average 3.1 to 3.6; the one- and two-thread rows repeated
+then gave 134 and 230 time steps a second): it shows the oversubscription,
+not the code. With `OMP_WAIT_POLICY=PASSIVE` four threads still gained 10 %
+over two; with OpenMP's default active wait a thread spinning at a barrier
+took the core its partner needed, and the run was seven times slower. On a
+shared machine, use no more threads than there are free cores (or passive
+waiting).
 
 The internal forces - the dedicated kernel's `3 000` instructions an element
 and step, vectorised over the eight points - take 80 % and scale with the
@@ -728,27 +737,30 @@ threads; the vector updates are memory-bound (33 000 DOFs, a dozen arrays).
 The step loop allocates nothing (tested); the stable-step updates (every
 1 000 steps, an eigenvalue problem per element) and the records allocate.
 
-**The full cone** (`configs/forming/spif_cone_60_explicit.json`: 622 mm of
-toolpath, ten contours to 10 mm, 7 200 Hex8; selective mass scaling to
-1 us, scale about 224, `max_kinetic_ratio` 0.012 at 2 m/s and 0.005 at
-1 m/s, energy balance `2e-5` to `3e-5`):
+**The full cone** (622 mm of toolpath, ten contours to 10 mm, 7 200 Hex8;
+selective mass scaling to 1 us, scale about 224; `sparlab_form --threads 2`):
 
 | Run | Tool speed | Time steps | Wall [s] (load) | Result |
 |---|---|---|---|---|
-| fixed scaling | 2 m/s | 367 800 | 1 871 (3.5 to 8.7) | stopped at pseudo-time 9.70 s of 11.9 (88 % of the path): element 1777 inverted; the step fell from 1 us to 0.43 us as the wall thinned |
-| dynamic scaling | 1 m/s | 539 600 | 4 598 (5 to 11) | stopped at the same place, the same element; the step held at 1 us (538 mass updates; added mass 224 to 261 times the physical, the largest element scale 1 262) |
-| logarithmic kinematics, dynamic scaling | 2 m/s | (running) | | |
+| Green-Lagrange (`"finite"`), fixed scaling | 2 m/s | 367 800 | 1 871 (3.5 to 8.7) | stopped at pseudo-time 9.70 s of 11.9 (88 % of the path): element 1777 inverted; the step fell from 1 us to 0.43 us as the wall thinned; `max_kinetic_ratio` 0.012, energy balance `2.1e-5` |
+| Green-Lagrange, dynamic scaling | 1 m/s | 539 600 | 4 598 (5 to 11) | stopped at the same place, the same element; the step held at 1 us (538 mass updates; added mass 224 to 261 times the physical, the largest element scale 1 262); 0.005, `3.0e-5` |
+| **logarithmic, dynamic scaling** (the deck) | 4 m/s | 152 677 + 2 750 (retract) | **4 081** (3 to 8) | **completed**: depth 10.18 mm, largest plastic strain 1.03; springback over the release 0.045 mm largest, 0.019 mm RMS on the tool-side surface; `max_kinetic_ratio` 0.026 (form), energy balance `5.3e-5`; 152 mass updates (added mass 250 times the physical, largest element scale 577); release 10 increments, 40 iterations (55 s of factorisation); internal forces 95 % of the time (at the 7.5 us-per-element kernel of the time, before the 5.8 us one) |
 
 Both Green-Lagrange runs stop at the same point of the path - the tool's
 step-down from the ninth contour to the tenth, its tip pressing the part's
 floor at 7 mm radius - at the same element under it, whatever the speed and
-the mass scaling: the limit is the model's, not the integration's (the
-additive Green-Lagrange elastoplastic law at plastic strains above 1 - 1.04
-there - on 1 mm elements under a 5 mm tool; the implicit analysis has not
-been run this far, at about 7 hours). With the unloaded rate above (296
-time steps a second on two threads) the full path takes 305 000 steps
-(17 minutes) at 2 m/s and 610 000 (34 minutes) at 1 m/s with dynamic
-scaling on two threads - against the implicit analysis's estimated 7 hours.
+the mass scaling: the limit is the law's, not the integration's (the
+additive Green-Lagrange law softens in compression, section 7.5; the
+plastic strain there is 1.04). With the logarithmic kinematics the same
+path completes. On an unloaded machine (296 time steps a second on two
+threads with the Green-Lagrange kernel) the Green-Lagrange path would take
+305 000 steps, 17 minutes at 2 m/s; the logarithmic kernel costs 5.8 us
+against 0.64 us an element and step on one thread, so the deck's
+logarithmic run takes about an hour on two threads, and 2 to 4 hours at
+2 or 1 m/s - against the implicit analysis's estimated 7 hours (with the
+Green-Lagrange law, which would meet the same collapse). The implicit
+analysis could not be run over the full cone for comparison; the smoke
+study (section 7.3) is the comparison.
 
 **Choosing the speed for a part.** The cone's kinetic energy ratio stays far
 below the 0.1 warning even at 2 m/s (0.012, against 0.25 on the smoke case
