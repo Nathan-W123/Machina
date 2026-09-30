@@ -7,6 +7,7 @@ runs these decks in test_integration_sparlab.py.
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -363,3 +364,26 @@ def test_a_model_refuses_a_setup_with_a_support_it_was_not_trained_on(base):
     assert [m["field"] for m in miss] == ["support"] and "predates" in miss[0]["note"]
     union = setup_envelope_union(old, setup_envelope([dsif]))
     assert union["fields"]["support"] == {"values": ["dsif", "none"]}
+
+
+def test_the_command_line_writes_and_simulates_a_supported_setup(tmp_path, base, cone, counter,
+                                                                 capsys):
+    from precomp.cli import main
+
+    out = tmp_path / "setup.json"
+    assert main(["setup", "--out", str(out), "--set", "blank_size=0.04",
+                 "clamp_margin=0.005", "element_size=0.002", "tool_radius=0.004",
+                 "step_down=0.001", "support=backing_plate",
+                 'support_settings={"clearance": 0.002}',
+                 f"executable={base.executable}"]) == 0
+    doc = read_json(out)
+    assert doc["support"] == "backing_plate" and doc["support_settings"] == {"clearance": 0.002}
+    cone.save(tmp_path / "target.npz")
+    capsys.readouterr()
+    assert main(["simulate", "--setup", str(out), "--commanded", str(tmp_path / "target.npz"),
+                 "--target", str(tmp_path / "target.npz"),
+                 "--work-dir", str(tmp_path / "w")]) == 0
+    res = json.loads(capsys.readouterr().out)
+    prov = read_json(Path(res["result"]).parent / "precomp_deck.json")
+    assert prov["support"]["outline_from"] == "target"
+    assert prov["support"]["plate"]["clearance_m"] == 0.002

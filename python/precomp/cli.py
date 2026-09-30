@@ -167,8 +167,9 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
     setup = _load_setup(args.setup)
     commanded = _load_map(args.commanded)
+    target = _load_map(args.target) if args.target else None
     res = simulate(setup, commanded, args.work_dir, cache=not args.no_cache,
-                   retry_failed=args.retry_failed)
+                   retry_failed=args.retry_failed, target=target)
     step = int(args.step) if args.step.lstrip("-").isdigit() else args.step
     formed = res.formed_surface(step, grid=commanded.grid)
     if args.out:
@@ -375,6 +376,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--setup", required=True)
     s.add_argument("--commanded", required=True, help="height map .npz")
     s.add_argument("--work-dir", required=True, help="run cache directory")
+    s.add_argument("--target", help="height map .npz of the part a support's fixture is made "
+                                    "for (the backing plate's opening and the rim pass band "
+                                    "follow its outline; default: the commanded surface)")
     s.add_argument("--step", default="-1", help="step whose surface to write (index or name)")
     s.add_argument("--out", help="formed surface .npz")
     s.add_argument("--no-cache", action="store_true")
