@@ -194,15 +194,39 @@
     "mlp"
   ],
   "n_per_family": 10,
+  "reruns": [
+    {
+      "command": "python3 python/scripts/springback_benchmark.py --out benchmarks/springback --work benchmarks/springback/work --n-per-family 10 --models gbm mlp --workers 2 --da-fe-runs 3",
+      "created_at": "2026-09-30T05:56:47Z",
+      "load_average_end": [
+        4.96728515625,
+        4.4169921875,
+        4.3779296875
+      ],
+      "load_average_start": [
+        4.04736328125,
+        4.21142578125,
+        4.31982421875
+      ],
+      "timings_s": {
+        "fe_da_s": 12.84719261599821,
+        "gbm_s": 67.77505736700186,
+        "generate_s": 0.0008908430027076975,
+        "mlp_s": 28.53956494399972,
+        "total_s": 110.13647688000128
+      }
+    }
+  ],
   "simulations": {
-    "complete": 113,
+    "complete": 104,
     "failed": 0,
-    "runtime_s_max": 637.4338434029996,
-    "runtime_s_mean": 250.0411776358141,
-    "runtime_s_median": 217.589173114,
+    "run_cache_total": 117,
+    "runtime_s_max": 608.7058101860002,
+    "runtime_s_mean": 242.83843567524033,
+    "runtime_s_median": 212.11126072600018,
     "runtime_s_min": 102.91201894599726,
-    "runtime_s_total": 28254.653072846995,
-    "total": 113
+    "runtime_s_total": 25255.197310224994,
+    "total": 104
   },
   "sparlab_version": "sparlab 1.0.0 (a014858e7dbc-dirty)",
   "stage": "stage_n10",
@@ -219,7 +243,7 @@
     "mlp": 52.26876957400236
   },
   "versions": {
-    "git_revision": "e4dd9d3",
+    "git_revision": "9c2b0b8",
     "numpy": "2.4.6",
     "pandas": "3.0.6",
     "platform": "Linux-6.18.44-fc-v50-x86_64-with-glibc2.39",

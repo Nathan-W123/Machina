@@ -401,8 +401,12 @@ def ml_compensate(name, sur, test_points, cfg, work: Path, stage: str, sim):
     for info, (p, c), oc in zip(rows, jobs, outs):
         info["commanded_depth_mm"] = c.depth / MM
         info["deck_hash"] = oc.provenance.get("deck_hash")
-        info["runtime_s"] = oc.provenance.get("runtime_s")
-        info["cache_hit"] = oc.provenance.get("cache_hit")
+        # the verifying run as first made (a rerun fetches it from the cache)
+        if "runtime_s" not in info:
+            info["runtime_s"] = oc.provenance.get("runtime_s")
+            info["cache_hit"] = oc.provenance.get("cache_hit")
+            if oc.ok:
+                jdump(root / f"{p.point_id}.json", info)
         info["verify_ok"] = oc.ok
         if oc.ok:
             info.update(deviation_metrics(oc.formed, p.target()))
@@ -448,6 +452,55 @@ def simulation_table(work: Path) -> pd.DataFrame:
         except (OSError, ValueError, KeyError):
             pass
         rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def region_table(work: Path, points, cfg, da, ml_rows) -> pd.DataFrame:
+    """Per test part and method, the RMS vertical deviation in three regions
+    of the target: the upper band of the part (less than `band` deep - the
+    rim, where the sheet sags between clamp and first contour and the
+    command cannot rise above the sheet plane), the rest of the part, and
+    the flange (outside the part; held at the target by the compensation).
+    The formed surfaces are read back from the run cache by deck hash."""
+    from precomp.fea import load_result
+    from precomp.metrology import flange_mask, part_mask, vertical_deviation
+
+    band = 1e-3
+    rows = []
+    for p in points:
+        if split_of(p.point_id, cfg) != "test":
+            continue
+        target = p.target()
+        part = part_mask(target)
+        upper = part & (target.z > -band)
+        regions = {"upper_band": upper, "deep": part & ~upper, "flange": flange_mask(target)}
+        runs = []
+        for it in da.get(p.point_id, {}).get("iterations", []):
+            k = it["fe_run"] - 1
+            runs.append(("uncompensated" if k == 0 else f"FE-DA-{k}", it.get("deck_hash")))
+        for name, rs in ml_rows.items():
+            info = next((x for x in rs if x["point_id"] == p.point_id), None)
+            if info and info.get("verify_ok"):
+                runs.append((f"ML-{name.upper()}", info.get("deck_hash")))
+        for method, h in runs:
+            if not h:
+                continue
+            d = work / "runs" / "runs" / h[:2] / h / "output"
+            try:
+                dev = vertical_deviation(load_result(d).formed_surface(-1, grid=target.grid),
+                                         target)
+            except Exception as exc:  # reported, not hidden
+                rows.append({"point_id": p.point_id, "method": method, "error": str(exc)[:200]})
+                continue
+            r = {"point_id": p.point_id, "method": method}
+            tot = float(np.sum(dev.z[part] ** 2))
+            for reg, m in regions.items():
+                sel = m & dev.mask
+                r[f"{reg}_rms_mm"] = float(np.sqrt(np.mean(dev.z[sel] ** 2))) / MM
+                r[f"{reg}_bias_mm"] = float(np.mean(dev.z[sel])) / MM
+                r[f"{reg}_nodes"] = int(sel.sum())
+            r["upper_band_share_of_part_sq_error"] = float(np.sum(dev.z[upper] ** 2)) / tot
+            rows.append(r)
     return pd.DataFrame(rows)
 
 
@@ -552,7 +605,26 @@ def write_tables(out: Path, stage: str, points, cfg, da, ml_rows, dz_frames, fai
                               "reason": info.get("error")})
     pd.DataFrame(frows, columns=["stage", "sample_id", "reason", "resolved_later"]).to_csv(
         sdir / "failures.csv", index=False)
+    reg = region_table(work, points, cfg, da, ml_rows)
+    reg["data_source"] = LABEL
+    reg.to_csv(sdir / "regions.csv", index=False, float_format="%.4f")
+    # the stage's own runs: its samples, FE-DA runs and verifying runs
+    pids = {p.point_id for p in points}
+    idx = ds.index()
+    idx = idx[idx["part_id"].isin(pids)] if len(idx) else idx
+    hashes = set()
+    for sid in idx["sample_id"] if len(idx) else []:
+        doc = json.loads((ds.root / "samples" / f"{sid}.json").read_text())
+        hashes.add((doc.get("provenance") or {}).get("deck_hash"))
+    for r in da.values():
+        hashes.update(it.get("deck_hash") for it in r["iterations"])
+    for rows in ml_rows.values():
+        hashes.update(x.get("deck_hash") for x in rows)
+    fail_hashes = {f.get("deck_hash") for f in fails}
     sims = simulation_table(work)
+    cache_total = int(len(sims))
+    if len(sims):
+        sims = sims[sims["deck_hash"].isin(hashes | fail_hashes)]
     sims.to_csv(sdir / "simulations.csv", index=False, float_format="%.4g")
     meta = dict(meta)
     ok = sims[sims["status"] == "complete"] if len(sims) else sims
@@ -564,12 +636,21 @@ def write_tables(out: Path, stage: str, points, cfg, da, ml_rows, dz_frames, fai
         "runtime_s_min": float(ok["runtime_s"].min()) if len(ok) else None,
         "runtime_s_max": float(ok["runtime_s"].max()) if len(ok) else None,
         "runtime_s_total": float(ok["runtime_s"].sum()) if len(ok) else None}
-    idx = ds.index()
+    meta["simulations"]["run_cache_total"] = cache_total
     meta["dataset"] = {"samples": int(len(idx)), "parts": int(idx["part_id"].nunique()),
                        "by_split": {s: int(sum(split_of(pid, cfg) == s
                                                for pid in idx["part_id"].unique()))
                                     for s in ("train", "calibration", "test")},
                        "generation_failures": len(fails)}
+    prev = sdir / "run.json"
+    if prev.exists():                 # a rerun: keep the record of the run that did the work
+        old = json.loads(prev.read_text())
+        reruns = old.pop("reruns", [])
+        reruns.append({k: meta[k] for k in ("created_at", "timings_s", "load_average_start",
+                                            "load_average_end", "command")})
+        meta = {**meta, **{k: old[k] for k in ("created_at", "timings_s", "training_time_s",
+                                               "load_average_start", "load_average_end")
+                           if k in old}, "reruns": reruns}
     jdump(sdir / "run.json", meta)
     # markdown
     lines = [f"# {stage}: SparLab simulations (not experiments)", "",
@@ -602,7 +683,21 @@ def write_tables(out: Path, stage: str, points, cfg, da, ml_rows, dz_frames, fai
                          + (" *" if "envelope" in str(x["note"].iloc[0]) else ""))
         lines.append(f"| {pid} | " + " | ".join(cells) + " |")
     lines += ["", "`*` target outside the model's training envelope (compensated with the "
-              "override)."]
+              "override).", "",
+              "Mean over the test parts of the RMS vertical deviation per region [mm] "
+              "(upper band: part nodes less than 1 mm deep; share: of the squared error "
+              "over the part):", "",
+              "| Method | upper band RMS | bias | deep part RMS | bias | flange RMS | "
+              "share of error in upper band |", "|---|--:|--:|--:|--:|--:|--:|"]
+    if len(reg) and "upper_band_rms_mm" in reg:
+        g = reg.groupby("method").mean(numeric_only=True)
+        for m in methods:
+            if m in g.index:
+                r = g.loc[m]
+                lines.append(f"| {m} | {fmt(r['upper_band_rms_mm'])} | "
+                             f"{fmt(r['upper_band_bias_mm'])} | {fmt(r['deep_rms_mm'])} | "
+                             f"{fmt(r['deep_bias_mm'])} | {fmt(r['flange_rms_mm'])} | "
+                             f"{fmt(r['upper_band_share_of_part_sq_error'], 2)} |")
     (sdir / "tables.md").write_text("\n".join(lines) + "\n")
     return sm
 

@@ -193,15 +193,38 @@
     "gbm"
   ],
   "n_per_family": 6,
+  "reruns": [
+    {
+      "command": "python3 python/scripts/springback_benchmark.py --out benchmarks/springback --work benchmarks/springback/work --n-per-family 6 --models gbm --workers 2 --da-fe-runs 2",
+      "created_at": "2026-09-30T05:54:52Z",
+      "load_average_end": [
+        4.138671875,
+        4.23193359375,
+        4.3271484375
+      ],
+      "load_average_start": [
+        3.8544921875,
+        4.20556640625,
+        4.3271484375
+      ],
+      "timings_s": {
+        "fe_da_s": 5.937872590999177,
+        "gbm_s": 84.2776011829992,
+        "generate_s": 0.0008518670001649298,
+        "total_s": 90.98803029099872
+      }
+    }
+  ],
   "simulations": {
-    "complete": 57,
+    "complete": 55,
     "failed": 0,
-    "runtime_s_max": 637.4338434029996,
-    "runtime_s_mean": 296.8547960072105,
-    "runtime_s_median": 284.32261038399974,
+    "run_cache_total": 117,
+    "runtime_s_max": 608.7058101860002,
+    "runtime_s_mean": 284.66194674683635,
+    "runtime_s_median": 283.60663556300005,
     "runtime_s_min": 140.07417404199987,
-    "runtime_s_total": 16920.723372410997,
-    "total": 57
+    "runtime_s_total": 15656.407071075999,
+    "total": 55
   },
   "sparlab_version": "sparlab 1.0.0 (a014858e7dbc-dirty)",
   "stage": "stage_n6",
@@ -216,7 +239,7 @@
     "gbm": 129.18653218799955
   },
   "versions": {
-    "git_revision": "12fd27b",
+    "git_revision": "9c2b0b8",
     "numpy": "2.4.6",
     "pandas": "3.0.6",
     "platform": "Linux-6.18.44-fc-v50-x86_64-with-glibc2.39",

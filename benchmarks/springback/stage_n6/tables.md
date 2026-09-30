@@ -1,6 +1,6 @@
 # stage_n6: SparLab simulations (not experiments)
 
-12 train / 4 calibration / 8 test parts; 48 samples; 57 simulations complete, 0 failed.
+12 train / 4 calibration / 8 test parts; 48 samples; 55 simulations complete, 0 failed.
 
 | Method | FE runs per part | n parts | vertical RMS mean [mm] | median [mm] | vertical max mean [mm] | normal RMS mean [mm] | RMS / uncompensated | better than uncompensated | better than DA-1 |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -22,3 +22,11 @@ Per part, vertical RMS [mm] (max |dev| in brackets):
 | truncated_cone-s2026-0001 | 0.703 (1.29) | 0.700 (0.98) | 0.699 (0.99) |
 
 `*` target outside the model's training envelope (compensated with the override).
+
+Mean over the test parts of the RMS vertical deviation per region [mm] (upper band: part nodes less than 1 mm deep; share: of the squared error over the part):
+
+| Method | upper band RMS | bias | deep part RMS | bias | flange RMS | share of error in upper band |
+|---|--:|--:|--:|--:|--:|--:|
+| uncompensated | 1.099 | -1.086 | 0.328 | -0.137 | 0.376 | 0.87 |
+| FE-DA-1 | 0.879 | -0.856 | 0.346 | 0.126 | 0.324 | 0.79 |
+| ML-GBM | 0.883 | -0.860 | 0.356 | 0.127 | 0.325 | 0.78 |
