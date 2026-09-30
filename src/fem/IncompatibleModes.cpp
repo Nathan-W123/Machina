@@ -499,19 +499,46 @@ Condensed solve_and_condense(const Setting& set, Workspace& points,
         full <= kFullStepReduction * residual ||
         sums.r.tail<kA>().cwiseAbs().maxCoeff() <=
             kLocalTolerance * sums.scale.maxCoeff() + kLocalRoundOff * sums.floor.maxCoeff();
-    const Scalar phi1 = direction.dot(sums.r.tail<kA>());
-    if (accepted_full || !(phi0 < 0.0) || !(phi1 > 0.0) || !std::isfinite(phi1)) {
-      // The step: it reduced |r_alpha|, or the potential still falls at its
-      // end (phi <= 0 there), or d is no descent direction (K_aa not
-      // positive definite: a non-associative law, an unstable state), in
-      // which case the iteration limit decides.
+    if (accepted_full) {
       alpha += reach * direction;
       residual = full;
       continue;
     }
+    const Scalar phi1 = direction.dot(sums.r.tail<kA>());
+    if (!(phi0 < 0.0) || !(phi1 > 0.0) || !std::isfinite(phi1)) {
+      // No bracket of the root of phi on the step: d is no descent
+      // direction (K_aa not positive definite - a non-associative law, an
+      // unstable state), or the potential, if any, still falls at the end
+      // of a step that raised |r_alpha| (it is not convex there). Halve the
+      // step on |r_alpha| and keep the best trial.
+      Scalar best_step = reach;
+      Scalar best = std::isfinite(full) ? full : std::numeric_limits<Scalar>::infinity();
+      bool last_is_best = true;
+      Scalar trial_step = reach;
+      for (int search = 0; search < kMaxLineSearch; ++search) {
+        trial_step *= 0.5;
+        ++out.cuts;
+        if (!try_pass(alpha + trial_step * direction)) {
+          last_is_best = false;
+          continue;
+        }
+        const Scalar n = sums.r.tail<kA>().norm();
+        last_is_best = n < best;
+        if (last_is_best) {
+          best = n;
+          best_step = trial_step;
+        }
+        if (n <= kFullStepReduction * residual) break;
+      }
+      if (!last_is_best) pass(alpha + best_step * direction);
+      alpha += best_step * direction;
+      residual = sums.r.tail<kA>().norm();
+      continue;
+    }
     // phi(0) < 0 < phi(reach): regula falsi with the Illinois modification,
-    // to |phi(s)| <= kLineSearchRatio |phi(0)|; a trial that inverts a
-    // point counts as beyond the root.
+    // each trial kept a tenth of the bracket from its ends (a kinked phi
+    // would otherwise creep along one end), to |phi(s)| <= kLineSearchRatio
+    // |phi(0)|; a trial that inverts a point counts as beyond the root.
     Scalar s0 = 0.0;
     Scalar f0 = phi0;
     Scalar s1 = reach;
@@ -520,7 +547,8 @@ Condensed solve_and_condense(const Setting& set, Workspace& points,
     int side = 0;
     evaluated = true;
     for (int search = 0; search < kMaxLineSearch; ++search) {
-      step = (s0 * f1 - s1 * f0) / (f1 - f0);
+      const Scalar width = s1 - s0;
+      step = std::clamp((s0 * f1 - s1 * f0) / (f1 - f0), s0 + 0.1 * width, s1 - 0.1 * width);
       evaluated = try_pass(alpha + step * direction);
       ++out.cuts;
       const Scalar f = evaluated ? direction.dot(sums.r.tail<kA>())

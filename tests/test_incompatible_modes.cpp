@@ -713,7 +713,7 @@ TEST_CASE("the local iteration of the incompatible modes converges through a loa
       INFO("local iterations " << el.internal_iterations);
       REQUIRE(el.yielding_points > 0);
       // Measured: 3 (small strain, J2 and Chaboche), 9 (logarithmic, J2),
-      // 13 (logarithmic, Chaboche, whose tangent is not symmetric).
+      // 12 (logarithmic, Chaboche, whose tangent is not symmetric).
       REQUIRE(el.internal_iterations <= 15);
       // And the result is the solution: a restart of the local iteration
       // from it stays there.

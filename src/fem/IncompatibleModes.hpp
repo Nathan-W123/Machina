@@ -50,7 +50,11 @@
 /// 1991, *Non-linear finite element analysis of solids and structures*
 /// vol. 1, sec. 9.3), whose root minimises the incremental potential along
 /// the direction wherever there is one (an associative return, a
-/// hyperelastic law). Elastic small strain is linear in \f$\alpha\f$ and
+/// hyperelastic law), each trial kept a tenth of the bracket from its ends;
+/// where \f$\phi\f$ brackets no root on the step (\f$K_{\alpha\alpha}\f$ not
+/// positive definite, a non-convex potential) the step is halved on
+/// \f$\|r_\alpha\|\f$ and the best trial kept. Elastic small strain is
+/// linear in \f$\alpha\f$ and
 /// converges in one iteration.
 ///
 /// **Condensation** at the converged parameters:
@@ -99,7 +103,7 @@ inline constexpr Scalar kFullStepReduction = 1.0 - 1.0e-4;
 inline constexpr int kMaxLineSearch = 8;
 /// The line search stops at \f$|d^T r_\alpha(\alpha + s d)| \le\f$ this
 /// times \f$|d^T r_\alpha(\alpha)|\f$.
-inline constexpr Scalar kLineSearchRatio = 0.1;
+inline constexpr Scalar kLineSearchRatio = 0.5;
 /// The relative tolerance of the local residual \f$r_\alpha\f$. The
 /// condensed force carries the last Newton correction, so its error is
 /// quadratic in this (1e-16); the points' states are consistent with it to
