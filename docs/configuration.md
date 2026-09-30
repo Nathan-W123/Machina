@@ -254,6 +254,13 @@ its interpolation is written for one solid material.
                             "edge_points": 2 } }
 ```
 
+A sheet of solid Hex8, one element layer through its thickness along `z`:
+
+```json
+"model": { "element_formulation": "incompatible_modes",
+           "integration": { "thickness_points": 5, "thickness_direction": "z" } }
+```
+
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `thickness` | number [m] | `1.0` | out-of-plane thickness, `> 0`; plane meshes only - a solid mesh rejects the key |
@@ -261,6 +268,9 @@ its interpolation is written for one solid material.
 | `integration.stiffness_points` | integer | `2` | Gauss points per direction for `K_e`, 1-4 (2x2 for the Q4, 2x2x2 for the Hex8); the linear simplices have a constant strain and integrate exactly with one point whatever is set here |
 | `integration.mass_points` | integer | `3` | Gauss points per direction for `M_e`, 1-4; the simplices use the exact closed-form consistent mass instead |
 | `integration.face_points` | integer | `2` | Gauss points per direction on a loaded edge or face, 1-4; `edge_points` is accepted as a synonym |
+| `element_formulation` | string | `standard` | `standard`: the isoparametric element; `incompatible_modes`: Hex8 only (a Tet or plane mesh is refused), the Hex8 with Wilson-Taylor incompatible modes (nine condensed parameters, Taylor's correction), which does not lock in bending - one or two elements through a sheet's thickness bend correctly. Linear and non-linear analyses (every kinematics, elastic, neo-Hookean, J2, Hill48, Chaboche) and the forming analysis; not with `mean_dilatation: all` (`auto` leaves it off for these elements); exported to CalculiX as `C3D8I` (`docs/formulation.md`, "The Hex8 with incompatible modes") |
+| `integration.thickness_points` | integer | `0` (= `stiffness_points`) | Hex8 only: Gauss points through the thickness of a sheet, 1-7, for the stiffness rule `stiffness_points` x `stiffness_points` x `thickness_points` (standard or incompatible modes): 5 to 7 integrate the kinked elastic-plastic stress of a bent sheet, which springback is sensitive to. The plastic history, the stress points and the outputs follow the rule; a CalculiX export refuses it |
+| `integration.thickness_direction` | string | `z` | `x`, `y` or `z`: the direction through the sheet, which carries `thickness_points` - the element's natural axis that the structured generator aligns with it (elements of a mesh from a file whose axis across the sheet is another are warned about) |
 
 ## Regions
 
@@ -611,7 +621,7 @@ optimisation is linear).
 | `enabled` | bool | `false` | run the non-linear analysis |
 | `kinematics` | string | `finite` | `finite`: the total Lagrangian formulation in the Green-Lagrange strain, large displacement and rotation. `finite_logarithmic`: the total Lagrangian formulation in the logarithmic (Hencky) strain `ln(C)/2` - large strain: the plasticity is the small-strain return in the log strain (exact for coaxial stretches of any size), the elasticity Hencky's, for elastic materials too; the thermal strain is `ln(1 + alpha dT)`; mean dilatation averages `ln J`; the summary reports the largest log strain and the stress CSV and VTK add the Kirchhoff stress and the log strain (`docs/formulation.md`, section 7d). `small_strain`: the linear strain on the undeformed geometry - no geometric stiffness, pressures on the undeformed faces, the rotation's load at the undeformed positions; with elastic materials it is the linear analysis, with plastic ones the classical small-strain elastoplastic analysis |
 | `material_model` | string | `saint_venant_kirchhoff` | the elastic law with `finite` kinematics. `saint_venant_kirchhoff`: the linear law between Green-Lagrange strain and second Piola-Kirchhoff stress - large rotation, small strain, any stress state. `neo_hookean`: the compressible neo-Hookean law - large strain, plane strain or solid meshes only, elastic materials only. A plastic material takes the Saint Venant-Kirchhoff form (its J2 return in the Green strain). `finite_logarithmic` kinematics has its own law (Hencky) and refuses `neo_hookean` |
-| `mean_dilatation` | string or bool | `auto` | the elements of a plastic material that average their dilatation over the element (B-bar; its Green-strain form with `finite` kinematics, the average of `ln J` with `finite_logarithmic`), which keeps them from locking under the isochoric plastic flow. `auto`: Q4 and Hex8, which lock without it; `all`: also Tet10; `none`. `true` and `false` stand for `all` and `none`. Plane stress and one-point elements (Tri3, Tet4) have nothing to average |
+| `mean_dilatation` | string or bool | `auto` | the elements of a plastic material that average their dilatation over the element (B-bar; its Green-strain form with `finite` kinematics, the average of `ln J` with `finite_logarithmic`), which keeps them from locking under the isochoric plastic flow. `auto`: Q4 and Hex8, which lock without it (not the Hex8 with incompatible modes, whose modes relax the constraint themselves); `all`: also Tet10 (refused with `element_formulation: incompatible_modes`); `none`. `true` and `false` stand for `all` and `none`. Plane stress and one-point elements (Tri3, Tet4) have nothing to average |
 | `method` | string | `load_control` | `load_control`: Newton at prescribed load factors. `arc_length`: Crisfield's cylindrical arc-length method, which follows the path through limit points |
 | `steps` | integer | `10` | load control: the equal steps to lambda = 1 it starts with (halved on failure, lengthened again after easy steps, never beyond this size). Arc length: the first arc length is that of the first of `steps` equal load increments |
 | `max_steps` | integer | `500` | converged steps before the run stops |

@@ -234,7 +234,168 @@ corners and the total is exactly `t_bar * area` at any resolution.
 
 The fully integrated Hex8 shares the Q4's stiffness in bending: it needs
 several elements through a bending depth, which the 3-D mesh-convergence
-study quantifies (`docs/verification.md`).
+study quantifies (`docs/verification.md`), or the incompatible modes below.
+
+### The Hex8 with incompatible modes
+
+With `model.element_formulation: "incompatible_modes"` a Hex8 mesh takes the
+element of Wilson, Taylor, Doherty and Ghaboussi (1973, *Incompatible
+displacement models*, in *Numerical and Computer Methods in Structural
+Mechanics*) with the correction of Taylor, Beresford and Wilson (1976, *A
+non-conforming element for stress analysis*, IJNME 10)
+(`elements/Hex8Incompatible.cpp`, `fem/IncompatibleModes.cpp`). The
+trilinear element cannot bend: a pure-bending field puts a parasitic shear
+`gamma_xz ~ x` into every cell, because its sides stay straight, so an
+element long against its depth is too stiff by a factor that grows as
+`(L/h)^2`. That is what spoils a sheet meshed with one or two elements
+through its thickness, and with it the springback, which is the elastic
+unloading of a bending moment.
+
+**The modes.** Three bubble fields `phi_k = 1 - xi_k^2` per displacement
+component (nine parameters `alpha` per element), which vanish at the nodes
+and are not continuous between elements. Their gradients are taken with the
+Jacobian `J_0` of the element centre, scaled by the ratio of determinants:
+
+```
+  g~_k(xi) = (j_0 / j(xi)) (-2 xi_k) J_0^-T e_k            (Taylor's correction)
+  H = U G^T + A G~^T                                        (A: 3 x 3, column m = pseudo-node m)
+```
+
+so `sum_q w_q j_q g~_k = 0` for every rule symmetric in each direction: a
+constant strain puts no load on the modes, `alpha = 0`, and the element
+passes the patch test on any geometry (Wilson's original fails it on a
+distorted cell). The modes enter every kinematic operator as three extra
+"pseudo-nodes": the element is an eleven-node element of 33 degrees of
+freedom `(u, alpha)`, and the linear `B`, the Green-Lagrange
+`B_NL(F, [G | G~])` and the geometric stiffness `([G|G~]^T S [G|G~]) x I` are
+those of the library applied to eleven gradient columns. In small strain the
+strain span of the modes is the enhanced field EAS-9 (Andelfinger and Ramm
+1993), and the condensed stiffness equals Simo and Rifai's (1990). In finite
+deformation this is the enhanced deformation gradient `F = I + H` of Simo
+and Armero (1992, *Geometrically non-linear enhanced strain mixed methods
+and the method of incompatible modes*, IJNME 33) and Simo, Armero and Taylor
+(1993, CMAME 110); it is objective (a rigid turn `R` is carried by `R A`).
+
+**Linear analyses** condense in closed form, with fixed-size 24 x 24,
+24 x 9 and 9 x 9 blocks:
+
+```
+  K* = K_uu - K_ua K_aa^-1 K_au,     K_aa = int B~^T D B~ dV,   K_au = int B~^T D B dV
+  B^ = B - B~ K_aa^-1 K_au          (int B^^T D B^ dV = K*)
+```
+
+`strain_operator` stays the compatible `B` (its normal rows are read as
+shape-function gradients elsewhere); the linear consumers take the
+condensed `B^`: stress recovery (whose modes also take their share of a
+non-uniform thermal strain), the thermal load `f* = int B^^T D eps_0 dV` and
+its self energy, and
+the geometric stiffness of linear buckling, which takes the stress of `B^`
+on the compatible gradients (the modes are left out of the initial-stress
+term, a linearised-buckling approximation). The mass and the surface loads
+are those of the Hex8: the modes carry no inertia and no load.
+
+**Non-linear analyses** (`nonlinear`, `forming`; small strain, `finite`,
+`finite_logarithmic`; elastic, neo-Hookean, J2, Hill48, Chaboche). The modes
+are internal, `r_alpha(u, alpha) = 0`, and on every evaluation of an element
+the parameters are found by Newton's method from the parameters committed
+at the last converged step, with every point's return from its committed
+state:
+
+```
+  alpha_0 = alpha_n,      alpha_{i+1} = alpha_i + s_i d_i,      d_i = -K_aa^-1 r_alpha
+  f*  = f_u - K_ua K_aa^-1 r_alpha        (the last correction: the error of f* is quadratic)
+  K*  = K_uu - K_ua K_aa^-1 K_au          (K_au, not K_ua^T, for a non-symmetric tangent)
+  q*  = q_u - K_ua K_aa^-1 q_a            (the thermal load rate)
+```
+
+so an element is a pure function of `(u, lambda)` and the committed
+history, which the line search, the step cuts, the arc length and the
+bitwise-deterministic parallel evaluation rely on (the Simo-Rifai update of
+`alpha` with the global iterate would not be). It stops at
+`|r_alpha|_inf <= 1e-8` of the gross scale `max_i sum_q w_q |B~_q|^T |sigma_q|`
+plus a round-off floor, and raises `SolverError`, which cuts the step, after
+25 iterations or at a singular `K_aa`. The full step (`s_i = 1`) is taken
+whenever it reduces `|r_alpha|`; far from the solution - a return far from
+its committed state, a load reversal - the points switch between elastic
+and plastic along the step, `r_alpha` is only piecewise smooth and Newton's
+iterates can cycle, so `s_i` then comes from a regula-falsi search for the
+root of `d_i^T r_alpha(alpha_i + s d_i)`, the derivative of the incremental
+potential along `d_i` wherever there is one (Crisfield 1991, *Non-linear
+finite element analysis of solids and structures*, vol. 1, sec. 9.3); a
+trial that inverts a point counts as beyond the root, and where that
+derivative brackets no root on the step (`K_aa` not positive definite, a
+non-convex potential) the step is halved on `|r_alpha|`, the best trial
+kept. Elastic small strain
+is linear in `alpha`: one iteration. Plastic steps converge quadratically;
+in the unit tests a converged step takes at most 3 local iterations, a
+reversal to six times the strain in one increment 3 to 12. Everything runs
+on fixed-size Eigen types (6 x 33 operators, the 9 x 9, 24 x 9, 24 x 24
+blocks) in a per-thread workspace: the local iteration allocates nothing.
+
+`NonlinearSystem` keeps the committed `alpha` of every element, elastic ones
+too, and commits it with the plastic states; the stress output evaluates
+the points at the committed parameters (the converged ones), so element
+stresses, strains and Jacobians are those of the enhanced `F = I + H`. The
+forming driver carries the parameters in its restartable `AnalysisState`
+(`internal`, per element); a state of the other formulation is refused. The
+committed parameters are only the start of the local iteration, not
+history: a restart without them finds the same state to the local
+tolerance, from further away.
+
+**Mean dilatation** (E-bar) is not combined with the modes: `all` is
+refused and `auto` does not apply it to the incompatible-mode Hex8.
+Averaging the dilatation of the augmented element leaves a zero-energy
+mode (the field `u = k (x z, y z, (z^2 - x^2 - y^2)/2)`, whose strain `k z I`
+averages to nothing), and averaging only the compatible dilatation leaves
+a sheet one element thick with a fraction of its bending stiffness. The
+modes relax the isochoric constraint of plastic flow themselves: they
+absorb the linear part of every point's dilatation, which is the part that
+locks.
+
+**Hourglassing in compression.** The enhanced elements of finite
+deformation can lose stability under large compression although the
+material and the compatible element are stable (Wriggers and Reese 1996,
+*A note on enhanced strain methods for large deformations*, CMAME 135). On
+a neo-Hookean unit cube (`nu = 0.3`) in homogeneous uniaxial compression,
+the condensed tangent of the compression test loses definiteness between
+the stretches 0.66 and 0.65 in a spurious hourglass mode, while the
+standard Hex8's stays positive definite to 0.3 (unit test). The thinning of
+a sheet under equibiaxial stretch - tensile stress - stays stable to a
+thickness stretch below 0.5. Springback (small elastic strains) is far from
+it; a formed part in large in-plane compression (a flange, a wrinkle) is
+not, and should be checked against the standard element there.
+
+**Limits.** The Taylor-corrected modes are exact in pure bending on
+affine cells (boxes, parallelepipeds) and lose much of their effect on
+trapezoidal ones: the MacNeal-Harder beam on trapezoidal cells gives 5 % of
+the reference deflection in plane and 3 % out of plane (MacNeal 1987, *A
+theorem regarding the locking of tapered four-noded membrane elements*,
+IJNME 24); curved walls of cones and pyramids are of that kind. The export
+to CalculiX writes `C3D8I`, which is not cross-validated here (no CalculiX
+on the machine).
+
+### A sheet's rule through its thickness
+
+`model.integration.thickness_points` (1 to 7) with
+`thickness_direction` (`x`, `y` or `z`, default `z`) gives every Hex8,
+standard or with incompatible modes, the `n x n x m` Gauss rule
+(`gauss_legendre_box`; `n = stiffness_points`, `m = thickness_points` along
+the natural axis that the structured generator aligns with that global
+axis; a mesh whose elements have another axis across the sheet is warned
+about). The elastic-plastic stress through a bent sheet is kinked where
+the plastic zones begin, which two Gauss points a layer integrate badly:
+springback is sensitive to it (Wagoner and Li 2007, *Simulation of
+springback: through-thickness integration*, Int. J. Plasticity 23). The
+rules of 5 to 7 points come from Newton's iteration on the Legendre
+recurrence; equal orders give the cube rule point for point and bit for
+bit. The history of the non-linear analysis (one plastic state per point),
+the stress-evaluation points and every consumer follow the rule, in the
+point order of the other rules (`zeta` the slowest index, `xi` the fastest).
+The integration of the moment of a rigid-plastic shell outside an elastic
+core of a quarter of the half-thickness (bending to `4 k_y`) is short by
+3.5 % with 5 points and 0.9 % with 7; the springback study measures 3.2 %
+and 0.6 % (`docs/verification.md`, section 27). The CalculiX export refuses
+the rule (CalculiX's `C3D8`/`C3D8I` have the fixed 2 x 2 x 2 rule).
 
 ### The linear simplices
 

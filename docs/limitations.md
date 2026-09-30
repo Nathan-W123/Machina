@@ -71,7 +71,9 @@ it does not do:
   a fully plastic state in plane strain and 3-D, depending on the mesh
   pattern, and fully integrated Q4 and Hex8 lock without the mean
   dilatation that is their default - a locked collapse load comes out high,
-  which is unconservative;
+  which is unconservative (the Hex8 with incompatible modes is not averaged:
+  its modes relax the constraint - on the thick tube it collapses within
+  `3.5e-4` of the exact load at second order, as the averaged Hex8 does);
 * contact (`contact` block) is small-sliding - the contact geometry of the
   reference configuration, a gap linear in the displacement - with
   `small_strain` kinematics only; tools that travel far over a surface need
@@ -197,9 +199,46 @@ is 19 % below the finest Tet10 run on the benchmark's own mesh
 refinement to bend. On a Tet10 cell with curved edges the 4-point stiffness
 rule is not exact - the integrand is rational - as in every code that uses
 C3D10; the study's curved and straight-sided meshes of the same cells agree
-to 0.13 % at 3 mm. Enhanced assumed strain or B-bar would help the linear
-elements per DOF; `docs/architecture.md` says what adding an element
-involves.
+to 0.13 % at 3 mm. For hexahedral meshes, `model.element_formulation:
+"incompatible_modes"` removes the bending stiffness of the Hex8: one element
+through the depth of the slender cantilever is within 0.2 % of Timoshenko on
+20 cells along it, at L/h = 10 to 1000, where the standard Hex8 gives 89 %
+to 0.08 % of the deflection, and a square plate at t/a = 1/50 on two layers
+is within 1 % of Kirchhoff (`docs/verification.md`, section 27). Its limits:
+
+* the modes are exact in bending on affine cells only; on trapezoidal cells
+  they lose most of their effect (the MacNeal-Harder beam on trapezoids: 5 %
+  of the reference deflection in plane, 3 % out of plane), and so on the
+  tapered cells of a curved wall; there is no assumed-natural-strain or
+  solid-shell element (Hauptmann and Schweizerhof 1998, Schwarze and Reese
+  2009) and no EAS-21, which would be the next step for curved thin walls;
+* the finite-deformation element loses stability in a spurious hourglass
+  mode under large compression (a neo-Hookean cube in uniaxial compression
+  below a stretch of about 0.65, where the standard Hex8 is stable;
+  Wriggers and Reese 1996) - far beyond springback, but not beyond a
+  compressed flange;
+* Hex8 only: no incompatible-mode Q4 (Q6) and no Tet counterpart; not
+  combined with mean dilatation (the modes relax the plastic isochoric
+  constraint themselves: `auto` leaves them without it, `all` is refused);
+* the linear-buckling geometric stiffness takes the condensed stress on the
+  compatible gradients (the modes are left out of the initial-stress term);
+* each element evaluation of the non-linear analysis runs a local Newton
+  iteration for the nine parameters from their committed values; it cuts the
+  step when it does not converge in 25 iterations;
+* the CalculiX export writes `C3D8I`, which is not cross-validated (no
+  CalculiX here), and refuses a rule with its own point count through the
+  thickness; the explicit dynamics has no counterpart (there is no explicit
+  integrator).
+
+`model.integration.thickness_points` gives a Hex8 sheet 1 to 7 Gauss points
+through each layer; the one springback study (a strip bent to four times its
+first-yield curvature) measures the error of one incompatible-mode layer at
+3.2 % with 5 points and 0.6 % with 7 against a converged fine mesh, which is
+the Gauss quadrature of the kinked stress; the rule refines the elements'
+natural axis, so a mesh from a file must have it across the sheet (warned
+about otherwise), and a state transferred between rules would need a
+mapping of the per-point history, which is not provided.
+`docs/architecture.md` says what adding an element involves.
 
 **Meshes: one cell type per mesh.** The structured generators make boxes of
 quadrilaterals, triangles, hexahedra or tetrahedra, linear or (tetrahedra,
