@@ -228,7 +228,9 @@ def test_dsif_drives_both_tools_on_one_pseudo_time(tmp_path, base, cone):
     assert steps["unload"]["tools"] == []                           # both removed
     tool = pd.read_csv(d / "toolpath.csv")
     support = pd.read_csv(d / SUPPORT_PATH_FILE)
-    assert np.array_equal(tool["t"].to_numpy(), support["t"].to_numpy())   # synchronised
+    # synchronised: every knot of the forming tool is one of the support's
+    # (which has more where it swings round the tool, `SUPPORT_KNOT_STEP`)
+    assert np.isin(tool["t"].to_numpy(), support["t"].to_numpy()).all()
     # the support is under the sheet all along: its top never above the flat
     # sheet's underside (no command rises above the plane here)
     assert np.all(support["z"] + setup.tool_radius <= -T + 1e-12)
@@ -238,6 +240,36 @@ def test_dsif_drives_both_tools_on_one_pseudo_time(tmp_path, base, cone):
                     target=cone)
     assert read_json(d2 / "deck.json") == read_json(d / "deck.json")
     assert deck_hash(d2, "v") != h
+
+
+def test_the_dsif_support_never_pinches_the_sheet_between_its_knots(base):
+    """At a corner the support swings round the forming tool; both tools move
+    in straight lines between knots, so without knots in between it cuts the
+    chord towards the tool. The fine-mesh benchmark's pyramid-s2026-0001 had
+    the balls 0.1 mm apart (its DA command: overlapping), which stalled the
+    solver."""
+    from precomp.fea.deck import forming_surface, make_toolpath
+    from precomp.fea.support import SUPPORT_KNOT_STEP, dsif_trajectory
+    from precomp.geometry import Pyramid
+
+    setup = base.replace(support="dsif")
+    target = Pyramid(half_width_x=0.008118, half_width_y=0.006990, wall_angle_deg=41.21,
+                     depth=0.00258, corner_radius=0.004221, top_fillet=0.001807,
+                     bottom_fillet=0.001854).heightmap(Grid.centered(0.04, 2.5e-4))
+    path = make_toolpath(setup, target)
+    t, pts, _, info = dsif_trajectory(setup, forming_surface(target), path, target, target)
+    assert info["support_knots_added"] > 0
+    assert np.isin(path.t, t).all()
+    tt = np.linspace(0.0, 1.0, 200001)
+    tool = np.stack([np.interp(tt, path.t, path.points[:, k]) for k in range(3)], 1)
+    sup = np.stack([np.interp(tt, t, pts[:, k]) for k in range(3)], 1)
+    gap = np.linalg.norm(tool - sup, axis=1) - setup.tool_radius - info["support_radius_m"]
+    # the sine-law thickness on its 41 deg walls, less the chord's sag
+    assert gap.min() > T * np.cos(np.radians(41.21)) - 0.05e-3
+    # in contact, the support moves about SUPPORT_KNOT_STEP at most between knots
+    contact = path.level[np.searchsorted(path.t, t)] != AIR
+    step = np.linalg.norm(np.diff(pts, axis=0), axis=1)[contact[:-1] & contact[1:]]
+    assert step.max() <= 1.5 * SUPPORT_KNOT_STEP
 
 
 def test_the_dsif_rim_pass_runs_after_unload_and_is_removed_before_the_release(tmp_path, base,
@@ -253,7 +285,8 @@ def test_the_dsif_rim_pass_runs_after_unload_and_is_removed_before_the_release(t
     sup = pd.read_csv(d / SUPPORT_PATH_FILE)
     assert np.all(np.diff(sup["t"]) > 0) and sup["t"].iloc[-1] == pytest.approx(3.0)
     tool = pd.read_csv(d / "toolpath.csv")
-    assert np.array_equal(sup["t"].to_numpy()[:len(tool)], tool["t"].to_numpy())
+    form = sup["t"].to_numpy()[sup["t"].to_numpy() <= 1.0]
+    assert np.isin(tool["t"].to_numpy(), form).all()
     band = sup[(sup["t"] >= 2.0) & (sup["t"] <= rim["time"][1])]
     assert band["z"].max() + setup.tool_radius <= -T + 1e-9   # pushes up to the underside
     info = read_json(d / "precomp_deck.json")["support"]["dsif"]["rim_pass"]
