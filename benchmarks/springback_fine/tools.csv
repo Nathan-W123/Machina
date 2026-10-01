@@ -59,3 +59,9 @@ truncated_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,8,0.526907,7
 truncated_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,plate,plane,48,0.369363,1408.9,589,587,0,-1406.31,1171.12,1,SparLab simulation
 truncated_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,10,0.487028,1034.42,381,372,961.766,0,663.851,1,SparLab simulation
 truncated_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,plate,plane,48,0.424041,1594.63,381,379,0,-1590.03,1273.53,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,uncompensated,uncompensated,tool,sphere,9,0.834725,1214.5,683,659,1128.17,0,497.647,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,uncompensated,uncompensated,support,sphere,6,1.07946,1185.33,683,524,0,-1013.43,373.527,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,tool,sphere,8,0.526927,786.449,532,523,741.714,0,454.645,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,support,sphere,5,0.600699,768.023,532,513,0,-663.835,352.442,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,tool,sphere,13,0.889814,1970.46,718,709,1659.11,0,601.5,1,SparLab simulation
+elliptic_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,support,sphere,8,1.0096,2218.48,718,535,0,-1667.04,425.506,1,SparLab simulation
