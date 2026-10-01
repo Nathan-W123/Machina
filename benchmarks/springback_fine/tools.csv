@@ -97,3 +97,15 @@ pyramid-s2026-0001,dsif,uncompensated,uncompensated,support,sphere,11,1.57273,43
 elliptic_cone-s2026-0000,none,uncompensated,uncompensated,tool,sphere,6,0.517301,580.304,310,308,557.983,0,346.259,1,SparLab simulation
 elliptic_cone-s2026-0000,none,FE-DA-1,FE-DA-1,tool,sphere,5,0.522514,582.093,174,169,566.023,0,355.649,1,SparLab simulation
 elliptic_cone-s2026-0000,none,FE-DA-2,FE-DA-2,tool,sphere,5,0.523884,563.03,263,260,543.544,0,383.973,1,SparLab simulation
+elliptic_cone-s2026-0001,none,uncompensated,uncompensated,tool,sphere,7,0.578844,876.918,478,476,831.649,0,554.063,1,SparLab simulation
+elliptic_cone-s2026-0001,none,FE-DA-1,FE-DA-1,tool,sphere,9,0.528106,900.559,386,384,833.243,0,495.571,1,SparLab simulation
+elliptic_cone-s2026-0001,none,FE-DA-2,FE-DA-2,tool,sphere,11,0.488048,909.366,309,307,823.798,0,513.519,1,SparLab simulation
+dome-s2026-0001,none,uncompensated,uncompensated,tool,sphere,7,0.553495,787.042,794,792,745.683,0,489.713,1,SparLab simulation
+dome-s2026-0001,none,FE-DA-1,FE-DA-1,tool,sphere,8,0.593771,944.833,630,628,898.504,0,569.704,1,SparLab simulation
+dome-s2026-0001,none,FE-DA-2,FE-DA-2,tool,sphere,9,0.57446,986.375,577,575,952.643,0,552.689,1,SparLab simulation
+pyramid-s2026-0000,none,uncompensated,uncompensated,tool,sphere,7,0.580837,807.177,626,624,771.03,0,526.535,1,SparLab simulation
+pyramid-s2026-0000,none,FE-DA-1,FE-DA-1,tool,sphere,7,0.503336,809.929,482,480,783.893,0,501.327,1,SparLab simulation
+pyramid-s2026-0000,none,FE-DA-2,FE-DA-2,tool,sphere,8,0.479205,832.242,273,270,781.1,0,536.876,1,SparLab simulation
+pyramid-s2026-0001,none,uncompensated,uncompensated,tool,sphere,6,0.549195,689.283,613,611,682.314,0,443.053,1,SparLab simulation
+pyramid-s2026-0001,none,FE-DA-1,FE-DA-1,tool,sphere,6,0.495994,568.572,338,334,543.186,0,389.261,1,SparLab simulation
+pyramid-s2026-0001,none,FE-DA-2,FE-DA-2,tool,sphere,8,0.491807,820.738,480,477,782.461,0,495.763,1,SparLab simulation
