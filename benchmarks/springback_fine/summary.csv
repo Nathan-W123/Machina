@@ -1,0 +1,4 @@
+strategy,method,fe_runs_per_part,n_parts,n_failed,vert_rms_mean_mm,vert_rms_median_mm,vert_max_mean_mm,normal_rms_mean_mm,rim_sag_mean_mm,upper_band_rms_mean_mm,interior_rms_mean_mm,interior_bias_mean_mm,flange_bias_mean_mm,upper_band_share_mean,runtime_s_mean,runtime_s_max,cpu_h_per_part,newton_iterations_mean,cuts_mean,parts_better_than_own_uncompensated,parts_better_than_spif_uncompensated,data_source
+backing_plate,uncompensated,1,1,0,0.2978,0.2978,0.4898,0.2845,-0.3652,0.3722,0.1685,-0.1299,-0.0550,0.8549,948.4511,948.4511,0.2635,1683.0000,1.0000,,0,SparLab simulation
+backing_plate,FE-DA-1,2,1,0,0.2106,0.2106,0.4075,0.2063,-0.2588,0.2822,0.0423,0.0012,-0.0583,0.9817,907.2128,907.2128,0.5155,1574.0000,1.0000,1.0000,0,SparLab simulation
+backing_plate,FE-DA-2,3,1,0,0.2016,0.2016,0.3937,0.1979,-0.2418,0.2698,0.0419,0.0220,-0.0599,0.9804,1005.4397,1005.4397,0.7948,1671.0000,2.0000,1.0000,0,SparLab simulation
