@@ -346,7 +346,13 @@ class SparlabSimulator:
 
     @staticmethod
     def fidelity_of(setup: FormingSetup) -> str:
-        label = (f"sparlab:{setup.element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
+        element = setup.element
+        if setup.element_formulation != "standard":
+            element += "-im" if setup.element_formulation == "incompatible_modes" \
+                else f"-{setup.element_formulation}"
+        if setup.thickness_points:
+            element += f"-tp{setup.thickness_points}"
+        label = (f"sparlab:{element}:{setup.element_size * 1e3:g}mm:{setup.layers}L:"
                  f"{setup.kinematics}:{setup.release}")
         return label if setup.support == "none" else f"{label}:{setup.support}"
 

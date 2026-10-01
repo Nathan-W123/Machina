@@ -34,10 +34,10 @@ from .runner import (
     simulate_many,
     sparlab_version,
 )
-from .setup import DEFAULT_EXECUTABLE, EXECUTABLE_ENV, FormingSetup
+from .setup import DEFAULT_EXECUTABLE, EXECUTABLE_ENV, PRESETS, FormingSetup
 
 __all__ = [
-    "FormingSetup", "EXECUTABLE_ENV", "DEFAULT_EXECUTABLE",
+    "FormingSetup", "EXECUTABLE_ENV", "DEFAULT_EXECUTABLE", "PRESETS",
     "build_deck", "deck_document", "deck_hash", "forming_block", "clamp_condition",
     "support_321", "make_toolpath", "DECK_FILE", "TOOLPATH_FILE",
     "FormingResult", "StepResult", "load_result", "NODE_COLUMNS", "ELEMENT_COLUMNS",

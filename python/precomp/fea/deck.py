@@ -186,6 +186,21 @@ def forming_block(setup: FormingSetup, toolpath_file: str = TOOLPATH_FILE,
     return block
 
 
+def model_block(setup: FormingSetup) -> Dict[str, Any]:
+    """The deck's `model` object: the stress state and, when the setup asks
+    for them, the Hex8 formulation (`element_formulation`) and the Gauss
+    points through the thickness (`integration.thickness_points`, along z).
+    A setup at the defaults ("standard", 0) writes neither key, so its deck -
+    and its content hash - is the one it was before these settings existed."""
+    model: Dict[str, Any] = {"stress_state": "three_dimensional"}
+    if setup.element_formulation != "standard":
+        model["element_formulation"] = setup.element_formulation
+    if setup.thickness_points:
+        model["integration"] = {"thickness_points": int(setup.thickness_points),
+                                "thickness_direction": "z"}
+    return model
+
+
 def deck_document(setup: FormingSetup, t_form_end: float = 1.0,
                   support: Optional[SupportPlan] = None) -> Dict[str, Any]:
     """The full deck.json content for `setup`; the commanded shape enters
@@ -204,7 +219,7 @@ def deck_document(setup: FormingSetup, t_form_end: float = 1.0,
                  "lx": L, "ly": L, "lz": setup.thickness,
                  "x0": -0.5 * L, "y0": -0.5 * L, "z0": -setup.thickness},
         "material": setup.material.to_sparlab(),
-        "model": {"stress_state": "three_dimensional"},
+        "model": model_block(setup),
         "forming": forming_block(setup, t_form_end=t_form_end, support=support),
     }
 

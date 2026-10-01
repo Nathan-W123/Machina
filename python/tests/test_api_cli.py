@@ -131,6 +131,12 @@ def test_cli_end_to_end(tmp_path, small_setup, counter, capsys):
     assert main(["setup", "--material", "DC04", "--set", "thickness=8e-4",
                  "--out", str(d / "s2.json")]) == 0
     assert json.loads((d / "s2.json").read_text())["thickness"] == 8e-4
+    assert main(["setup", "--preset", "springback_fine", "--set", "support=dsif",
+                 "--out", str(d / "s3.json")]) == 0
+    s3 = json.loads((d / "s3.json").read_text())
+    assert (s3["element_formulation"], s3["thickness_points"], s3["layers"],
+            s3["support"], s3["material"]["name"]) == ("incompatible_modes", 5, 1, "dsif",
+                                                       "AA5754-O")
 
 
 def test_cli_errors_are_reported_not_raised(tmp_path, capsys):
