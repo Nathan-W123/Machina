@@ -26,6 +26,9 @@ Protocol (config.json, written from `PROTOCOL` when absent):
     (`compensation_masks`, `command_upper_bound`) - the fixture made for the
     target.
 
+Protocol revision 2 (the deck fixes listed at `PROTOCOL`); revision 1's
+outputs are kept in benchmarks/springback_fine/rev1 with `deck_defects.csv`.
+
 Resumable: every run goes through precomp's content-addressed cache in
 `<work>/runs` (an identical deck is never run twice), so a rerun after an
 interruption repeats only the runs that were in flight. The tables are
@@ -67,7 +70,11 @@ REPO = HERE.parents[1]
 OLD = REPO / "benchmarks" / "springback"
 
 PROTOCOL: Dict[str, Any] = {
-    "protocol_revision": 1,
+    # 2: the same protocol on the fixed deck generation - the deepest tool
+    # path level no longer dropped under a dimpled floor or a dome's pole,
+    # and DSIF support knots between the tool's where it swings round it
+    # (revision 1, which had both defects, is kept in <out>/rev1)
+    "protocol_revision": 2,
     "data_source": LABEL,
     "parts_from": "benchmarks/springback (config.json design, test split: indices 0-1 per family)",
     "preset": "springback_fine",
@@ -379,6 +386,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--workers", type=int, default=4, help="DA chains (= simulations) at a time")
     ap.add_argument("--strategies", nargs="*", help="subset of the protocol's strategies")
     ap.add_argument("--parts", nargs="*", help="subset of the test parts (point ids)")
+    ap.add_argument("--alpha", type=float,
+                    help="DA relaxation factor instead of the protocol's (a study: give it its "
+                         "own --out; the run cache can be shared)")
     ap.add_argument("--executable",
                     help="sparlab_form; default: a copy of build/bin/sparlab_form kept in "
                          "<work>/bin, so a rebuild during the benchmark cannot change the "
@@ -392,8 +402,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg_path = out / "config.json"
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text())
+        if args.alpha is not None and args.alpha != cfg["da"]["alpha"]:
+            ap.error(f"{cfg_path} has alpha {cfg['da']['alpha']}; use another --out")
     else:
         cfg = copy.deepcopy(PROTOCOL)
+        if args.alpha is not None:
+            cfg["da"]["alpha"] = args.alpha
         cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
     if args.executable:
         exe = str(Path(args.executable).resolve())
