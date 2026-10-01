@@ -638,12 +638,18 @@ def _first_crossing(cz: HeightMap, A: np.ndarray, D: np.ndarray, z: np.ndarray,
     return found, root
 
 
+#: `_blend_to_height`: a crossing more than this many |AB| from A is taken
+#: only when there is none within three grid spacings of B.
+FAR_CROSSING = 2.0
+
+
 def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray) -> np.ndarray:
     """Per row, an x-y point where the bilinear drop-cutter surface equals z.
 
     The point is searched along the line from A through B: first from a
     quarter of |AB| behind A to six times |AB| beyond it on a grid of |AB| / 8,
-    then, for rows without a crossing, within three grid spacings of B on a
+    then, for rows without a crossing or with one more than `FAR_CROSSING`
+    |AB| from A, within three grid spacings of B on a
     grid of h / 8 (a narrow crossing, such as the last small loop around the
     pole of a dome). The first sign change of c_z - z from >= 0 to < 0 is
     bisected, keeping the side where c_z < z, so the tool never ends inside
@@ -668,7 +674,10 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
     found, root = _first_crossing(cz, A, D, z, np.arange(-2, 49) / 8.0)
     out = A.copy()
     out[found] = A[found] + root[found, None] * D[found]
-    missing = np.flatnonzero(~found & (np.linalg.norm(D, axis=1) > 0))
+    # a crossing far beyond B (a line that misses a small loop round B and
+    # crosses the surface on the far side of the pocket, or off the grid)
+    # gives way to one next to B when there is one
+    missing = np.flatnonzero((~found | (root > FAR_CROSSING)) & (np.linalg.norm(D, axis=1) > 0))
     if len(missing):
         length = np.linalg.norm(D[missing], axis=1)
         unit = D[missing] / length[:, None]

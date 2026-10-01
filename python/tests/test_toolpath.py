@@ -332,3 +332,23 @@ def test_the_deepest_level_reaches_a_dimpled_floor(make):
     path = make(cone, 0.004, 1e-3, 1e-3)
     assert path.metadata["deepest_level_raised_m"] == 0.0
     assert path.points[:, 2].min() - float(tool_center_surface(cone, 0.004).z.min()) < 1e-5
+
+
+def test_the_spiral_stays_in_the_pocket_round_a_small_off_centre_last_loop():
+    """The last revolution blends from the previous loop towards a small loop
+    round an off-centre dimple; a line from the loop that misses it crossed
+    the surface only on the far side of the pocket or at the grid's edge
+    (r = 20 mm here, a DA command of the fine-mesh benchmark refused for
+    leaving the window). A crossing next to the small loop wins."""
+    from precomp.geometry.parts import EllipticCone
+
+    g = Grid.centered(0.04, 2.5e-4)
+    X, Y = g.mesh()
+    base = EllipticCone(semi_axis_x=0.0099, semi_axis_y=0.00698, wall_angle_deg=39.14,
+                        depth=0.0021, top_fillet=0.0019, bottom_fillet=0.0015).heightmap(g)
+    target = base.with_z(base.z - 0.1e-3 * np.exp(-((X + 3e-3) ** 2 + Y ** 2)
+                                                  / (2 * 0.7e-3 ** 2)))
+    path = spiral_toolpath(target, 0.004, 1e-3, 1e-3)
+    assert path.metadata["deepest_level_raised_m"] > 0.0
+    assert np.abs(path.points[path.level != AIR, :2]).max() < 0.012
+    assert max_gouge(path, tool_center_surface(target, 0.004)) < 1e-9
