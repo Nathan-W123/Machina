@@ -276,6 +276,15 @@ def write_tables(out: Path, cfg: Dict[str, Any], cases: pd.DataFrame, tools: pd.
                                                float_format="%.6g")
     sm = summarise(cases)
     sm.to_csv(out / "summary.csv", index=False, float_format="%.4f")
+    # the same over the parts where every strategy and method has a result, so
+    # that a failed chain does not change the set of parts a mean is taken over
+    okc = cases[cases["completed"].fillna(False).astype(bool)]
+    n_combos = okc.groupby("point_id").apply(lambda g: len(set(zip(g["strategy"],
+                                                                 g["method"]))))
+    full = n_combos.max() if len(n_combos) else 0
+    common = sorted(n_combos[n_combos == full].index)
+    smc = summarise(cases[cases["point_id"].isin(common)])
+    smc.to_csv(out / "summary_common_parts.csv", index=False, float_format="%.4f")
     cmp_ = compare_2mm(cases)
     cmp_.to_csv(out / "compare_2mm.csv", index=False, float_format="%.4f")
     old, old_sims = old_numbers()
@@ -301,6 +310,14 @@ def write_tables(out: Path, cfg: Dict[str, Any], cases: pd.DataFrame, tools: pd.
                  f"({fmt(r['interior_bias_mean_mm'], 2)}) | {fmt(r['flange_bias_mean_mm'])} | "
                  f"{fmt(r['runtime_s_mean'], 0)} | {fmt(r['cpu_h_per_part'], 2)} | "
                  f"{fmt(r['newton_iterations_mean'], 0)} | {r['n_failed']} |")
+    L += ["", f"The same over the {len(common)} parts where every strategy and method has a "
+          "result (" + ", ".join(common) + "):", "",
+          "| strategy | method | vertical RMS mean | max mean | rim sag | interior RMS (bias) |",
+          "|---|---|--:|--:|--:|--:|"]
+    for _, r in smc.iterrows():
+        L.append(f"| {r['strategy']} | {r['method']} | **{fmt(r['vert_rms_mean_mm'])}** | "
+                 f"{fmt(r['vert_max_mean_mm'])} | {fmt(r['rim_sag_mean_mm'])} | "
+                 f"{fmt(r['interior_rms_mean_mm'])} ({fmt(r['interior_bias_mean_mm'], 2)}) |")
     # old 2 mm reference rows
     L += ["", "The 2 mm benchmark (benchmarks/springback, stage n18, single-point forming) "
           "on the same parts:", "",
