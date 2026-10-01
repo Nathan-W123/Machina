@@ -306,3 +306,29 @@ def test_flat_target_is_refused():
         Toolpath(np.zeros((1, 3)), np.zeros(1), R)
     with pytest.raises(ValueError):
         HeightMap(Grid.centered(0.05, 1e-3), np.zeros((2, 2)))
+
+
+@pytest.mark.parametrize("make", [spiral_toolpath, contour_toolpath])
+def test_the_deepest_level_reaches_a_dimpled_floor(make):
+    """Over a flat floor the last level traces the floor's outline. A dimple
+    at the deepest point (a compensated floor, a dome's pole) makes that
+    contour - and a regular level just above it - too short to follow; the
+    level is then raised only as far as needed, not dropped (a DA command
+    was formed up to a step-down short of its floor)."""
+    g = Grid.centered(0.04, 2.5e-4)
+    cone = TruncatedCone(0.009, 40.0, 0.003, 0.001, 0.002).heightmap(g)
+    X, Y = g.mesh()
+    for dimple in (0.4e-3, 1.01e-3):   # the last level alone; it and a regular one
+        target = cone.with_z(cone.z - dimple * np.exp(-(X ** 2 + Y ** 2) / (2 * 0.8e-3 ** 2)))
+        cz = tool_center_surface(target, 0.004)
+        path = make(target, 0.004, 1e-3, 1e-3)
+        reach = float(cz.z.min())
+        assert path.metadata["deepest_level_raised_m"] > 0.0
+        # within the depth of the dimple's shortest followable loop (3.1 mm
+        # round here), not a step-down (before: 0.4 and 1.0 mm short)
+        assert path.points[path.level != AIR, 2].min() - reach < 0.2e-3
+        assert max_gouge(path, cz) < 1e-9
+    # a flat floor keeps its level just above the floor
+    path = make(cone, 0.004, 1e-3, 1e-3)
+    assert path.metadata["deepest_level_raised_m"] == 0.0
+    assert path.points[:, 2].min() - float(tool_center_surface(cone, 0.004).z.min()) < 1e-5

@@ -322,6 +322,42 @@ def _centre_levels(cz: HeightMap, tool_radius: float, step_down: float) -> List[
     return levels
 
 
+DEEPEST_LEVEL_SEARCH = 64
+
+
+def _resolvable_deepest(cz: HeightMap, levels: List[float], tool_radius: float,
+                        min_loop_length: float, single: bool) -> Tuple[List[float], float]:
+    """`levels` with the deepest ones the tool cannot follow replaced by the
+    lowest height where it can (a loop `extract_loops` keeps; exactly one
+    with `single`), searched on `DEEPEST_LEVEL_SEARCH` steps between the
+    deepest level and the deepest followable one above it. Returns (levels,
+    how far the new deepest level lies above the old one [m]).
+
+    The last level lies just above the deepest point. Over a flat floor its
+    contour is the floor's outline, but where the deepest point is a pole
+    or a dimple (a dome, an uneven compensated floor) that contour - and a
+    regular level only a little above it - is a loop too short to follow
+    and would be dropped, leaving the tool up to a step-down or more short
+    of the command."""
+    def ok(h: float) -> bool:
+        loops = extract_loops(cz, h, min_loop_length)
+        return len(loops) == 1 if single else len(loops) > 0
+
+    j = len(levels) - 1
+    while j >= 0 and not ok(levels[j]):
+        j -= 1
+    if j == len(levels) - 1:
+        return levels, 0.0
+    last = levels[-1]
+    above = levels[j] if j >= 0 else tool_radius
+    dh = (above - last) / DEEPEST_LEVEL_SEARCH
+    for k in range(DEEPEST_LEVEL_SEARCH):
+        h = last + k * dh
+        if ok(h):
+            return levels[:j + 1] + [h], h - last
+    return levels, 0.0
+
+
 def _ordered_loops(cz: HeightMap, levels: Sequence[float], spacing: float, direction: str,
                    alternate: bool, start_angle_deg: float,
                    min_loop_length: float) -> List[Tuple[float, List[np.ndarray]]]:
@@ -445,8 +481,10 @@ def contour_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     spacing = require_positive("spacing", spacing)
     cz = tool_center_surface(target, R)
     levels = _centre_levels(cz, R, step_down)
+    min_loop = _min_loop(target, spacing, min_loop_length)
+    levels, raised = _resolvable_deepest(cz, levels, R, min_loop, single=False)
     per_level = _ordered_loops(cz, levels, spacing, direction, alternate, start_angle_deg,
-                               _min_loop(target, spacing, min_loop_length))
+                               min_loop)
     safe_z = R + clearance
     pts: List[np.ndarray] = []
     lvl: List[np.ndarray] = []
@@ -475,7 +513,8 @@ def contour_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     meta = {"style": "contour", "step_down": step_down, "spacing": spacing,
             "direction": direction, "alternate": bool(alternate),
             "level_heights": [h for h, _ in per_level],
-            "loops_per_level": [len(l) for _, l in per_level], "clearance": clearance}
+            "loops_per_level": [len(l) for _, l in per_level], "clearance": clearance,
+            "deepest_level_raised_m": raised}
     path = Toolpath(np.vstack(pts), np.concatenate(lvl), R, meta)
     path.metadata["max_gouge_m"] = max_gouge(path, cz)
     return path
@@ -506,8 +545,10 @@ def spiral_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     spacing = require_positive("spacing", spacing)
     cz = tool_center_surface(target, R)
     levels = _centre_levels(cz, R, step_down)
+    min_loop = _min_loop(target, spacing, min_loop_length)
+    levels, raised = _resolvable_deepest(cz, levels, R, min_loop, single=True)
     per_level = _ordered_loops(cz, levels, spacing, direction, False, start_angle_deg,
-                               _min_loop(target, spacing, min_loop_length))
+                               min_loop)
     for k, (_, loops) in enumerate(per_level, start=1):
         if len(loops) != 1:
             raise ValueError(f"spiral_toolpath needs one loop per level; level {k} has "
@@ -543,7 +584,8 @@ def spiral_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     end = np.array([[body[-1, 0], body[-1, 1], safe_z]])
     meta = {"style": "spiral", "step_down": step_down, "spacing": spacing,
             "direction": direction, "level_heights": [float(v) for v in levels],
-            "clearance": clearance, "final_loop": bool(final_loop)}
+            "clearance": clearance, "final_loop": bool(final_loop),
+            "deepest_level_raised_m": raised}
     path = Toolpath(np.vstack([start, body, end]),
                     np.concatenate([[AIR], np.concatenate(lvl), [AIR]]), R, meta)
     path.metadata["max_gouge_m"] = max_gouge(path, cz)
