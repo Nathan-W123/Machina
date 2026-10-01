@@ -1,0 +1,38 @@
+strip_h2_nobbar_mu0.1 sparlab rc 0 0.8 s
+strip_h2_nobbar_mu0.1 ccx rc 0 16.2 s
+  name: strip_h2_nobbar_mu0.1
+  F_end_plunge_sparlab: 133.04365697773187
+  F_end_plunge_ccx: 133.23485
+  F_profile_depths: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+  F_sparlab: [21.710759161785127, 33.26026275686132, 47.83580576497977, 63.012432037537295, 79.4669652047179, 96.7852106572786, 114.74745732399957, 133.04365697773187]
+  F_ccx: [21.661015, 33.210435, 47.80862, 62.97465, 79.4911, 96.8471, 114.88645, 133.23485]
+  F_rel_max: 0.002296483418950034
+  form_uz_min_sparlab: -3.9998656056113675
+  form_uz_min_ccx: -3.99981
+  form_dz_rms: 0.0006457850192481165
+  form_dz_max: 0.0011413568354432524
+  form_d3_max: 0.001216952740816258
+  form_uz_range_sparlab: 3.9998656056113675
+  form_uz_range_ccx: 3.99981
+  unload_uz_min_sparlab: -3.8036437554624163
+  unload_uz_min_ccx: -3.803808
+  unload_dz_rms: 0.0005098324399844469
+  unload_dz_max: 0.0009265114017318332
+  unload_d3_max: 0.0010548127338283512
+  unload_uz_range_sparlab: 3.8036437554624163
+  unload_uz_range_ccx: 3.803808
+  release_uz_min_sparlab: -3.3733217072378485
+  release_uz_min_ccx: -3.368645
+  release_dz_rms: 0.003007197524623189
+  release_dz_max: 0.004676707237848632
+  release_d3_max: 0.005462630865055881
+  release_uz_range_sparlab: 3.4113318990738066
+  release_uz_range_ccx: 3.40570835
+  springback_unload_max_sparlab: 0.19622185014895166
+  springback_unload_max_ccx: 0.196002
+  peeq_max_sparlab: 0.0926113586582858
+  peeq_max_ccx: 0.09265575
+  sparlab_runtime_s: 0.716826053
+  sparlab_increments: [40, 20, 20]
+  sparlab_iterations: [169, 67, 86]
+  sparlab_max_penetration_mm: 0.0001343943886325874

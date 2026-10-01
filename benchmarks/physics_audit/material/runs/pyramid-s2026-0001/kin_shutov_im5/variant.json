@@ -1,0 +1,35 @@
+{
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "deck": {
+   "material": {
+    "plasticity": {
+     "backstresses": [
+      {
+       "modulus": 173250000.0,
+       "recovery": 12.519035889146974
+      },
+      {
+       "modulus": 17250000000.0,
+       "recovery": 236.05732651201487
+      }
+     ]
+    }
+   },
+   "model": {
+    "element_formulation": "incompatible_modes",
+    "integration": {
+     "thickness_direction": "z",
+     "thickness_points": 5
+    }
+   }
+  },
+  "material": {
+   "hardening_modulus": 236141228.74996015,
+   "saturation_rate": 14.158512602787667,
+   "saturation_stress": 108179062.52001843,
+   "yield_stress": 29519439.24215209
+  }
+ },
+ "variant": "kin_shutov_im5"
+}

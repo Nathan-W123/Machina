@@ -1,0 +1,22 @@
+{
+ "unload_RD_diff_rms_mm": 0.12106310634319725,
+ "unload_RD_diff_max_mm": 0.285684259144638,
+ "release_RD_diff_rms_mm": 0.10822110202154689,
+ "release_RD_diff_max_mm": 0.26441821798149334,
+ "springback_x_std_dz4_v10_RD_rms_mm": 0.2184053208810106,
+ "springback_x_std_dz4_v10_RD_max_mm": 0.33772803730886203,
+ "springback_x_std_dz4_v10_RD_centre_mm": -0.23223042884640677,
+ "springback_x_std_dz4_v20_RD_rms_mm": 0.19817941885115767,
+ "springback_x_std_dz4_v20_RD_max_mm": 0.30776969450105796,
+ "springback_x_std_dz4_v20_RD_centre_mm": -0.21012909676878166,
+ "unload_TD_diff_rms_mm": 0.11592655316572528,
+ "unload_TD_diff_max_mm": 0.2829605804062538,
+ "release_TD_diff_rms_mm": 0.10271410870344837,
+ "release_TD_diff_max_mm": 0.25869393782791406,
+ "springback_x_std_dz4_v10_TD_rms_mm": 0.22864141524962964,
+ "springback_x_std_dz4_v10_TD_max_mm": 0.28165140494447094,
+ "springback_x_std_dz4_v10_TD_centre_mm": -0.23142493650236418,
+ "springback_x_std_dz4_v20_TD_rms_mm": 0.2077614244677516,
+ "springback_x_std_dz4_v20_TD_max_mm": 0.2555069803633021,
+ "springback_x_std_dz4_v20_TD_centre_mm": -0.20966694186657975
+}

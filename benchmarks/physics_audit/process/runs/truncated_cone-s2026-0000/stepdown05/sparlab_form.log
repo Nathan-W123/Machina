@@ -1,0 +1,27 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.972414 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.0804692 failed (solver error: solver error: an element is inverted (det F = -0.476667); the load step is too large or the mesh too coarse for this deformation); halving to 0.00267608
+[info ] forming increment to t = 0.267024 failed (solver error: solver error: an element is inverted (det F = -0.839305); the load step is too large or the mesh too coarse for this deformation); halving to 0.00252513
+[info ] forming step 'form': t = 0.344399 s of 0.972414 (92 increment(s), 715 iteration(s), 2 cut(s), 60.3482 s elapsed)
+[info ] forming increment to t = 0.576501 failed (solver error: solver error: an element is inverted (det F = -0.185312); the load step is too large or the mesh too coarse for this deformation); halving to 0.00250233
+[info ] forming increment to t = 0.628963 failed (solver error: solver error: an element is inverted (det F = -0.105424); the load step is too large or the mesh too coarse for this deformation); halving to 0.00110501
+[info ] forming step 'form': t = 0.627858 s of 0.972414 (185 increment(s), 1473 iteration(s), 4 cut(s), 120.861 s elapsed)
+[info ] forming increment to t = 0.716715 failed (solver error: solver error: an element is inverted (det F = -2.90537); the load step is too large or the mesh too coarse for this deformation); halving to 0.00242842
+[info ] forming increment to t = 0.828287 failed (solver error: solver error: an element is inverted (det F = -0.123256); the load step is too large or the mesh too coarse for this deformation); halving to 0.00210694
+[info ] forming step 'form': t = 0.836517 s of 0.972414 (272 increment(s), 2149 iteration(s), 6 cut(s), 180.984 s elapsed)
+[info ] forming step 'form' completed: 318 increment(s), 2438 iteration(s), 6 cut(s), reactions 1328.55 N, largest plastic strain 0.376234, largest displacement change 0.00309021 m
+[info ] forming step 'unload' (release, t = 0.972414 .. 1.97241 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 646.078 N
+[warn ] the supports of release step 'unload' carry reactions of 881.821 N, 0.576157 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 36 iteration(s), 0 cut(s), reactions 881.821 N, largest plastic strain 0.376234, largest displacement change 8.88524e-05 m
+[info ] forming step 'release' (release, t = 1.97241 .. 2.97241 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 881.821 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 6.04625e-13 N, largest plastic strain 0.376234, largest displacement change 0.000157163 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 318 increment(s), 2438 iteration(s), 6 cut(s), largest plastic strain 0.376234, largest displacement change 0.00309021 m
+  step 2 'unload' (release): completed, 10 increment(s), 36 iteration(s), 0 cut(s), largest plastic strain 0.376234, largest displacement change 8.88524e-05 m
+      warning: the supports of release step 'unload' carry reactions of 881.821 N, 0.576157 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.376234, largest displacement change 0.000157163 m
+  runtime: 208.9 s (338 increments, 2514 Newton iterations; CHOLMOD supernodal LLT x 851, SimplicialLDLT x 58, UMFPACK LU x 2149)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 58
+  output:  /home/user/wt/audit/benchmarks/physics_audit/process/runs/truncated_cone-s2026-0000/stepdown05/output

@@ -1,0 +1,71 @@
+{
+ "elliptic_cone-s2026-0001 [standard]": {
+  "largest_per_group_mm": {
+   "yield locus (vm, r sets, stress-ratio bound)": 0.0419,
+   "Bauschinger": 0.0134,
+   "hardening beyond tests": 0.0163,
+   "E (constant -10 %)": 0.0066
+  },
+  "quadrature_sum_mm": 0.047375310025370806,
+  "combo_lit_mm": 0.0171,
+  "base_deviation_rms_mm": 0.8407
+ },
+ "pyramid-s2026-0001 [standard]": {
+  "largest_per_group_mm": {
+   "yield locus (vm, r sets, stress-ratio bound)": 0.0269,
+   "Bauschinger": 0.0159,
+   "hardening beyond tests": 0.0087,
+   "E (constant -10 %)": 0.0055,
+   "E(eps_p)": 0.0098,
+   "initial yield +-15 MPa": 0.0111,
+   "friction 0.05-0.2": 0.0027
+  },
+  "quadrature_sum_mm": 0.03617872302887431,
+  "combo_lit_mm": 0.0197,
+  "base_deviation_rms_mm": 0.6991
+ },
+ "pyramid-s2026-0001 [im5]": {
+  "largest_per_group_mm": {
+   "yield locus (vm, r sets, stress-ratio bound)": 0.0269,
+   "Bauschinger": 0.0398,
+   "hardening beyond tests": 0.0087,
+   "E (constant -10 %)": 0.0055,
+   "E(eps_p)": 0.0098,
+   "initial yield +-15 MPa": 0.0111,
+   "friction 0.05-0.2": 0.0027
+  },
+  "quadrature_sum_mm": 0.05138219535987149,
+  "combo_lit_mm": null,
+  "base_deviation_rms_mm": 0.7462
+ },
+ "truncated_cone-s2026-0000 [standard]": {
+  "largest_per_group_mm": {
+   "yield locus (vm, r sets, stress-ratio bound)": 0.0362,
+   "Bauschinger": 0.016,
+   "hardening beyond tests": 0.0142,
+   "E (constant -10 %)": 0.0103,
+   "E(eps_p)": 0.0047,
+   "initial yield +-15 MPa": 0.0087,
+   "friction 0.05-0.2": 0.0028,
+   "sheet thickness -5 %": 0.0051
+  },
+  "quadrature_sum_mm": 0.04478615857606008,
+  "combo_lit_mm": 0.0199,
+  "base_deviation_rms_mm": 0.7665
+ },
+ "truncated_cone-s2026-0000 [im5]": {
+  "largest_per_group_mm": {
+   "yield locus (vm, r sets, stress-ratio bound)": 0.0318,
+   "Bauschinger": 0.0342,
+   "hardening beyond tests": 0.0082,
+   "E (constant -10 %)": 0.009,
+   "E(eps_p)": 0.0047,
+   "initial yield +-15 MPa": 0.0087,
+   "friction 0.05-0.2": 0.0028,
+   "sheet thickness -5 %": 0.0051
+  },
+  "quadrature_sum_mm": 0.049605947224098036,
+  "combo_lit_mm": 0.0454,
+  "base_deviation_rms_mm": 0.8033
+ }
+}

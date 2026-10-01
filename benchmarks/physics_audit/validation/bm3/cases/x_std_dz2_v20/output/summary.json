@@ -1,0 +1,267 @@
+{
+  "case": "x_std_dz2_v20",
+  "sparlab_version": "1.0.0 (b1a81217b6e3-dirty)",
+  "completed": true,
+  "termination": "completed every step",
+  "runtime_s": 7605.514473147,
+  "timing": {
+    "contact_s": 0.0082346320000000021,
+    "element_residual_s": 0.5196423,
+    "element_tangent_s": 31.892637138999977,
+    "explicit_s": 7556.5862696949998,
+    "explicit_contact_s": 25.106489285999828,
+    "explicit_integration_s": 58.956518332999764,
+    "explicit_internal_force_s": 7404.1753973841369,
+    "explicit_stable_step_s": 64.722686291999977,
+    "factor_cholmod_llt_s": 13.293536081999999,
+    "factorisation_s": 13.653616693000002,
+    "output_s": 0.108950515,
+    "solve_s": 0.96293963500000013,
+    "total_s": 7605.4379642559998,
+    "increments": 20,
+    "iterations": 70,
+    "cuts": 0,
+    "explicit_steps": 288167,
+    "linear_solver": "CHOLMOD supernodal LLT x 70",
+    "failed_factorisations": "",
+    "suitesparse": true
+  },
+  "analysis": {
+    "kinematics": "finite_logarithmic",
+    "plastic": true,
+    "mean_dilatation": true,
+    "friction_tangent": "exact",
+    "residual_tolerance": 9.9999999999999995e-07,
+    "displacement_tolerance": 9.9999999999999995e-07,
+    "max_iterations": 30,
+    "max_cuts": 10,
+    "line_search": true,
+    "explicit_tolerances": [
+      {
+        "step": "form",
+        "energy_tolerance": 0.050000000000000003,
+        "energy_limit": 0.5,
+        "kinetic_ratio_warning": 0.10000000000000001,
+        "penetration_warning": 0.01,
+        "max_added_mass_fraction": 1000,
+        "stable_step_safety": 0.90000000000000002
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "form",
+      "type": "form_explicit",
+      "completed": true,
+      "increments": 1441,
+      "iterations": 0,
+      "cuts": 0,
+      "max_plastic_strain": 1.3054228190458521,
+      "reaction_norm_N": 2208.7883871167737,
+      "warnings": [
+        "the contact penetration reached 0.0239816 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)",
+        "the energy balance error reached 0.195772 of the largest energy (warning above 0.05)"
+      ],
+      "termination": "reached the end of its window",
+      "files_stem": "step_1_form",
+      "t_begin_s": 0,
+      "t_end_s": 5.7633233798664429,
+      "tools": [
+        "tool",
+        "backing"
+      ],
+      "constrained_dofs": 864,
+      "start_imbalance_N": 0,
+      "reference_force_N": 8247.5467932655483,
+      "max_displacement_change_m": 0.044234603731127503,
+      "max_displacement_m": 0.044234603731127503,
+      "explicit": {
+        "steps": 288167,
+        "physical_time_s": 0.28816616898646308,
+        "tool_speed_m_s": 20,
+        "duration_s": 0,
+        "time_step_s": 9.9999999999999974e-07,
+        "min_time_step_s": 9.9999999999999932e-07,
+        "final_time_step_s": 9.9999999999999974e-07,
+        "stable_time_step_s": 7.8630609494937401e-08,
+        "scaled_stable_time_step_s": 1.1878277418329968e-06,
+        "stable_step_method": "element_eigenvalue",
+        "safety": 0.90000000000000002,
+        "step_updates": 288,
+        "mass_scaling": "selective",
+        "target_time_step_s": 9.9999999999999995e-07,
+        "dynamic_mass_scaling": true,
+        "mass_updates": 288,
+        "mass_scale_max": 228.65581236534217,
+        "scaled_elements": 6912,
+        "physical_mass_kg": 0.089740373299388707,
+        "scaled_mass_kg": 11.890694435910378,
+        "added_mass_fraction": 131.50105831676294,
+        "max_added_mass_fraction": 1000,
+        "damping_per_s": 0,
+        "contact_stiffness": 0.5,
+        "contact": true,
+        "max_kinetic_ratio": 0.013959530103701977,
+        "peak_kinetic_ratio": 1.0524552213304244,
+        "kinetic_ratio_basis": "internal energy",
+        "kinetic_ratio_warning": 0.10000000000000001,
+        "max_penetration_ratio": 0.023981566526085359,
+        "penetration_warning": 0.01,
+        "max_energy_error": 0.19577151268093765,
+        "energy_tolerance": 0.050000000000000003,
+        "energy_limit": 0.5,
+        "history_every": 200,
+        "kernel": "dedicated Hex8",
+        "timing": {
+          "contact_s": 25.106489285999828,
+          "integration_s": 58.956518332999764,
+          "internal_force_s": 7404.1753973841369,
+          "stable_step_s": 64.722686291999977,
+          "total_s": 7556.5862696949998
+        },
+        "wall_s": 7556.5862696949998,
+        "energy_file": "step_1_form_energy.csv"
+      }
+    },
+    {
+      "name": "unload",
+      "type": "release",
+      "completed": true,
+      "increments": 10,
+      "iterations": 30,
+      "cuts": 0,
+      "max_plastic_strain": 1.3054228190458521,
+      "reaction_norm_N": 1050.3272615744204,
+      "warnings": [
+        "the supports of release step 'unload' carry reactions of 1050.33 N, 0.0794558 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports"
+      ],
+      "termination": "released",
+      "files_stem": "step_2_unload",
+      "t_begin_s": 5.7633233798664429,
+      "t_end_s": 6.7633233798664429,
+      "tools": [],
+      "constrained_dofs": 864,
+      "start_imbalance_N": 14687.792471978573,
+      "reference_force_N": 13219.013224780721,
+      "max_displacement_change_m": 0.00017080014524993738,
+      "max_displacement_m": 0.044247402024703522
+    },
+    {
+      "name": "release",
+      "type": "release",
+      "completed": true,
+      "increments": 10,
+      "iterations": 40,
+      "cuts": 0,
+      "max_plastic_strain": 1.3054228190458521,
+      "reaction_norm_N": 1.0681781156513719e-11,
+      "warnings": [],
+      "termination": "released",
+      "files_stem": "step_3_release",
+      "t_begin_s": 6.7633233798664429,
+      "t_end_s": 7.7633233798664429,
+      "tools": [],
+      "constrained_dofs": 6,
+      "start_imbalance_N": 1050.3272615744204,
+      "reference_force_N": 13219.013224780721,
+      "max_displacement_change_m": 0.00017915163057180241,
+      "max_displacement_m": 0.044387840866844087
+    }
+  ],
+  "tools": [
+    {
+      "name": "tool",
+      "shape": "sphere",
+      "radius_m": 0.0063300000000000006,
+      "friction": 0.01,
+      "penalty": 3,
+      "tangential_penalty": 1,
+      "trajectory_knots": 2290,
+      "trajectory_t_start_s": 0,
+      "trajectory_t_end_s": 5.7633233800000001,
+      "trajectory_length_m": 5.7633233798628041,
+      "peak_force_N": [
+        -1019.0741803525077,
+        -278.29131537684628,
+        3109.5832445567544
+      ],
+      "peak_force_time_s": 3.4920000001802229,
+      "max_active_nodes": 6,
+      "max_penetration_m": 1.5626865419282598e-05
+    },
+    {
+      "name": "backing",
+      "shape": "plane",
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "friction": 0,
+      "penalty": 3,
+      "tangential_penalty": 1,
+      "trajectory_knots": 2,
+      "trajectory_t_start_s": 0,
+      "trajectory_t_end_s": 5.7633233798664429,
+      "trajectory_length_m": 0,
+      "peak_force_N": [
+        0,
+        0,
+        -8247.5467932655483
+      ],
+      "peak_force_time_s": 1.6719999999320616,
+      "max_active_nodes": 176,
+      "max_penetration_m": 2.5745620756151971e-06
+    }
+  ],
+  "mesh": {
+    "source": "file 'mesh.inp' (Hex8, 6912 elements)",
+    "element_type": "Hex8",
+    "element_formulation": "standard",
+    "stiffness_rule_points": 8,
+    "dim": 3,
+    "nodes": 10515,
+    "elements": 6912,
+    "dofs": 31545,
+    "bounding_box_min_m": [
+      -0.079000000000000001,
+      -0.079000000000000001,
+      -0.0016299999999999999
+    ],
+    "bounding_box_max_m": [
+      0.079000000000000001,
+      0.079000000000000001,
+      0
+    ]
+  },
+  "warnings": [
+    "step 'form': the contact penetration reached 0.0239816 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)",
+    "step 'form': the energy balance error reached 0.195772 of the largest energy (warning above 0.05)",
+    "step 'unload': the supports of release step 'unload' carry reactions of 1050.33 N, 0.0794558 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports"
+  ],
+  "files": [
+    "summary.json",
+    "config.json",
+    "mesh.json",
+    "step_1_form_nodes.csv",
+    "step_1_form_elements.csv",
+    "step_1_form_energy.csv",
+    "step_2_unload_nodes.csv",
+    "step_2_unload_elements.csv",
+    "step_3_release_nodes.csv",
+    "step_3_release_elements.csv",
+    "tool_forces.csv"
+  ],
+  "provenance": {
+    "code": "SparLab",
+    "version": "1.0.0",
+    "build_type": "Release",
+    "compiler": "gcc 13.3.0",
+    "eigen_version": "3.4.0",
+    "config_source": "cases/x_std_dz2_v20/deck.json",
+    "case": "x_std_dz2_v20",
+    "description": "NUMISHEET 2014 BM3 replica (Neto et al. 2016): dz=2.0 mm, O-grid N=96 hr=2.5 mm, std, spiral, explicit v=20.0 m/s dt=1e-06",
+    "units": "SI: m, N, Pa, kg, kg/m^3, Hz, J",
+    "timestamp_utc": "2026-10-01T03:21:24Z"
+  }
+}

@@ -1,0 +1,11 @@
+{
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "material": {
+   "r0": null,
+   "r45": null,
+   "r90": null
+  }
+ },
+ "variant": "vm"
+}

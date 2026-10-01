@@ -1,0 +1,16 @@
+{
+ "info": {
+  "support_min_z_mm": -7.5796693954616785,
+  "support_primary_distance_mm": [
+   8.755065589084593,
+   10.302228704347257
+  ]
+ },
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "dsif": {
+   "thickness": "nogouge"
+  }
+ },
+ "variant": "dsif_ng"
+}

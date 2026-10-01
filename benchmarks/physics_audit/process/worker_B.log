@@ -1,0 +1,11 @@
+20:20:29 B start truncated_cone-s2026-0000 rob_irb_vert load (2.24365234375, 2.20166015625, 2.71044921875)
+20:23:45 B end truncated_cone-s2026-0000 rob_irb_vert ok=True wall=196s 
+20:23:45 B start truncated_cone-s2026-0000 rob_irb_horiz load (4.236328125, 3.20947265625, 3.017578125)
+20:26:09 B end truncated_cone-s2026-0000 rob_irb_horiz ok=True wall=144s 
+20:26:09 B start truncated_cone-s2026-0000 scale2 load (4.298828125, 3.63818359375, 3.21044921875)
+20:26:27 B end truncated_cone-s2026-0000 scale2 ok=False wall=17s FormingError: sparlab_form exited with -15 (failed) on /home/user/wt/audit/benchmarks/physics_audit/process/runs/truncated_cone-s2026-0000/scale2:
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 st
+20:26:27 B start truncated_cone-s2026-0000 rob_iso1_it2 load (4.46630859375, 3.70654296875, 3.23974609375)
+20:28:48 B end truncated_cone-s2026-0000 rob_iso1_it2 ok=True wall=142s 
+20:28:48 B queue empty

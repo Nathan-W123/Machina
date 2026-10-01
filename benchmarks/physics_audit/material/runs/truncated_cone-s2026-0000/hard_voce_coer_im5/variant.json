@@ -1,0 +1,21 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "deck": {
+   "model": {
+    "element_formulation": "incompatible_modes",
+    "integration": {
+     "thickness_direction": "z",
+     "thickness_points": 5
+    }
+   }
+  },
+  "material": {
+   "hardening_modulus": 0.0,
+   "saturation_rate": 13.5,
+   "saturation_stress": 189390000.0,
+   "yield_stress": 102750000.0
+  }
+ },
+ "variant": "hard_voce_coer_im5"
+}

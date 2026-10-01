@@ -1,0 +1,48 @@
+[info ] applied 0 boundary condition group(s): 0 of 15129 DOFs prescribed, 15129 free
+[info ] forming 'spif': 3200 Hex8 elements, 15129 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 7560 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 'form': t = 0.140547 s of 0.951429 (15 increment(s), 122 iteration(s), 0 cut(s), 64.6848 s elapsed)
+[info ] forming increment to t = 0.177943 failed (solver error: solver error: an element is inverted (det F = -1.16886); the load step is too large or the mesh too coarse for this deformation); halving to 0.00467461
+[info ] forming step 'form': t = 0.182618 s of 0.951429 (21 increment(s), 202 iteration(s), 1 cut(s), 128.505 s elapsed)
+[info ] forming increment to t = 0.191964 failed (solver error: solver error: an element is inverted (det F = -0.0954163); the load step is too large or the mesh too coarse for this deformation); halving to 0.0023373
+[info ] forming step 'form': t = 0.21999 s of 0.951429 (36 increment(s), 309 iteration(s), 2 cut(s), 189.321 s elapsed)
+[info ] forming step 'form': t = 0.267639 s of 0.951429 (58 increment(s), 464 iteration(s), 2 cut(s), 250.416 s elapsed)
+[info ] forming increment to t = 0.272314 failed (solver error: solver error: an element is inverted (det F = -0.0276947); the load step is too large or the mesh too coarse for this deformation); halving to 0.00116865
+[info ] forming step 'form': t = 0.297584 s of 0.951429 (85 increment(s), 629 iteration(s), 3 cut(s), 311.216 s elapsed)
+[info ] forming step 'form': t = 0.329985 s of 0.951429 (114 increment(s), 802 iteration(s), 3 cut(s), 372.015 s elapsed)
+[info ] forming step 'form': t = 0.364461 s of 0.951429 (143 increment(s), 978 iteration(s), 3 cut(s), 433.502 s elapsed)
+[info ] forming step 'form': t = 0.401338 s of 0.951429 (162 increment(s), 1111 iteration(s), 3 cut(s), 495.512 s elapsed)
+[info ] forming step 'form': t = 0.423543 s of 0.951429 (173 increment(s), 1216 iteration(s), 3 cut(s), 556.838 s elapsed)
+[info ] forming step 'form': t = 0.463574 s of 0.951429 (187 increment(s), 1334 iteration(s), 3 cut(s), 628.046 s elapsed)
+[info ] forming step 'form': t = 0.486245 s of 0.951429 (195 increment(s), 1410 iteration(s), 3 cut(s), 688.908 s elapsed)
+[info ] forming step 'form': t = 0.512694 s of 0.951429 (203 increment(s), 1491 iteration(s), 3 cut(s), 748.911 s elapsed)
+[info ] forming increment to t = 0.519369 failed (solver error: solver error: an element is inverted (det F = -0.0555041); the load step is too large or the mesh too coarse for this deformation); halving to 0.0019721
+[info ] forming step 'form': t = 0.535634 s of 0.951429 (215 increment(s), 1574 iteration(s), 4 cut(s), 814.69 s elapsed)
+[info ] forming increment to t = 0.542431 failed (solver error: solver error: an element is inverted (det F = -0.132892); the load step is too large or the mesh too coarse for this deformation); halving to 0.00098605
+[info ] forming step 'form': t = 0.549614 s of 0.951429 (228 increment(s), 1653 iteration(s), 5 cut(s), 875.992 s elapsed)
+[info ] forming step 'form': t = 0.564035 s of 0.951429 (244 increment(s), 1750 iteration(s), 5 cut(s), 937.372 s elapsed)
+[info ] forming step 'form': t = 0.585753 s of 0.951429 (265 increment(s), 1874 iteration(s), 5 cut(s), 999.033 s elapsed)
+[info ] forming step 'form': t = 0.613246 s of 0.951429 (285 increment(s), 2003 iteration(s), 5 cut(s), 1059.21 s elapsed)
+[info ] forming step 'form': t = 0.6412 s of 0.951429 (306 increment(s), 2135 iteration(s), 5 cut(s), 1119.43 s elapsed)
+[info ] forming step 'form': t = 0.667977 s of 0.951429 (327 increment(s), 2266 iteration(s), 5 cut(s), 1179.63 s elapsed)
+[info ] forming step 'form': t = 0.691616 s of 0.951429 (344 increment(s), 2391 iteration(s), 5 cut(s), 1241.99 s elapsed)
+[info ] forming step 'form': t = 0.720052 s of 0.951429 (364 increment(s), 2520 iteration(s), 5 cut(s), 1305.39 s elapsed)
+[info ] forming step 'form': t = 0.747191 s of 0.951429 (385 increment(s), 2648 iteration(s), 5 cut(s), 1365.65 s elapsed)
+[info ] forming step 'form': t = 0.775477 s of 0.951429 (406 increment(s), 2772 iteration(s), 5 cut(s), 1426.38 s elapsed)
+[info ] forming step 'form': t = 0.808348 s of 0.951429 (430 increment(s), 2909 iteration(s), 5 cut(s), 1487.73 s elapsed)
+[info ] forming step 'form': t = 0.909887 s of 0.951429 (452 increment(s), 3049 iteration(s), 5 cut(s), 1552.24 s elapsed)
+[info ] forming step 'form' completed: 457 increment(s), 3091 iteration(s), 5 cut(s), reactions 391.045 N, largest plastic strain 0.457773, largest displacement change 0.00310588 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 7560 prescribed DOF(s)): start imbalance 305.021 N
+[warn ] the supports of release step 'unload' carry reactions of 269.599 N, 0.397222 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 39 iteration(s), 0 cut(s), reactions 269.599 N, largest plastic strain 0.457773, largest displacement change 5.57449e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 269.599 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 1.70182e-13 N, largest plastic strain 0.457773, largest displacement change 0.000161292 m
+case: spif
+  mesh:    3200 elements, 15129 DOFs
+  step 1 'form' (form): completed, 457 increment(s), 3091 iteration(s), 5 cut(s), largest plastic strain 0.457773, largest displacement change 0.00310588 m
+  step 2 'unload' (release): completed, 10 increment(s), 39 iteration(s), 0 cut(s), largest plastic strain 0.457773, largest displacement change 5.57449e-05 m
+      warning: the supports of release step 'unload' carry reactions of 269.599 N, 0.397222 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.457773, largest displacement change 0.000161292 m
+  runtime: 1601 s (477 increments, 3170 Newton iterations; CHOLMOD supernodal LLT x 208, SimplicialLDLT x 19, UMFPACK LU x 3326)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 19
+  output:  /home/user/wt/audit/benchmarks/physics_audit/convergence/cases/h1_L2_std/output

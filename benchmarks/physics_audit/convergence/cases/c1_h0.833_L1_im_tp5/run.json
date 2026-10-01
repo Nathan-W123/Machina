@@ -1,0 +1,36 @@
+{
+  "case": "c1_h0.833_L1_im_tp5",
+  "params": {
+    "h": 0.8333333333333334,
+    "L": 1,
+    "form": "im",
+    "tp": 5,
+    "travel": 1.0,
+    "pen": 10.0,
+    "part": "c1"
+  },
+  "command": [
+    "/home/user/wt/audit/build/bin/sparlab_form",
+    "--config",
+    "/home/user/wt/audit/benchmarks/physics_audit/convergence/cases/c1_h0.833_L1_im_tp5/deck/deck.json",
+    "--output",
+    "/home/user/wt/audit/benchmarks/physics_audit/convergence/cases/c1_h0.833_L1_im_tp5/output",
+    "--threads",
+    "1",
+    "--strict-config"
+  ],
+  "returncode": 0,
+  "wall_s": 1965.1604361534119,
+  "started_utc": "2026-09-30T23:18:09Z",
+  "loadavg_start": [
+    4.03564453125,
+    4.078125,
+    4.1240234375
+  ],
+  "loadavg_end": [
+    4.22216796875,
+    4.08837890625,
+    4.04833984375
+  ],
+  "version": "sparlab 1.0.0 (b1a81217b6e3-dirty)"
+}

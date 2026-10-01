@@ -1,0 +1,9 @@
+# raw solver output (reproducible from bm3/cases/<name>/deck.json + mesh.inp); summaries, tool forces, logs, extracted profiles kept
+bm3/cases/*/output/*_nodes.csv
+bm3/cases/*/output/*_elements.csv
+bm3/cases/*/output/mesh.json
+bm3/cases/*/output/*_energy.csv
+__pycache__/
+*/__pycache__/
+digitize/p7.json
+literature/esaform2024.pdf

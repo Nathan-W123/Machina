@@ -1,0 +1,13 @@
+[info ] applied 0 boundary condition group(s): 0 of 39366 DOFs prescribed, 39366 free
+[info ] forming 'spif': 6400 Hex8 elements, 39366 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 18480 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 'form': t = 0.0471314 s of 0.951429 (5 increment(s), 26 iteration(s), 0 cut(s), 68.186 s elapsed)
+[info ] forming step 'form': t = 0.0658208 s of 0.951429 (7 increment(s), 47 iteration(s), 0 cut(s), 131.474 s elapsed)
+[info ] forming step 'form': t = 0.0844961 s of 0.951429 (9 increment(s), 67 iteration(s), 0 cut(s), 194.92 s elapsed)
+[info ] forming step 'form': t = 0.103175 s of 0.951429 (11 increment(s), 89 iteration(s), 0 cut(s), 273.396 s elapsed)
+[info ] forming step 'form': t = 0.112511 s of 0.951429 (12 increment(s), 108 iteration(s), 0 cut(s), 339.184 s elapsed)
+[info ] forming step 'form': t = 0.131201 s of 0.951429 (14 increment(s), 130 iteration(s), 0 cut(s), 403.506 s elapsed)
+[info ] forming step 'form': t = 0.149896 s of 0.951429 (16 increment(s), 152 iteration(s), 0 cut(s), 463.78 s elapsed)
+[info ] forming step 'form': t = 0.168594 s of 0.951429 (18 increment(s), 175 iteration(s), 0 cut(s), 531.566 s elapsed)
+[info ] forming increment to t = 0.187289 failed (solver error: solver error: Hex8 element 2510: the incompatible modes did not converge in 25 local iterations (residual 4.85951 N of 4490.99 N); the step is cut); halving to 0.00467304
+[info ] forming step 'form': t = 0.182616 s of 0.951429 (20 increment(s), 206 iteration(s), 1 cut(s), 709.371 s elapsed)

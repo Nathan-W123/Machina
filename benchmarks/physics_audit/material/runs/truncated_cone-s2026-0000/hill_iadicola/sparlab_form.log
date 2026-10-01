@@ -1,0 +1,26 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.177943 failed (solver error: solver error: an element is inverted (det F = -7.88386); the load step is too large or the mesh too coarse for this deformation); halving to 0.00467461
+[info ] forming increment to t = 0.272649 failed (solver error: solver error: an element is inverted (det F = -1.06898); the load step is too large or the mesh too coarse for this deformation); halving to 0.00133629
+[info ] forming increment to t = 0.291262 failed (solver error: solver error: an element is inverted (det F = -0.0422298); the load step is too large or the mesh too coarse for this deformation); halving to 0.00225499
+[info ] forming step 'form': t = 0.328816 s of 0.951429 (70 increment(s), 526 iteration(s), 3 cut(s), 60.3814 s elapsed)
+[info ] forming increment to t = 0.373246 failed (solver error: solver error: an element is inverted (det F = -0.0847937); the load step is too large or the mesh too coarse for this deformation); halving to 0.00185555
+[info ] forming increment to t = 0.588225 failed (solver error: solver error: an element is inverted (det F = -0.895369); the load step is too large or the mesh too coarse for this deformation); halving to 0.00419408
+[info ] forming step 'form': t = 0.636763 s of 0.951429 (132 increment(s), 1051 iteration(s), 5 cut(s), 120.668 s elapsed)
+[info ] forming increment to t = 0.672636 failed (solver error: solver error: an element is inverted (det F = -0.65375); the load step is too large or the mesh too coarse for this deformation); halving to 0.00306897
+[info ] forming step 'form' completed: 200 increment(s), 1499 iteration(s), 6 cut(s), reactions 1199.66 N, largest plastic strain 0.383532, largest displacement change 0.00308988 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 455.487 N
+[warn ] the supports of release step 'unload' carry reactions of 900.137 N, 0.554036 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 39 iteration(s), 0 cut(s), reactions 900.137 N, largest plastic strain 0.383532, largest displacement change 6.30685e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 900.137 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 3.47407e-13 N, largest plastic strain 0.383532, largest displacement change 0.0001539 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 200 increment(s), 1499 iteration(s), 6 cut(s), largest plastic strain 0.383532, largest displacement change 0.00308988 m
+  step 2 'unload' (release): completed, 10 increment(s), 39 iteration(s), 0 cut(s), largest plastic strain 0.383532, largest displacement change 6.30685e-05 m
+      warning: the supports of release step 'unload' carry reactions of 900.137 N, 0.554036 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.383532, largest displacement change 0.0001539 m
+  runtime: 177.2 s (220 increments, 1578 Newton iterations; CHOLMOD supernodal LLT x 420, SimplicialLDLT x 12, UMFPACK LU x 1455)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 12
+  output:  /home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/hill_iadicola/output

@@ -1,0 +1,12 @@
+{
+ "info": {},
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "offset": [
+   0.0,
+   0.0,
+   0.0003
+  ]
+ },
+ "variant": "offset_z03"
+}

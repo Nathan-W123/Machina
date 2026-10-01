@@ -1,0 +1,16 @@
+{
+ "info": {
+  "support_min_z_mm": -8.090366134420035,
+  "support_primary_distance_mm": [
+   8.777364791024608,
+   10.423024913947037
+  ]
+ },
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "dsif": {
+   "thickness": "nogouge"
+  }
+ },
+ "variant": "dsif_ng"
+}

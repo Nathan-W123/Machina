@@ -1,0 +1,11 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "r0": 0.69,
+   "r45": 0.73,
+   "r90": 0.87
+  }
+ },
+ "variant": "hill_iadicola"
+}

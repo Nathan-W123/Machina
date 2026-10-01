@@ -1,0 +1,42 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "deck": {
+   "material": {
+    "plasticity": {
+     "anisotropy": {
+      "rolling_direction": [
+       1,
+       0,
+       0
+      ],
+      "sheet_normal": [
+       0,
+       0,
+       1
+      ],
+      "stress_ratios": {
+       "sigma_45": 0.9659936238044634,
+       "sigma_90": 0.9787460148777896,
+       "sigma_biaxial": 1.1
+      }
+     },
+     "yield_criterion": "hill48"
+    }
+   },
+   "model": {
+    "element_formulation": "incompatible_modes",
+    "integration": {
+     "thickness_direction": "z",
+     "thickness_points": 5
+    }
+   }
+  },
+  "material": {
+   "r0": null,
+   "r45": null,
+   "r90": null
+  }
+ },
+ "variant": "hill_sb110_im5"
+}

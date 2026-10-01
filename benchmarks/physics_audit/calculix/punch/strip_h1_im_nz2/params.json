@@ -1,0 +1,17 @@
+{
+ "kind": "strip",
+ "h": 1.0,
+ "nz": 2,
+ "elem": "im",
+ "mu": 0.1,
+ "depth": 4.0,
+ "drag": 0.0,
+ "travel": 0.1,
+ "ccx_inc": 0.1,
+ "only": "",
+ "tp": 0,
+ "ccx_elem": "",
+ "sparlab_unload": "release",
+ "ccx_unload": "remove",
+ "_nseg": 1
+}

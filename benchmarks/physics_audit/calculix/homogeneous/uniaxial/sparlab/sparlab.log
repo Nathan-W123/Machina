@@ -1,0 +1,45 @@
+[info ] applied 0 boundary condition group(s): 0 of 24 DOFs prescribed, 24 free
+[info ] forming 'homog_uniaxial': 1 Hex8 elements, 24 DOFs, 0 tool(s), 13 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 's00' (form, t = 0 .. 1 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 's00' completed: 20 increment(s), 60 iteration(s), 0 cut(s), reactions 71.3578 N, largest plastic strain 0.000555468, largest displacement change 2.26836e-06 m
+[info ] forming step 's01' (form, t = 1 .. 2 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 3.4994e-15 N
+[info ] forming step 's01' completed: 20 increment(s), 60 iteration(s), 0 cut(s), reactions 81.1969 N, largest plastic strain 0.00834309, largest displacement change 9.79931e-06 m
+[info ] forming step 's02' (form, t = 2 .. 3 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 1.192e-14 N
+[info ] forming step 's02' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 116.109 N, largest plastic strain 0.047534, largest displacement change 4.96532e-05 m
+[info ] forming step 's03' (form, t = 3 .. 4 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 7.1075e-14 N
+[info ] forming step 's03' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 138.292 N, largest plastic strain 0.0969122, largest displacement change 6.36885e-05 m
+[info ] forming step 's04' (form, t = 4 .. 5 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 6.02099e-13 N
+[info ] forming step 's04' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 152.329 N, largest plastic strain 0.196241, largest displacement change 0.000133415 m
+[info ] forming step 's05' (form, t = 5 .. 6 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 1.17257e-12 N
+[info ] forming step 's05' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 153.167 N, largest plastic strain 0.295823, largest displacement change 0.000142793 m
+[info ] forming step 's06' (form, t = 6 .. 7 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 2.14306e-12 N
+[info ] forming step 's06' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 150.449 N, largest plastic strain 0.395466, largest displacement change 0.000153867 m
+[info ] forming step 's07' (form, t = 7 .. 8 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 2.59839e-12 N
+[info ] forming step 's07' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 146.425 N, largest plastic strain 0.495123, largest displacement change 0.000166742 m
+[info ] forming step 's08' (form, t = 8 .. 9 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 1.01152e-12 N
+[info ] forming step 's08' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 171.988 N, largest plastic strain 0.585062, largest displacement change 0.000166105 m
+[info ] forming step 's09' (form, t = 9 .. 10 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 1.84324e-12 N
+[info ] forming step 's09' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 202.492 N, largest plastic strain 0.684723, largest displacement change 0.000153831 m
+[info ] forming step 's10' (form, t = 10 .. 11 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 1.29721e-12 N
+[info ] forming step 's10' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 237.501 N, largest plastic strain 0.784385, largest displacement change 0.000142756 m
+[info ] forming step 's11' (form, t = 11 .. 12 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 3.95998e-12 N
+[info ] forming step 's11' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 277.631 N, largest plastic strain 0.884047, largest displacement change 0.0001334 m
+[info ] forming step 's12' (form, t = 12 .. 13 s, 0 tool(s), 16 prescribed DOF(s)): start imbalance 8.96179e-13 N
+[info ] forming step 's12' completed: 20 increment(s), 80 iteration(s), 0 cut(s), reactions 323.575 N, largest plastic strain 0.983708, largest displacement change 0.000125686 m
+case: homog_uniaxial
+  mesh:    1 elements, 24 DOFs
+  step 1 's00' (form): completed, 20 increment(s), 60 iteration(s), 0 cut(s), largest plastic strain 0.000555468, largest displacement change 2.26836e-06 m
+  step 2 's01' (form): completed, 20 increment(s), 60 iteration(s), 0 cut(s), largest plastic strain 0.00834309, largest displacement change 9.79931e-06 m
+  step 3 's02' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.047534, largest displacement change 4.96532e-05 m
+  step 4 's03' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.0969122, largest displacement change 6.36885e-05 m
+  step 5 's04' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.196241, largest displacement change 0.000133415 m
+  step 6 's05' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.295823, largest displacement change 0.000142793 m
+  step 7 's06' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.395466, largest displacement change 0.000153867 m
+  step 8 's07' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.495123, largest displacement change 0.000166742 m
+  step 9 's08' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.585062, largest displacement change 0.000166105 m
+  step 10 's09' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.684723, largest displacement change 0.000153831 m
+  step 11 's10' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.784385, largest displacement change 0.000142756 m
+  step 12 's11' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.884047, largest displacement change 0.0001334 m
+  step 13 's12' (form): completed, 20 increment(s), 80 iteration(s), 0 cut(s), largest plastic strain 0.983708, largest displacement change 0.000125686 m
+  runtime: 0.08184 s (260 increments, 1000 Newton iterations; CHOLMOD supernodal LLT x 1000)
+  output:  out

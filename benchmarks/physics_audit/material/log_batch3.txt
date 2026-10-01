@@ -1,0 +1,14 @@
+18:57:53 {"part": "truncated_cone-s2026-0000", "variant": "base_im5", "ok": true, "wall_s": 723.939127445221, "error": null} 0.8033124486158488
+18:57:53 {"part": "truncated_cone-s2026-0000", "variant": "E63_im5", "ok": true, "wall_s": 513.782731294632, "error": null} 0.8104710921779336
+18:57:53 {"part": "pyramid-s2026-0001", "variant": "E63", "ok": true, "wall_s": 178.84624457359314, "error": null} 0.7020150186974984
+18:59:44 {"part": "pyramid-s2026-0001", "variant": "kin_shutov", "ok": true, "wall_s": 142.9655055999756, "error": null} 0.7020093996250043
+19:00:19 {"part": "pyramid-s2026-0001", "variant": "vm", "ok": true, "wall_s": 145.80404329299927, "error": null} 0.689924536353286
+19:02:01 {"part": "pyramid-s2026-0001", "variant": "hard_voce_coer", "ok": true, "wall_s": 136.51253533363342, "error": null} 0.7067072718741871
+19:02:50 {"part": "pyramid-s2026-0001", "variant": "hard_pow_iadicola", "ok": true, "wall_s": 151.79486989974976, "error": null} 0.7031110522117919
+19:04:26 {"part": "pyramid-s2026-0001", "variant": "ys115", "ok": true, "wall_s": 145.13016033172607, "error": null} 0.7015304905831813
+19:05:26 {"part": "pyramid-s2026-0001", "variant": "ys85", "ok": true, "wall_s": 155.32202816009521, "error": null} 0.6942839282850696
+19:06:05 {"part": "pyramid-s2026-0001", "variant": "mu02", "ok": true, "wall_s": 98.65079689025879, "error": null} 0.6977660514907791
+19:11:19 {"part": "truncated_cone-s2026-0000", "variant": "kin_shutov_im5", "ok": true, "wall_s": 352.836092710495, "error": null} 0.7858682040704131
+19:12:17 {"part": "truncated_cone-s2026-0000", "variant": "vm_im5", "ok": true, "wall_s": 372.3606219291687, "error": null} 0.793990583487207
+19:20:11 {"part": "truncated_cone-s2026-0000", "variant": "hard_voce_coer_im5", "ok": true, "wall_s": 532.2206547260284, "error": null} 0.8110116181097436
+19:22:17 {"part": "pyramid-s2026-0001", "variant": "Edeg", "ok": true, "wall_s": 125.98449659347534, "error": null} 0.6936796591332923

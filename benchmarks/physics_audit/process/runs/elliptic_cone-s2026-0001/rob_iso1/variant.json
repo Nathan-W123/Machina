@@ -1,0 +1,18 @@
+{
+ "info": {
+  "robot_deflection_mm": {
+   "max_dz": 1.122588328975544,
+   "max_norm": 1.1412171116084016,
+   "mean_dxy_contact": 0.13541087786184336,
+   "mean_dz_contact": 0.5764227216980202,
+   "mean_norm_contact": 0.5958500594552132
+  }
+ },
+ "part": "elliptic_cone-s2026-0001",
+ "spec": {
+  "robot": {
+   "iso_um_per_N": 1.0
+  }
+ },
+ "variant": "rob_iso1"
+}

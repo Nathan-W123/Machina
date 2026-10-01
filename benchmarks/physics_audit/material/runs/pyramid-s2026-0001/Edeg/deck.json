@@ -1,0 +1,927 @@
+{
+ "description": "Single-point incremental forming of a AA5754-O blank, written by precomp 0.1.0",
+ "forming": {
+  "kinematics": "finite_logarithmic",
+  "output": {
+   "snapshots": "steps",
+   "vtk": true
+  },
+  "steps": [
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "clamp",
+      "region": {
+       "any_of": [
+        {
+         "box": {
+          "xmax": -0.015
+         }
+        },
+        {
+         "box": {
+          "xmin": 0.015
+         }
+        },
+        {
+         "box": {
+          "ymax": -0.015
+         }
+        },
+        {
+         "box": {
+          "ymin": 0.015
+         }
+        }
+       ],
+       "name": "clamp"
+      }
+     }
+    ],
+    "max_tool_travel": 0.001,
+    "name": "form",
+    "time": [
+     0.0,
+     0.9638290303574512
+    ],
+    "tools": [
+     "tool"
+    ],
+    "type": "form"
+   },
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "clamp",
+      "region": {
+       "any_of": [
+        {
+         "box": {
+          "xmax": -0.015
+         }
+        },
+        {
+         "box": {
+          "xmin": 0.015
+         }
+        },
+        {
+         "box": {
+          "ymax": -0.015
+         }
+        },
+        {
+         "box": {
+          "ymin": 0.015
+         }
+        }
+       ],
+       "name": "clamp"
+      }
+     }
+    ],
+    "name": "unload",
+    "tools": [],
+    "type": "release"
+   },
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_xyz",
+      "region": {
+       "nearest_node": [
+        -0.0175,
+        -0.0175,
+        0.0
+       ]
+      }
+     },
+     {
+      "fix": [
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_yz",
+      "region": {
+       "nearest_node": [
+        0.0175,
+        -0.0175,
+        0.0
+       ]
+      }
+     },
+     {
+      "fix": [
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_z",
+      "region": {
+       "nearest_node": [
+        -0.0175,
+        0.0175,
+        0.0
+       ]
+      }
+     }
+    ],
+    "name": "release",
+    "tools": [],
+    "type": "release"
+   }
+  ],
+  "tools": [
+   {
+    "friction": 0.1,
+    "name": "tool",
+    "radius": 0.004,
+    "shape": "sphere",
+    "surface": {
+     "box": {
+      "xmax": 0.015,
+      "xmin": -0.015,
+      "ymax": 0.015,
+      "ymin": -0.015,
+      "zmin": 0.0
+     },
+     "name": "tool_side"
+    },
+    "trajectory": {
+     "file": "toolpath.csv"
+    }
+   }
+  ]
+ },
+ "material": {
+  "density": 2670.0,
+  "name": "AA5754-O",
+  "plasticity": {
+   "anisotropy": {
+    "r0": 0.75,
+    "r45": 0.7,
+    "r90": 0.8,
+    "rolling_direction": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "sheet_normal": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "hardening_modulus": 237610605.32948908,
+   "kinematic_hardening_modulus": 0.0,
+   "saturation_rate": 14.377555530345461,
+   "saturation_stress": 123864572.88204344,
+   "yield_criterion": "hill48",
+   "yield_stress": 100000000.0
+  },
+  "poisson_ratio": 0.33,
+  "youngs_modulus": 70000000000.0
+ },
+ "material_regions": [
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E59.93",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 59933191796.752235
+   },
+   "name": "e_bin_0",
+   "region": {
+    "element_ids": [
+     147,
+     148,
+     149,
+     150,
+     151,
+     152,
+     167,
+     168,
+     169,
+     170,
+     171,
+     172,
+     173,
+     187,
+     188,
+     189,
+     190,
+     191,
+     192,
+     193,
+     207,
+     208,
+     209,
+     210,
+     211,
+     212,
+     213,
+     226,
+     227,
+     228,
+     229,
+     230,
+     231,
+     232,
+     233,
+     247,
+     248,
+     249,
+     250,
+     251,
+     252,
+     547,
+     548,
+     549,
+     550,
+     551,
+     552,
+     567,
+     568,
+     569,
+     570,
+     571,
+     572,
+     573,
+     587,
+     588,
+     589,
+     590,
+     591,
+     592,
+     593,
+     606,
+     607,
+     608,
+     609,
+     610,
+     611,
+     612,
+     613,
+     626,
+     627,
+     628,
+     629,
+     630,
+     631,
+     632,
+     633,
+     647,
+     648,
+     649,
+     650,
+     651,
+     652
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E61.31",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 61306569656.755196
+   },
+   "name": "e_bin_1",
+   "region": {
+    "element_ids": [
+     146,
+     153,
+     166,
+     186,
+     206,
+     246,
+     253,
+     546,
+     553,
+     566,
+     586,
+     646,
+     653
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E63.03",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 63030113191.743546
+   },
+   "name": "e_bin_2",
+   "region": {
+    "element_ids": [
+     128,
+     131,
+     527,
+     528,
+     529,
+     530,
+     531,
+     594,
+     614,
+     668,
+     669,
+     670,
+     671,
+     672
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E64.05",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 64046473764.03501
+   },
+   "name": "e_bin_3",
+   "region": {
+    "element_ids": [
+     127,
+     129,
+     130,
+     132,
+     165,
+     174,
+     185,
+     194,
+     205,
+     214,
+     225,
+     234,
+     267,
+     268,
+     269,
+     270,
+     271,
+     272,
+     526,
+     532,
+     533,
+     554,
+     565,
+     574,
+     585,
+     605,
+     625,
+     634,
+     645,
+     654,
+     666,
+     667,
+     673
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E65.63",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 65633650675.80376
+   },
+   "name": "e_bin_4",
+   "region": {
+    "element_ids": [
+     126,
+     133,
+     145,
+     154,
+     245,
+     254,
+     266,
+     273,
+     449,
+     450,
+     451,
+     467,
+     468,
+     469,
+     470,
+     471,
+     472,
+     507,
+     508,
+     509,
+     510,
+     511,
+     512,
+     534,
+     543,
+     545,
+     556,
+     557,
+     562,
+     563,
+     576,
+     577,
+     582,
+     583,
+     596,
+     597,
+     602,
+     603,
+     616,
+     617,
+     622,
+     623,
+     636,
+     637,
+     642,
+     643,
+     656,
+     657,
+     687,
+     688,
+     689,
+     690,
+     691,
+     692,
+     727,
+     728,
+     729,
+     730,
+     731,
+     748,
+     749,
+     750
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E66.76",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 66758198051.89906
+   },
+   "name": "e_bin_5",
+   "region": {
+    "element_ids": [
+     48,
+     49,
+     50,
+     51,
+     52,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     107,
+     108,
+     109,
+     110,
+     111,
+     112,
+     113,
+     123,
+     125,
+     134,
+     136,
+     142,
+     143,
+     156,
+     157,
+     162,
+     163,
+     176,
+     177,
+     182,
+     183,
+     196,
+     197,
+     202,
+     203,
+     216,
+     217,
+     222,
+     223,
+     236,
+     237,
+     242,
+     243,
+     256,
+     257,
+     263,
+     265,
+     274,
+     276,
+     287,
+     288,
+     289,
+     290,
+     291,
+     292,
+     327,
+     328,
+     329,
+     330,
+     331,
+     332,
+     348,
+     349,
+     350,
+     351,
+     446,
+     447,
+     448,
+     452,
+     453,
+     466,
+     473,
+     474,
+     503,
+     505,
+     506,
+     513,
+     514,
+     516,
+     522,
+     523,
+     524,
+     525,
+     535,
+     536,
+     537,
+     542,
+     544,
+     555,
+     564,
+     575,
+     584,
+     595,
+     604,
+     615,
+     624,
+     635,
+     644,
+     655,
+     662,
+     663,
+     664,
+     665,
+     674,
+     675,
+     676,
+     677,
+     683,
+     685,
+     686,
+     693,
+     694,
+     696,
+     725,
+     726,
+     732,
+     733,
+     746,
+     747,
+     751,
+     752,
+     753
+    ]
+   }
+  },
+  {
+   "material": {
+    "density": 2670.0,
+    "name": "AA5754-O-E68.01",
+    "plasticity": {
+     "anisotropy": {
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "rolling_direction": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "sheet_normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "hardening_modulus": 237610605.32948908,
+     "kinematic_hardening_modulus": 0.0,
+     "saturation_rate": 14.377555530345461,
+     "saturation_stress": 123864572.88204344,
+     "yield_criterion": "hill48",
+     "yield_stress": 100000000.0
+    },
+    "poisson_ratio": 0.33,
+    "youngs_modulus": 68008783260.757095
+   },
+   "name": "e_bin_6",
+   "region": {
+    "element_ids": [
+     45,
+     46,
+     47,
+     53,
+     54,
+     65,
+     66,
+     74,
+     75,
+     86,
+     87,
+     88,
+     89,
+     90,
+     91,
+     92,
+     93,
+     96,
+     102,
+     103,
+     105,
+     106,
+     114,
+     116,
+     117,
+     122,
+     124,
+     135,
+     137,
+     144,
+     155,
+     164,
+     175,
+     184,
+     195,
+     204,
+     215,
+     224,
+     235,
+     244,
+     255,
+     262,
+     264,
+     275,
+     277,
+     282,
+     283,
+     285,
+     286,
+     293,
+     294,
+     296,
+     297,
+     306,
+     307,
+     308,
+     309,
+     310,
+     311,
+     312,
+     313,
+     325,
+     326,
+     333,
+     334,
+     345,
+     346,
+     347,
+     352,
+     353,
+     354,
+     445,
+     454,
+     455,
+     464,
+     465,
+     475,
+     482,
+     483,
+     484,
+     485,
+     486,
+     487,
+     488,
+     489,
+     490,
+     491,
+     492,
+     493,
+     494,
+     495,
+     496,
+     497,
+     502,
+     504,
+     515,
+     517,
+     682,
+     684,
+     695,
+     697,
+     702,
+     703,
+     704,
+     705,
+     706,
+     707,
+     708,
+     709,
+     710,
+     711,
+     712,
+     713,
+     714,
+     715,
+     716,
+     717,
+     724,
+     734,
+     735,
+     744,
+     745,
+     754,
+     755
+    ]
+   }
+  }
+ ],
+ "mesh": {
+  "lx": 0.04,
+  "ly": 0.04,
+  "lz": 0.001,
+  "nx": 20,
+  "ny": 20,
+  "nz": 2,
+  "type": "structured_hex",
+  "x0": -0.02,
+  "y0": -0.02,
+  "z0": -0.001
+ },
+ "model": {
+  "stress_state": "three_dimensional"
+ },
+ "name": "spif",
+ "units": "SI"
+}

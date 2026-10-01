@@ -1,0 +1,12 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "hardening_modulus": 213849544.79654017,
+   "saturation_stress": 111478115.5938391,
+   "yield_stress": 90000000.0,
+   "youngs_modulus": 63000000000.0
+  }
+ },
+ "variant": "scaled090"
+}

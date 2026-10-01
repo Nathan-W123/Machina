@@ -1,0 +1,80 @@
+[info ] applied 0 boundary condition group(s): 0 of 25350 DOFs prescribed, 25350 free
+[info ] forming 'spif': 4096 Hex8 elements, 25350 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.964602 s, 1 tool(s), 12096 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 'form': t = 0.0751928 s of 0.964602 (10 increment(s), 69 iteration(s), 0 cut(s), 65.6548 s elapsed)
+[info ] forming step 'form': t = 0.120107 s of 0.964602 (16 increment(s), 131 iteration(s), 0 cut(s), 134.825 s elapsed)
+[info ] forming increment to t = 0.127593 failed (solver error: solver error: an element is inverted (det F = -0.252879); the load step is too large or the mesh too coarse for this deformation); halving to 0.00374271
+[info ] forming step 'form': t = 0.13508 s of 0.964602 (21 increment(s), 174 iteration(s), 1 cut(s), 196.385 s elapsed)
+[info ] forming step 'form': t = 0.15754 s of 0.964602 (29 increment(s), 240 iteration(s), 1 cut(s), 258.124 s elapsed)
+[info ] forming step 'form': t = 0.18 s of 0.964602 (36 increment(s), 298 iteration(s), 1 cut(s), 319.216 s elapsed)
+[info ] forming step 'form': t = 0.200587 s of 0.964602 (41 increment(s), 347 iteration(s), 1 cut(s), 379.738 s elapsed)
+[info ] forming step 'form': t = 0.223046 s of 0.964602 (47 increment(s), 401 iteration(s), 1 cut(s), 439.753 s elapsed)
+[info ] forming step 'form': t = 0.247374 s of 0.964602 (54 increment(s), 465 iteration(s), 1 cut(s), 506.361 s elapsed)
+[info ] forming step 'form': t = 0.268271 s of 0.964602 (59 increment(s), 517 iteration(s), 1 cut(s), 568.353 s elapsed)
+[info ] forming increment to t = 0.270392 failed (solver error: solver error: Hex8 element 2487: the incompatible modes did not converge in 25 local iterations (residual 33.7627 N of 146.07 N); the step is cut); halving to 0.00106088
+[info ] forming step 'form': t = 0.279139 s of 0.964602 (70 increment(s), 591 iteration(s), 2 cut(s), 633.031 s elapsed)
+[info ] forming step 'form': t = 0.29048 s of 0.964602 (80 increment(s), 659 iteration(s), 2 cut(s), 693.643 s elapsed)
+[info ] forming step 'form': t = 0.30398 s of 0.964602 (89 increment(s), 730 iteration(s), 2 cut(s), 759.216 s elapsed)
+[info ] forming step 'form': t = 0.317264 s of 0.964602 (98 increment(s), 802 iteration(s), 2 cut(s), 825.824 s elapsed)
+[info ] forming step 'form': t = 0.329417 s of 0.964602 (106 increment(s), 868 iteration(s), 2 cut(s), 888.738 s elapsed)
+[info ] forming step 'form': t = 0.342397 s of 0.964602 (115 increment(s), 941 iteration(s), 2 cut(s), 955.316 s elapsed)
+[info ] forming step 'form': t = 0.353581 s of 0.964602 (123 increment(s), 1005 iteration(s), 2 cut(s), 1015.8 s elapsed)
+[info ] forming step 'form': t = 0.366262 s of 0.964602 (132 increment(s), 1078 iteration(s), 2 cut(s), 1078.96 s elapsed)
+[info ] forming step 'form': t = 0.379589 s of 0.964602 (141 increment(s), 1149 iteration(s), 2 cut(s), 1143.33 s elapsed)
+[info ] forming step 'form': t = 0.393624 s of 0.964602 (151 increment(s), 1224 iteration(s), 2 cut(s), 1209.57 s elapsed)
+[info ] forming step 'form': t = 0.405758 s of 0.964602 (160 increment(s), 1295 iteration(s), 2 cut(s), 1271.6 s elapsed)
+[info ] forming step 'form': t = 0.417716 s of 0.964602 (169 increment(s), 1366 iteration(s), 2 cut(s), 1331.82 s elapsed)
+[info ] forming step 'form': t = 0.429704 s of 0.964602 (178 increment(s), 1437 iteration(s), 2 cut(s), 1395.45 s elapsed)
+[info ] forming step 'form': t = 0.441105 s of 0.964602 (187 increment(s), 1507 iteration(s), 2 cut(s), 1456.76 s elapsed)
+[info ] forming step 'form': t = 0.454127 s of 0.964602 (196 increment(s), 1577 iteration(s), 2 cut(s), 1518.46 s elapsed)
+[info ] forming step 'form': t = 0.467098 s of 0.964602 (205 increment(s), 1645 iteration(s), 2 cut(s), 1579.07 s elapsed)
+[info ] forming step 'form': t = 0.480025 s of 0.964602 (215 increment(s), 1722 iteration(s), 2 cut(s), 1643.37 s elapsed)
+[info ] forming step 'form': t = 0.488074 s of 0.964602 (221 increment(s), 1780 iteration(s), 2 cut(s), 1707.17 s elapsed)
+[info ] forming step 'form': t = 0.502176 s of 0.964602 (231 increment(s), 1858 iteration(s), 2 cut(s), 1775.21 s elapsed)
+[info ] forming step 'form': t = 0.510128 s of 0.964602 (236 increment(s), 1912 iteration(s), 2 cut(s), 1839.41 s elapsed)
+[info ] forming step 'form': t = 0.517994 s of 0.964602 (241 increment(s), 1966 iteration(s), 2 cut(s), 1905.62 s elapsed)
+[info ] forming step 'form': t = 0.531775 s of 0.964602 (250 increment(s), 2048 iteration(s), 2 cut(s), 1987.5 s elapsed)
+[info ] forming step 'form': t = 0.540819 s of 0.964602 (256 increment(s), 2106 iteration(s), 2 cut(s), 2048.39 s elapsed)
+[info ] forming step 'form': t = 0.551567 s of 0.964602 (263 increment(s), 2175 iteration(s), 2 cut(s), 2123.51 s elapsed)
+[info ] forming step 'form': t = 0.560498 s of 0.964602 (269 increment(s), 2235 iteration(s), 2 cut(s), 2188.25 s elapsed)
+[info ] forming step 'form': t = 0.569215 s of 0.964602 (275 increment(s), 2292 iteration(s), 2 cut(s), 2250.95 s elapsed)
+[info ] forming step 'form': t = 0.578177 s of 0.964602 (281 increment(s), 2351 iteration(s), 2 cut(s), 2313.91 s elapsed)
+[info ] forming step 'form': t = 0.59289 s of 0.964602 (291 increment(s), 2429 iteration(s), 2 cut(s), 2377.39 s elapsed)
+[info ] forming step 'form': t = 0.602187 s of 0.964602 (297 increment(s), 2490 iteration(s), 2 cut(s), 2445.49 s elapsed)
+[info ] forming step 'form': t = 0.612528 s of 0.964602 (304 increment(s), 2555 iteration(s), 2 cut(s), 2510.84 s elapsed)
+[info ] forming step 'form': t = 0.62238 s of 0.964602 (311 increment(s), 2618 iteration(s), 2 cut(s), 2576.09 s elapsed)
+[info ] forming step 'form': t = 0.635347 s of 0.964602 (320 increment(s), 2691 iteration(s), 2 cut(s), 2636.98 s elapsed)
+[info ] forming step 'form': t = 0.649502 s of 0.964602 (330 increment(s), 2764 iteration(s), 2 cut(s), 2697.67 s elapsed)
+[info ] forming step 'form': t = 0.662917 s of 0.964602 (339 increment(s), 2836 iteration(s), 2 cut(s), 2762.17 s elapsed)
+[info ] forming step 'form': t = 0.677973 s of 0.964602 (349 increment(s), 2914 iteration(s), 2 cut(s), 2825.66 s elapsed)
+[info ] forming step 'form': t = 0.692374 s of 0.964602 (360 increment(s), 2993 iteration(s), 2 cut(s), 2889.53 s elapsed)
+[info ] forming step 'form': t = 0.708032 s of 0.964602 (371 increment(s), 3071 iteration(s), 2 cut(s), 2951.8 s elapsed)
+[info ] forming step 'form': t = 0.723569 s of 0.964602 (381 increment(s), 3145 iteration(s), 2 cut(s), 3015.12 s elapsed)
+[info ] forming step 'form': t = 0.739704 s of 0.964602 (392 increment(s), 3221 iteration(s), 2 cut(s), 3075.31 s elapsed)
+[info ] forming step 'form': t = 0.755175 s of 0.964602 (403 increment(s), 3301 iteration(s), 2 cut(s), 3139.37 s elapsed)
+[info ] forming step 'form': t = 0.77367 s of 0.964602 (415 increment(s), 3387 iteration(s), 2 cut(s), 3204.35 s elapsed)
+[info ] forming step 'form': t = 0.789328 s of 0.964602 (426 increment(s), 3464 iteration(s), 2 cut(s), 3266.07 s elapsed)
+[info ] forming step 'form': t = 0.80511 s of 0.964602 (437 increment(s), 3540 iteration(s), 2 cut(s), 3327.44 s elapsed)
+[info ] forming step 'form': t = 0.822217 s of 0.964602 (449 increment(s), 3622 iteration(s), 2 cut(s), 3389.66 s elapsed)
+[info ] forming step 'form': t = 0.83959 s of 0.964602 (461 increment(s), 3704 iteration(s), 2 cut(s), 3453.55 s elapsed)
+[info ] forming step 'form': t = 0.856873 s of 0.964602 (474 increment(s), 3790 iteration(s), 2 cut(s), 3514.68 s elapsed)
+[info ] forming step 'form': t = 0.876586 s of 0.964602 (488 increment(s), 3875 iteration(s), 2 cut(s), 3576.51 s elapsed)
+[info ] forming step 'form': t = 0.895332 s of 0.964602 (502 increment(s), 3961 iteration(s), 2 cut(s), 3637.33 s elapsed)
+[info ] forming step 'form': t = 0.914464 s of 0.964602 (516 increment(s), 4048 iteration(s), 2 cut(s), 3701.1 s elapsed)
+[info ] forming step 'form': t = 0.934753 s of 0.964602 (530 increment(s), 4140 iteration(s), 2 cut(s), 3769.87 s elapsed)
+[info ] forming step 'form': t = 0.95452 s of 0.964602 (539 increment(s), 4208 iteration(s), 2 cut(s), 3834.94 s elapsed)
+[info ] forming step 'form' completed: 543 increment(s), 4243 iteration(s), 2 cut(s), reactions 180.074 N, largest plastic strain 0.450159, largest displacement change 0.0026649 m
+[info ] forming step 'unload' (release, t = 0.964602 .. 1.9646 s, 0 tool(s), 12096 prescribed DOF(s)): start imbalance 63.8371 N
+[warn ] the supports of release step 'unload' carry reactions of 160.278 N, 0.414552 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 36 iteration(s), 0 cut(s), reactions 160.278 N, largest plastic strain 0.450159, largest displacement change 1.95545e-05 m
+[info ] forming step 'release' (release, t = 1.9646 .. 2.9646 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 160.278 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 6.50438e-14 N, largest plastic strain 0.450159, largest displacement change 0.000175676 m
+case: spif
+  mesh:    4096 elements, 25350 DOFs
+  step 1 'form' (form): completed, 543 increment(s), 4243 iteration(s), 2 cut(s), largest plastic strain 0.450159, largest displacement change 0.0026649 m
+  step 2 'unload' (release): completed, 10 increment(s), 36 iteration(s), 0 cut(s), largest plastic strain 0.450159, largest displacement change 1.95545e-05 m
+      warning: the supports of release step 'unload' carry reactions of 160.278 N, 0.414552 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.450159, largest displacement change 0.000175676 m
+  runtime: 3924 s (563 increments, 4319 Newton iterations; CHOLMOD supernodal LLT x 202, SimplicialLDLT x 1, UMFPACK LU x 4716)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 1
+  output:  /home/user/wt/audit/benchmarks/physics_audit/convergence/cases/c1_h0.625_L1_im_tp5/output

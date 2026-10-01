@@ -1,0 +1,7 @@
+19:39:20 {"part": "elliptic_cone-s2026-0001", "variant": "base", "ok": true, "wall_s": 113.95240759849548, "error": null} 0.8406505499631461
+19:39:20 {"part": "elliptic_cone-s2026-0001", "variant": "hill_sb110", "ok": true, "wall_s": 108.508136510849, "error": null} 0.8084991640476005
+19:40:50 {"part": "elliptic_cone-s2026-0001", "variant": "kin_shutov", "ok": true, "wall_s": 95.34492778778076, "error": null} 0.8469585401748072
+19:41:04 {"part": "elliptic_cone-s2026-0001", "variant": "hard_voce_coer", "ok": true, "wall_s": 103.91426062583923, "error": null} 0.8529860671082546
+19:42:34 {"part": "elliptic_cone-s2026-0001", "variant": "vm", "ok": true, "wall_s": 103.4943208694458, "error": null} 0.8274373700774602
+19:42:52 {"part": "elliptic_cone-s2026-0001", "variant": "E63", "ok": true, "wall_s": 107.63843011856079, "error": null} 0.8461489547498423
+19:44:28 {"part": "elliptic_cone-s2026-0001", "variant": "combo_lit", "ok": true, "wall_s": 96.04264998435974, "error": null} 0.8455094202610427

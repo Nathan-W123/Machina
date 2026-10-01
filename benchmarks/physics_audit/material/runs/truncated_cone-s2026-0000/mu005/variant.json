@@ -1,0 +1,9 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "setup": {
+   "friction": 0.05
+  }
+ },
+ "variant": "mu005"
+}

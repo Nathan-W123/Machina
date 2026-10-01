@@ -1,0 +1,36 @@
+{
+ "part": "elliptic_cone-s2026-0001",
+ "spec": {
+  "deck": {
+   "material": {
+    "plasticity": {
+     "backstresses": [
+      {
+       "modulus": 173250000.0,
+       "recovery": 12.519035889146974
+      },
+      {
+       "modulus": 17250000000.0,
+       "recovery": 236.05732651201487
+      }
+     ]
+    }
+   }
+  },
+  "e_of_ep": {
+   "Ea": 59500000000.0,
+   "from": "base",
+   "xi": 20.0
+  },
+  "material": {
+   "hardening_modulus": 0.0,
+   "r0": null,
+   "r45": null,
+   "r90": null,
+   "saturation_rate": 13.422043027115635,
+   "saturation_stress": 173518110.8229723,
+   "yield_stress": 31798410.39372036
+  }
+ },
+ "variant": "combo_lit"
+}

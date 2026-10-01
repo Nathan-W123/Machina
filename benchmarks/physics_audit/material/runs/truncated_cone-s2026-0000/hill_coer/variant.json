@@ -1,0 +1,11 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "r0": 0.663,
+   "r45": 0.86,
+   "r90": 0.717
+  }
+ },
+ "variant": "hill_coer"
+}

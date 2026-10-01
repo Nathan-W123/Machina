@@ -1,0 +1,236 @@
+{
+  "description": "Single-point incremental forming of a AA5754-O blank, written by precomp 0.1.0",
+  "forming": {
+    "kinematics": "finite_logarithmic",
+    "output": {
+      "vtk": false,
+      "snapshots": "steps"
+    },
+    "steps": [
+      {
+        "boundary_conditions": [
+          {
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "name": "clamp",
+            "region": {
+              "any_of": [
+                {
+                  "box": {
+                    "xmax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "xmin": 0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymin": 0.014999999999999999
+                  }
+                }
+              ],
+              "name": "clamp"
+            }
+          }
+        ],
+        "name": "form",
+        "time": [
+          0,
+          0.95142926802317618
+        ],
+        "tools": [
+          "tool"
+        ],
+        "type": "form_explicit",
+        "explicit": {
+          "tool_speed": 0.5,
+          "mass_scaling": {
+            "mode": "selective",
+            "target_time_step": 9.9999999999999995e-07,
+            "max_added_mass_fraction": 1000,
+            "dynamic": true
+          },
+          "stable_step": {
+            "method": "element_eigenvalue",
+            "safety": 0.90000000000000002,
+            "update_every": 1000
+          },
+          "damping": 0,
+          "contact_stiffness": 0.5,
+          "history_every": 200
+        }
+      },
+      {
+        "boundary_conditions": [
+          {
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "name": "clamp",
+            "region": {
+              "any_of": [
+                {
+                  "box": {
+                    "xmax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "xmin": 0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymin": 0.014999999999999999
+                  }
+                }
+              ],
+              "name": "clamp"
+            }
+          }
+        ],
+        "name": "unload",
+        "tools": [],
+        "type": "release"
+      },
+      {
+        "boundary_conditions": [
+          {
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "name": "support_xyz",
+            "region": {
+              "nearest_node": [
+                -0.017500000000000002,
+                -0.017500000000000002,
+                0
+              ]
+            }
+          },
+          {
+            "fix": [
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "name": "support_yz",
+            "region": {
+              "nearest_node": [
+                0.017500000000000002,
+                -0.017500000000000002,
+                0
+              ]
+            }
+          },
+          {
+            "fix": [
+              "z"
+            ],
+            "mode": "hold",
+            "name": "support_z",
+            "region": {
+              "nearest_node": [
+                -0.017500000000000002,
+                0.017500000000000002,
+                0
+              ]
+            }
+          }
+        ],
+        "name": "release",
+        "tools": [],
+        "type": "release"
+      }
+    ],
+    "tools": [
+      {
+        "friction": 0.10000000000000001,
+        "name": "tool",
+        "radius": 0.0040000000000000001,
+        "shape": "sphere",
+        "surface": {
+          "box": {
+            "xmax": 0.014999999999999999,
+            "xmin": -0.014999999999999999,
+            "ymax": 0.014999999999999999,
+            "ymin": -0.014999999999999999,
+            "zmin": 0
+          },
+          "name": "tool_side"
+        },
+        "trajectory": {
+          "file": "toolpath.csv"
+        }
+      }
+    ]
+  },
+  "material": {
+    "density": 2670,
+    "name": "AA5754-O",
+    "plasticity": {
+      "anisotropy": {
+        "r0": 0.75,
+        "r45": 0.69999999999999996,
+        "r90": 0.80000000000000004,
+        "rolling_direction": [
+          1,
+          0,
+          0
+        ],
+        "sheet_normal": [
+          0,
+          0,
+          1
+        ]
+      },
+      "hardening_modulus": 237610605.32948908,
+      "kinematic_hardening_modulus": 0,
+      "saturation_rate": 14.377555530345461,
+      "saturation_stress": 123864572.88204344,
+      "yield_criterion": "hill48",
+      "yield_stress": 100000000
+    },
+    "poisson_ratio": 0.33000000000000002,
+    "youngs_modulus": 70000000000
+  },
+  "mesh": {
+    "lx": 0.040000000000000001,
+    "ly": 0.040000000000000001,
+    "lz": 0.001,
+    "nx": 64,
+    "ny": 64,
+    "nz": 2,
+    "type": "structured_hex",
+    "x0": -0.02,
+    "y0": -0.02,
+    "z0": -0.001
+  },
+  "model": {
+    "stress_state": "three_dimensional"
+  },
+  "name": "spif",
+  "units": "SI"
+}

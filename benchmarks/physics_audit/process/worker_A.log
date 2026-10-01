@@ -1,0 +1,5 @@
+20:20:27 A start truncated_cone-s2026-0000 rob_iso1 load (2.09033203125, 2.1708984375, 2.703125)
+20:22:47 A end truncated_cone-s2026-0000 rob_iso1 ok=True wall=140s 
+20:22:47 A start truncated_cone-s2026-0000 dsif_ng load (4.16015625, 2.97314453125, 2.93212890625)
+20:27:23 A end truncated_cone-s2026-0000 dsif_ng ok=True wall=275s 
+20:27:23 A queue empty

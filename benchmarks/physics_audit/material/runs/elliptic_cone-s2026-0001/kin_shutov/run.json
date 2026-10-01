@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/home/user/wt/audit/build/bin/sparlab_form",
+    "--config",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/elliptic_cone-s2026-0001/kin_shutov/deck.json",
+    "--output",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/elliptic_cone-s2026-0001/kin_shutov/output",
+    "--strict-config"
+  ],
+  "returncode": 0,
+  "runtime_s": 95.17919042700123,
+  "threads": 1,
+  "timeout_s": null
+}

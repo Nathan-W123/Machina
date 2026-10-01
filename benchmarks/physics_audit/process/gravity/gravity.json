@@ -1,0 +1,47 @@
+[
+ {
+  "case": "bench_40mm_t1",
+  "L_m": 0.04,
+  "t_m": 0.001,
+  "q_Pa": 26.192700000000002,
+  "w_321_corners_mm": 0.0014124720000000001,
+  "w_clamped_window_fe_mm": 4.1764669999999995e-06,
+  "w_clamped_window_timoshenko_mm": 4.17023406072e-06
+ },
+ {
+  "case": "panel_0.6m_t1",
+  "L_m": 0.6,
+  "t_m": 0.001,
+  "q_Pa": 26.192700000000002,
+  "w_321_corners_mm": 70.13250000000001,
+  "w_clamped_window_fe_mm": 0.3084579,
+  "w_clamped_window_timoshenko_mm": 0.3217773195
+ },
+ {
+  "case": "panel_1.2m_t2",
+  "L_m": 1.2,
+  "t_m": 0.002,
+  "q_Pa": 52.385400000000004,
+  "w_321_corners_mm": 280.5298,
+  "w_clamped_window_fe_mm": 1.7971350000000001,
+  "w_clamped_window_timoshenko_mm": 1.8844566939197993
+ },
+ {
+  "case": "panel_1.2m_t3.2",
+  "L_m": 1.2,
+  "t_m": 0.0032,
+  "q_Pa": 83.81664,
+  "w_321_corners_mm": 109.7133,
+  "w_clamped_window_fe_mm": 0.7149917,
+  "w_clamped_window_timoshenko_mm": 0.7361158960624214
+ },
+ {
+  "case": "panel_1.5m_t3.2",
+  "L_m": 1.5,
+  "t_m": 0.0032,
+  "q_Pa": 83.81664,
+  "w_321_corners_mm": 267.71270000000004,
+  "w_clamped_window_fe_mm": 1.8623120000000002,
+  "w_clamped_window_timoshenko_mm": 1.93146836029875
+ }
+]

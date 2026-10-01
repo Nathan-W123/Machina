@@ -1,0 +1,16 @@
+{
+ "info": {
+  "support_min_z_mm": -8.264777078293267,
+  "support_primary_distance_mm": [
+   8.73664978081715,
+   10.420037683775677
+  ]
+ },
+ "part": "elliptic_cone-s2026-0001",
+ "spec": {
+  "dsif": {
+   "thickness": "nogouge"
+  }
+ },
+ "variant": "dsif_ng"
+}

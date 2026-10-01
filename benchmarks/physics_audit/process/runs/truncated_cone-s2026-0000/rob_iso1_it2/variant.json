@@ -1,0 +1,19 @@
+{
+ "info": {
+  "robot_deflection_mm": {
+   "max_dz": 1.002659593906512,
+   "max_norm": 1.0316606533820147,
+   "mean_dxy_contact": 0.07869014812578767,
+   "mean_dz_contact": 0.37510753160318877,
+   "mean_norm_contact": 0.38505327639010933
+  }
+ },
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "robot": {
+   "forces_from": "rob_iso1",
+   "iso_um_per_N": 1.0
+  }
+ },
+ "variant": "rob_iso1_it2"
+}

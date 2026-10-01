@@ -1,0 +1,97 @@
+[info ] read cases/x_std_dz1_d8_v20/mesh.inp (abaqus): 10515 nodes, 6912 Hex8 cells, 0 boundary element(s), 0 node set(s), 0 element set(s); quality min 0.707107, mean 0.995644
+[info ] applied 0 boundary condition group(s): 0 of 31545 DOFs prescribed, 31545 free
+[info ] forming 'x_std_dz1_d8_v20': 6912 Hex8 elements, 31545 DOFs, 2 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form_explicit, t = 0 .. 3.29783 s, 2 tool(s), 864 prescribed DOF(s))
+[info ] forming step 'form': explicit, 0.164891 s of physical time (tool speed 20.000000 m/s)
+[info ] explicit: 6912 elements, stable step 7.86306e-08 s (element_eigenvalue), selective mass scaling (added 8702.19 %), time step 1e-06 s, duration 0.164891 s: about 164892 steps; dedicated Hex8
+[info ] explicit: step 2211, t = 0.002211 s of 0.164891 s (pseudo-time 0.04422 s), time step 1e-06 s, kinetic 0.000768707 J, internal work 0.000872566 J, 60.6196 s elapsed
+[info ] explicit: step 4424, t = 0.004424 s of 0.164891 s (pseudo-time 0.08848 s), time step 1e-06 s, kinetic 0.138361 J, internal work 0.457584 J, 120.634 s elapsed
+[info ] explicit: step 6593, t = 0.006593 s of 0.164891 s (pseudo-time 0.13186 s), time step 1e-06 s, kinetic 0.387875 J, internal work 2.22974 J, 180.647 s elapsed
+[info ] explicit: step 8773, t = 0.008773 s of 0.164891 s (pseudo-time 0.17546 s), time step 1e-06 s, kinetic 0.515637 J, internal work 5.42932 J, 240.649 s elapsed
+[info ] explicit: step 10989, t = 0.010989 s of 0.164891 s (pseudo-time 0.21978 s), time step 1e-06 s, kinetic 0.585425 J, internal work 10.1155 J, 300.654 s elapsed
+[info ] explicit: step 13196, t = 0.013196 s of 0.164891 s (pseudo-time 0.26392 s), time step 1e-06 s, kinetic 0.63985 J, internal work 16.0726 J, 360.672 s elapsed
+[info ] explicit: step 15379, t = 0.015379 s of 0.164891 s (pseudo-time 0.30758 s), time step 1e-06 s, kinetic 0.741269 J, internal work 23.123 J, 420.673 s elapsed
+[info ] explicit: step 17621, t = 0.017621 s of 0.164891 s (pseudo-time 0.35242 s), time step 1e-06 s, kinetic 0.770024 J, internal work 32.1 J, 480.677 s elapsed
+[info ] explicit: step 19812, t = 0.019812 s of 0.164891 s (pseudo-time 0.39624 s), time step 1e-06 s, kinetic 0.851468 J, internal work 41.9801 J, 540.683 s elapsed
+[info ] explicit: step 22000, t = 0.022 s of 0.164891 s (pseudo-time 0.44 s), time step 1e-06 s, kinetic 0.79409 J, internal work 53.3038 J, 600.828 s elapsed
+[info ] explicit: step 24167, t = 0.024167 s of 0.164891 s (pseudo-time 0.48334 s), time step 1e-06 s, kinetic 0.767173 J, internal work 65.1589 J, 660.839 s elapsed
+[info ] explicit: step 26383, t = 0.026383 s of 0.164891 s (pseudo-time 0.52766 s), time step 1e-06 s, kinetic 0.810952 J, internal work 77.0917 J, 720.858 s elapsed
+[info ] explicit: step 28602, t = 0.028602 s of 0.164891 s (pseudo-time 0.57204 s), time step 1e-06 s, kinetic 0.926128 J, internal work 89.0025 J, 780.882 s elapsed
+[info ] explicit: step 30860, t = 0.03086 s of 0.164891 s (pseudo-time 0.6172 s), time step 1e-06 s, kinetic 1.02489 J, internal work 101.492 J, 840.89 s elapsed
+[info ] explicit: step 33087, t = 0.033087 s of 0.164891 s (pseudo-time 0.66174 s), time step 1e-06 s, kinetic 1.00338 J, internal work 113.165 J, 900.892 s elapsed
+[info ] explicit: step 35320, t = 0.03532 s of 0.164891 s (pseudo-time 0.7064 s), time step 1e-06 s, kinetic 0.94107 J, internal work 124.635 J, 960.9 s elapsed
+[info ] explicit: step 37522, t = 0.037522 s of 0.164891 s (pseudo-time 0.75044 s), time step 1e-06 s, kinetic 0.977535 J, internal work 135.861 J, 1020.93 s elapsed
+[info ] explicit: step 39760, t = 0.03976 s of 0.164891 s (pseudo-time 0.7952 s), time step 1e-06 s, kinetic 1.05684 J, internal work 147.067 J, 1080.93 s elapsed
+[info ] explicit: step 42015, t = 0.042015 s of 0.164891 s (pseudo-time 0.8403 s), time step 1e-06 s, kinetic 1.09001 J, internal work 158.127 J, 1140.95 s elapsed
+[info ] explicit: step 44279, t = 0.044279 s of 0.164891 s (pseudo-time 0.88558 s), time step 1e-06 s, kinetic 1.04953 J, internal work 169 J, 1200.97 s elapsed
+[info ] explicit: step 46532, t = 0.046532 s of 0.164891 s (pseudo-time 0.93064 s), time step 1e-06 s, kinetic 1.17095 J, internal work 180.656 J, 1260.99 s elapsed
+[info ] explicit: step 48765, t = 0.048765 s of 0.164891 s (pseudo-time 0.9753 s), time step 1e-06 s, kinetic 1.0418 J, internal work 192.015 J, 1321 s elapsed
+[info ] explicit: step 50978, t = 0.050978 s of 0.164891 s (pseudo-time 1.01956 s), time step 1e-06 s, kinetic 1.28494 J, internal work 204.021 J, 1381 s elapsed
+[info ] explicit: step 53209, t = 0.053209 s of 0.164891 s (pseudo-time 1.06418 s), time step 1e-06 s, kinetic 1.21676 J, internal work 216.822 J, 1441.02 s elapsed
+[info ] explicit: step 55465, t = 0.055465 s of 0.164891 s (pseudo-time 1.1093 s), time step 1e-06 s, kinetic 1.1901 J, internal work 229.711 J, 1501.03 s elapsed
+[info ] explicit: step 57722, t = 0.057722 s of 0.164891 s (pseudo-time 1.15444 s), time step 1e-06 s, kinetic 1.09797 J, internal work 243.385 J, 1561.04 s elapsed
+[info ] explicit: step 59926, t = 0.059926 s of 0.164891 s (pseudo-time 1.19852 s), time step 1e-06 s, kinetic 1.17944 J, internal work 256.823 J, 1621.05 s elapsed
+[info ] explicit: step 62199, t = 0.062199 s of 0.164891 s (pseudo-time 1.24398 s), time step 1e-06 s, kinetic 1.0379 J, internal work 271.607 J, 1681.06 s elapsed
+[info ] explicit: step 64469, t = 0.064469 s of 0.164891 s (pseudo-time 1.28938 s), time step 1e-06 s, kinetic 1.23337 J, internal work 286.507 J, 1741.07 s elapsed
+[info ] explicit: step 66743, t = 0.066743 s of 0.164891 s (pseudo-time 1.33486 s), time step 1e-06 s, kinetic 1.26394 J, internal work 301.529 J, 1801.09 s elapsed
+[info ] explicit: step 69026, t = 0.069026 s of 0.164891 s (pseudo-time 1.38052 s), time step 1e-06 s, kinetic 1.25965 J, internal work 316.637 J, 1861.1 s elapsed
+[info ] explicit: step 71323, t = 0.071323 s of 0.164891 s (pseudo-time 1.42646 s), time step 1e-06 s, kinetic 1.17469 J, internal work 331.873 J, 1921.1 s elapsed
+[info ] explicit: step 73595, t = 0.073595 s of 0.164891 s (pseudo-time 1.4719 s), time step 1e-06 s, kinetic 1.20934 J, internal work 346.869 J, 1981.12 s elapsed
+[info ] explicit: step 75862, t = 0.075862 s of 0.164891 s (pseudo-time 1.51724 s), time step 1e-06 s, kinetic 1.28114 J, internal work 362.348 J, 2041.14 s elapsed
+[info ] explicit: step 78093, t = 0.078093 s of 0.164891 s (pseudo-time 1.56186 s), time step 1e-06 s, kinetic 1.33899 J, internal work 377.701 J, 2101.16 s elapsed
+[info ] explicit: step 80365, t = 0.080365 s of 0.164891 s (pseudo-time 1.6073 s), time step 1e-06 s, kinetic 1.42446 J, internal work 393.099 J, 2161.18 s elapsed
+[info ] explicit: step 82627, t = 0.082627 s of 0.164891 s (pseudo-time 1.65254 s), time step 1e-06 s, kinetic 1.46252 J, internal work 408.834 J, 2221.2 s elapsed
+[info ] explicit: step 84903, t = 0.084903 s of 0.164891 s (pseudo-time 1.69806 s), time step 1e-06 s, kinetic 1.54344 J, internal work 425.368 J, 2281.21 s elapsed
+[info ] explicit: step 87209, t = 0.087209 s of 0.164891 s (pseudo-time 1.74418 s), time step 1e-06 s, kinetic 1.66981 J, internal work 442.861 J, 2341.24 s elapsed
+[info ] explicit: step 89529, t = 0.089529 s of 0.164891 s (pseudo-time 1.79058 s), time step 1e-06 s, kinetic 1.41692 J, internal work 461.251 J, 2401.25 s elapsed
+[info ] explicit: step 91861, t = 0.091861 s of 0.164891 s (pseudo-time 1.83722 s), time step 1e-06 s, kinetic 1.33836 J, internal work 479.363 J, 2461.27 s elapsed
+[info ] explicit: step 94131, t = 0.094131 s of 0.164891 s (pseudo-time 1.88262 s), time step 1e-06 s, kinetic 1.30658 J, internal work 497.945 J, 2521.28 s elapsed
+[info ] explicit: step 96403, t = 0.096403 s of 0.164891 s (pseudo-time 1.92806 s), time step 1e-06 s, kinetic 1.31715 J, internal work 517.344 J, 2581.3 s elapsed
+[info ] explicit: step 98696, t = 0.098696 s of 0.164891 s (pseudo-time 1.97392 s), time step 1e-06 s, kinetic 1.54513 J, internal work 537.067 J, 2641.31 s elapsed
+[info ] explicit: step 100980, t = 0.10098 s of 0.164891 s (pseudo-time 2.0196 s), time step 1e-06 s, kinetic 1.25944 J, internal work 557.137 J, 2701.33 s elapsed
+[info ] explicit: step 103244, t = 0.103244 s of 0.164891 s (pseudo-time 2.06488 s), time step 1e-06 s, kinetic 1.29262 J, internal work 576.443 J, 2761.33 s elapsed
+[info ] explicit: step 105532, t = 0.105532 s of 0.164891 s (pseudo-time 2.11064 s), time step 1e-06 s, kinetic 1.31226 J, internal work 595.67 J, 2821.35 s elapsed
+[info ] explicit: step 107832, t = 0.107832 s of 0.164891 s (pseudo-time 2.15664 s), time step 1e-06 s, kinetic 1.53937 J, internal work 615.522 J, 2881.36 s elapsed
+[info ] explicit: step 110153, t = 0.110153 s of 0.164891 s (pseudo-time 2.20306 s), time step 1e-06 s, kinetic 1.41539 J, internal work 635.238 J, 2941.38 s elapsed
+[info ] explicit: step 112498, t = 0.112498 s of 0.164891 s (pseudo-time 2.24996 s), time step 1e-06 s, kinetic 1.47315 J, internal work 655.676 J, 3001.4 s elapsed
+[info ] explicit: step 114845, t = 0.114845 s of 0.164891 s (pseudo-time 2.2969 s), time step 1e-06 s, kinetic 1.46663 J, internal work 675.789 J, 3061.4 s elapsed
+[info ] explicit: step 117139, t = 0.117139 s of 0.164891 s (pseudo-time 2.34278 s), time step 1e-06 s, kinetic 1.42493 J, internal work 695.965 J, 3121.42 s elapsed
+[info ] explicit: step 119479, t = 0.119479 s of 0.164891 s (pseudo-time 2.38958 s), time step 1e-06 s, kinetic 1.69578 J, internal work 715.767 J, 3181.43 s elapsed
+[info ] explicit: step 121773, t = 0.121773 s of 0.164891 s (pseudo-time 2.43546 s), time step 1e-06 s, kinetic 1.604 J, internal work 735.412 J, 3241.43 s elapsed
+[info ] explicit: step 124058, t = 0.124058 s of 0.164891 s (pseudo-time 2.48116 s), time step 1e-06 s, kinetic 1.65842 J, internal work 756.475 J, 3301.45 s elapsed
+[info ] explicit: step 126311, t = 0.126311 s of 0.164891 s (pseudo-time 2.52622 s), time step 1e-06 s, kinetic 1.34992 J, internal work 777.094 J, 3361.47 s elapsed
+[info ] explicit: step 128666, t = 0.128666 s of 0.164891 s (pseudo-time 2.57332 s), time step 1e-06 s, kinetic 1.46982 J, internal work 799.095 J, 3421.48 s elapsed
+[info ] explicit: step 131089, t = 0.131089 s of 0.164891 s (pseudo-time 2.62178 s), time step 1e-06 s, kinetic 1.43236 J, internal work 821.544 J, 3481.49 s elapsed
+[info ] explicit: step 133568, t = 0.133568 s of 0.164891 s (pseudo-time 2.67136 s), time step 1e-06 s, kinetic 1.25296 J, internal work 845.256 J, 3541.5 s elapsed
+[info ] explicit: step 136043, t = 0.136043 s of 0.164891 s (pseudo-time 2.72086 s), time step 1e-06 s, kinetic 1.51824 J, internal work 868.559 J, 3601.51 s elapsed
+[info ] explicit: step 138514, t = 0.138514 s of 0.164891 s (pseudo-time 2.77028 s), time step 1e-06 s, kinetic 1.54208 J, internal work 891.429 J, 3661.53 s elapsed
+[info ] explicit: step 141000, t = 0.141 s of 0.164891 s (pseudo-time 2.82 s), time step 1e-06 s, kinetic 1.37958 J, internal work 914.755 J, 3721.58 s elapsed
+[info ] explicit: step 143553, t = 0.143553 s of 0.164891 s (pseudo-time 2.87106 s), time step 1e-06 s, kinetic 1.48084 J, internal work 939.462 J, 3781.58 s elapsed
+[info ] explicit: step 146071, t = 0.146071 s of 0.164891 s (pseudo-time 2.92142 s), time step 1e-06 s, kinetic 1.52494 J, internal work 963.728 J, 3841.6 s elapsed
+[info ] explicit: step 148620, t = 0.14862 s of 0.164891 s (pseudo-time 2.9724 s), time step 1e-06 s, kinetic 1.40151 J, internal work 987.421 J, 3901.62 s elapsed
+[info ] explicit: step 151117, t = 0.151117 s of 0.164891 s (pseudo-time 3.02234 s), time step 1e-06 s, kinetic 1.44333 J, internal work 1007.63 J, 3961.63 s elapsed
+[info ] explicit: step 153614, t = 0.153614 s of 0.164891 s (pseudo-time 3.07228 s), time step 1e-06 s, kinetic 1.53512 J, internal work 1024.45 J, 4021.64 s elapsed
+[info ] explicit: step 156191, t = 0.156191 s of 0.164891 s (pseudo-time 3.12382 s), time step 1e-06 s, kinetic 1.60013 J, internal work 1038.18 J, 4081.66 s elapsed
+[info ] explicit: step 158758, t = 0.158758 s of 0.164891 s (pseudo-time 3.17516 s), time step 1e-06 s, kinetic 1.71545 J, internal work 1048.6 J, 4141.67 s elapsed
+[info ] explicit: step 161355, t = 0.161355 s of 0.164891 s (pseudo-time 3.2271 s), time step 1e-06 s, kinetic 1.64128 J, internal work 1055.47 J, 4201.69 s elapsed
+[info ] explicit: step 163937, t = 0.163937 s of 0.164891 s (pseudo-time 3.27874 s), time step 1e-06 s, kinetic 1.51237 J, internal work 1059.08 J, 4261.69 s elapsed
+[warn ] explicit: the contact penetration reached 0.0189496 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)
+[warn ] explicit: the energy balance error reached 0.227301 of the largest energy (warning above 0.05)
+[info ] explicit run completed: 164892 steps, 4284.49 s (25.9836 ms a step), kinetic/internal 0.0549651 (peak 1.19939), penetration/thickness 0.0189496, energy error 0.227301, added mass 9423.1 %
+[info ] forming step 'form' completed: 825 increment(s), 0 iteration(s), 0 cut(s), reactions 3259.12 N, largest plastic strain 0.788307, largest displacement change 0.00789183 m
+[info ] forming step 'unload' (release, t = 3.29783 .. 4.29783 s, 0 tool(s), 864 prescribed DOF(s)): start imbalance 19907.2 N
+[warn ] the supports of release step 'unload' carry reactions of 1104.2 N, 0.0616304 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 31 iteration(s), 0 cut(s), reactions 1104.2 N, largest plastic strain 0.788307, largest displacement change 6.67722e-05 m
+[info ] forming step 'release' (release, t = 4.29783 .. 5.29783 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 1104.2 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 2.28611e-12 N, largest plastic strain 0.788307, largest displacement change 0.000235074 m
+case: x_std_dz1_d8_v20
+  mesh:    6912 elements, 31545 DOFs
+  step 1 'form' (form_explicit): completed, 825 increment(s), 0 iteration(s), 0 cut(s), largest plastic strain 0.788307, largest displacement change 0.00789183 m
+      warning: the contact penetration reached 0.0189496 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)
+      warning: the energy balance error reached 0.227301 of the largest energy (warning above 0.05)
+  step 2 'unload' (release): completed, 10 increment(s), 31 iteration(s), 0 cut(s), largest plastic strain 0.788307, largest displacement change 6.67722e-05 m
+      warning: the supports of release step 'unload' carry reactions of 1104.2 N, 0.0616304 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.788307, largest displacement change 0.000235074 m
+  runtime: 4333 s (20 increments, 71 Newton iterations; CHOLMOD supernodal LLT x 71)
+  output:  cases/x_std_dz1_d8_v20/output
+exit 0 wall 4332 s

@@ -1,0 +1,14 @@
+{
+  "h": 2.0,
+  "L": 2,
+  "form": "std",
+  "tp": 0,
+  "travel": 1.0,
+  "pen": 10.0,
+  "solver_extra": {
+    "newton": {
+      "residual_tolerance": 1e-08,
+      "displacement_tolerance": 1e-08
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/home/user/wt/audit/build/bin/sparlab_form",
+    "--config",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/base/deck.json",
+    "--output",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/base/output",
+    "--strict-config"
+  ],
+  "returncode": 0,
+  "runtime_s": 208.61932585700015,
+  "threads": 1,
+  "timeout_s": null
+}

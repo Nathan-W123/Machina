@@ -1,0 +1,9 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "yield_stress": 115000000.0
+  }
+ },
+ "variant": "ys115"
+}

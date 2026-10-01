@@ -1,0 +1,58 @@
+{
+ "base_pre0.02": {
+  "forward_MPa": 132.7,
+  "reverse_0.2pct_MPa": -135.9,
+  "ratio_0.2pct": 1.024,
+  "reverse_prop_limit_MPa": -132.7,
+  "elastic_range_MPa": 265.4
+ },
+ "base_pre0.05": {
+  "forward_MPa": 172.6,
+  "reverse_0.2pct_MPa": -174.9,
+  "ratio_0.2pct": 1.013,
+  "reverse_prop_limit_MPa": -172.6,
+  "elastic_range_MPa": 345.3
+ },
+ "base_pre0.1": {
+  "forward_MPa": 216.1,
+  "reverse_0.2pct_MPa": -217.5,
+  "ratio_0.2pct": 1.006,
+  "reverse_prop_limit_MPa": -216.2,
+  "elastic_range_MPa": 432.3
+ },
+ "base_pre0.2": {
+  "forward_MPa": 263.1,
+  "reverse_0.2pct_MPa": -263.8,
+  "ratio_0.2pct": 1.003,
+  "reverse_prop_limit_MPa": -263.1,
+  "elastic_range_MPa": 526.2
+ },
+ "kin_shutov_pre0.02": {
+  "forward_MPa": 133.1,
+  "reverse_0.2pct_MPa": -41.2,
+  "ratio_0.2pct": 0.31,
+  "reverse_prop_limit_MPa": 16.1,
+  "elastic_range_MPa": 117.0
+ },
+ "kin_shutov_pre0.05": {
+  "forward_MPa": 173.0,
+  "reverse_0.2pct_MPa": -72.0,
+  "ratio_0.2pct": 0.416,
+  "reverse_prop_limit_MPa": -15.0,
+  "elastic_range_MPa": 188.0
+ },
+ "kin_shutov_pre0.1": {
+  "forward_MPa": 216.0,
+  "reverse_0.2pct_MPa": -107.2,
+  "ratio_0.2pct": 0.496,
+  "reverse_prop_limit_MPa": -50.9,
+  "elastic_range_MPa": 266.8
+ },
+ "kin_shutov_pre0.2": {
+  "forward_MPa": 263.0,
+  "reverse_0.2pct_MPa": -147.9,
+  "ratio_0.2pct": 0.562,
+  "reverse_prop_limit_MPa": -92.1,
+  "elastic_range_MPa": 355.2
+ }
+}

@@ -1,0 +1,221 @@
+{
+  "name": "punch",
+  "units": "SI",
+  "mesh": {
+    "type": "structured_hex",
+    "x0": -0.02,
+    "y0": -0.02,
+    "z0": -0.001,
+    "lx": 0.040000000000000001,
+    "ly": 0.040000000000000001,
+    "lz": 0.001,
+    "nx": 40,
+    "ny": 40,
+    "nz": 2
+  },
+  "model": {
+    "stress_state": "three_dimensional",
+    "element_formulation": "incompatible_modes"
+  },
+  "material": {
+    "name": "AA5754-O",
+    "youngs_modulus": 70000000000,
+    "poisson_ratio": 0.33000000000000002,
+    "density": 2670,
+    "plasticity": {
+      "yield_stress": 100000000,
+      "hardening_modulus": 237610605.32948908,
+      "saturation_stress": 123864572.88204344,
+      "saturation_rate": 14.377555530345461,
+      "kinematic_hardening_modulus": 0
+    }
+  },
+  "forming": {
+    "kinematics": "finite_logarithmic",
+    "tools": [
+      {
+        "name": "punch",
+        "shape": "sphere",
+        "radius": 0.0040000000000000001,
+        "surface": {
+          "box": {
+            "zmin": 0
+          }
+        },
+        "friction": 0.10000000000000001,
+        "penalty": 10,
+        "trajectory": {
+          "times": [
+            0,
+            1,
+            2
+          ],
+          "points": [
+            [
+              0,
+              0,
+              0.0040000000000000001
+            ],
+            [
+              0,
+              0,
+              0.001
+            ],
+            [
+              0.0030000000000000001,
+              0,
+              0.001
+            ]
+          ]
+        }
+      }
+    ],
+    "steps": [
+      {
+        "name": "form",
+        "type": "form",
+        "tools": [
+          "punch"
+        ],
+        "time": [
+          0,
+          2
+        ],
+        "max_tool_travel": 0.0001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "any_of": [
+                {
+                  "box": {
+                    "xmax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "xmin": 0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymin": 0.014999999999999999
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "unload",
+        "type": "release",
+        "tools": [],
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "any_of": [
+                {
+                  "box": {
+                    "xmax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "xmin": 0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymax": -0.014999999999999999
+                  }
+                },
+                {
+                  "box": {
+                    "ymin": 0.014999999999999999
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "release",
+        "type": "release",
+        "tools": [],
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "A",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                -0.018000000000000002,
+                -0.018000000000000002,
+                0
+              ]
+            }
+          },
+          {
+            "name": "B",
+            "fix": [
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                0.018000000000000002,
+                -0.018000000000000002,
+                0
+              ]
+            }
+          },
+          {
+            "name": "C",
+            "fix": [
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                -0.018000000000000002,
+                0.018000000000000002,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "output": {
+      "vtk": false,
+      "snapshots": "steps"
+    }
+  }
+}
