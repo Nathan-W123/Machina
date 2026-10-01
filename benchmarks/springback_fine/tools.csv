@@ -65,3 +65,15 @@ elliptic_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,tool,sphere,8,0.526927,786.449,532
 elliptic_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,support,sphere,5,0.600699,768.023,532,513,0,-663.835,352.442,1,SparLab simulation
 elliptic_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,tool,sphere,13,0.889814,1970.46,718,709,1659.11,0,601.5,1,SparLab simulation
 elliptic_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,support,sphere,8,1.0096,2218.48,718,535,0,-1667.04,425.506,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,uncompensated,uncompensated,tool,sphere,26,1.82332,3859.52,1842,1828,3480.57,0,1173.84,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,uncompensated,uncompensated,support,sphere,9,2.47423,4666.88,1842,1717,0,-3804.86,1056.45,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,FE-DA-1,FE-DA-1,tool,sphere,13,1.24956,2544.59,903,895,2196.78,0,795.414,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,FE-DA-1,FE-DA-1,support,sphere,9,1.49454,3092.14,903,842,0,-2359,604.045,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,FE-DA-2,FE-DA-2,tool,sphere,13,1.19554,2172.04,950,939,1829.73,0,834.728,1,SparLab simulation
+elliptic_cone-s2026-0001,dsif,FE-DA-2,FE-DA-2,support,sphere,7,1.52429,2392,950,921,0,-1779.62,615.935,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,uncompensated,uncompensated,tool,sphere,11,1.11587,1553.29,849,840,1376.45,0,757.449,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,uncompensated,uncompensated,support,sphere,7,1.16125,1460.16,849,678,0,-1171.86,607.292,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,tool,sphere,10,1.15328,1556.28,753,744,1374.99,0,749.313,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,FE-DA-1,FE-DA-1,support,sphere,7,1.29232,1418.69,753,733,0,-1128.8,533.927,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,tool,sphere,11,0.952243,1522.34,687,677,1302.12,0,744.58,1,SparLab simulation
+truncated_cone-s2026-0000,dsif,FE-DA-2,FE-DA-2,support,sphere,7,1.16198,1414.32,687,666,0,-1131.65,527.544,1,SparLab simulation
