@@ -1,0 +1,12 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "hardening_modulus": 0.0,
+   "saturation_rate": 13.5,
+   "saturation_stress": 189390000.0,
+   "yield_stress": 102750000.0
+  }
+ },
+ "variant": "hard_voce_coer"
+}

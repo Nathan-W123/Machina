@@ -1,0 +1,31 @@
+[info ] material region 'e_bin_0': 64 element(s) of 'AA5754-O-E59.75'
+[info ] material region 'e_bin_1': 9 element(s) of 'AA5754-O-E61.51'
+[info ] material region 'e_bin_2': 24 element(s) of 'AA5754-O-E62.76'
+[info ] material region 'e_bin_3': 15 element(s) of 'AA5754-O-E64.01'
+[info ] material region 'e_bin_4': 47 element(s) of 'AA5754-O-E65.76'
+[info ] material region 'e_bin_5': 121 element(s) of 'AA5754-O-E66.81'
+[info ] material region 'e_bin_6': 136 element(s) of 'AA5754-O-E67.98'
+[info ] material region 'e_bin_7': 384 element(s) of 'AA5754-O-E69.80'
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.112511 failed (solver error: solver error: an element is inverted (det F = -0.0964425); the load step is too large or the mesh too coarse for this deformation); halving to 0.00466833
+[info ] forming increment to t = 0.390473 failed (solver error: solver error: an element is inverted (det F = -7.68667); the load step is too large or the mesh too coarse for this deformation); halving to 0.00439616
+[info ] forming increment to t = 0.588225 failed (solver error: solver error: an element is inverted (det F = -0.303666); the load step is too large or the mesh too coarse for this deformation); halving to 0.00419408
+[info ] forming step 'form': t = 0.609045 s of 0.951429 (97 increment(s), 712 iteration(s), 3 cut(s), 60.2656 s elapsed)
+[info ] forming increment to t = 0.62914 failed (solver error: solver error: an element is inverted (det F = -0.143117); the load step is too large or the mesh too coarse for this deformation); halving to 0.000934154
+[info ] forming increment to t = 0.800713 failed (solver error: solver error: an element is inverted (det F = -0.420378); the load step is too large or the mesh too coarse for this deformation); halving to 0.00224666
+[info ] forming step 'form' completed: 199 increment(s), 1301 iteration(s), 5 cut(s), reactions 1319.69 N, largest plastic strain 0.370501, largest displacement change 0.00308967 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 522.245 N
+[warn ] the supports of release step 'unload' carry reactions of 929.972 N, 0.556654 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 39 iteration(s), 0 cut(s), reactions 929.972 N, largest plastic strain 0.370501, largest displacement change 8.24764e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 929.972 N
+[info ] forming step 'release' completed: 10 increment(s), 43 iteration(s), 0 cut(s), reactions 5.95084e-13 N, largest plastic strain 0.370501, largest displacement change 0.00015231 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 199 increment(s), 1301 iteration(s), 5 cut(s), largest plastic strain 0.370501, largest displacement change 0.00308967 m
+  step 2 'unload' (release): completed, 10 increment(s), 39 iteration(s), 0 cut(s), largest plastic strain 0.370501, largest displacement change 8.24764e-05 m
+      warning: the supports of release step 'unload' carry reactions of 929.972 N, 0.556654 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 43 iteration(s), 0 cut(s), largest plastic strain 0.370501, largest displacement change 0.00015231 m
+  runtime: 113 s (219 increments, 1383 Newton iterations; UMFPACK LU x 1572)
+  output:  /home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/combo_lit/output

@@ -1,0 +1,225 @@
+{
+ "description": "Single-point incremental forming of a AA5754-O blank, written by precomp 0.1.0",
+ "forming": {
+  "kinematics": "finite_logarithmic",
+  "output": {
+   "snapshots": "steps",
+   "vtk": true
+  },
+  "steps": [
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "clamp",
+      "region": {
+       "any_of": [
+        {
+         "box": {
+          "xmax": -0.015
+         }
+        },
+        {
+         "box": {
+          "xmin": 0.015
+         }
+        },
+        {
+         "box": {
+          "ymax": -0.015
+         }
+        },
+        {
+         "box": {
+          "ymin": 0.015
+         }
+        }
+       ],
+       "name": "clamp"
+      }
+     }
+    ],
+    "max_tool_travel": 0.001,
+    "name": "form",
+    "time": [
+     0.0,
+     0.9514292680231762
+    ],
+    "tools": [
+     "tool"
+    ],
+    "type": "form"
+   },
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "clamp",
+      "region": {
+       "any_of": [
+        {
+         "box": {
+          "xmax": -0.015
+         }
+        },
+        {
+         "box": {
+          "xmin": 0.015
+         }
+        },
+        {
+         "box": {
+          "ymax": -0.015
+         }
+        },
+        {
+         "box": {
+          "ymin": 0.015
+         }
+        }
+       ],
+       "name": "clamp"
+      }
+     }
+    ],
+    "name": "unload",
+    "tools": [],
+    "type": "release"
+   },
+   {
+    "boundary_conditions": [
+     {
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_xyz",
+      "region": {
+       "nearest_node": [
+        -0.0175,
+        -0.0175,
+        0.0
+       ]
+      }
+     },
+     {
+      "fix": [
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_yz",
+      "region": {
+       "nearest_node": [
+        0.0175,
+        -0.0175,
+        0.0
+       ]
+      }
+     },
+     {
+      "fix": [
+       "z"
+      ],
+      "mode": "hold",
+      "name": "support_z",
+      "region": {
+       "nearest_node": [
+        -0.0175,
+        0.0175,
+        0.0
+       ]
+      }
+     }
+    ],
+    "name": "release",
+    "tools": [],
+    "type": "release"
+   }
+  ],
+  "tools": [
+   {
+    "friction": 0.1,
+    "name": "tool",
+    "radius": 0.004,
+    "shape": "sphere",
+    "surface": {
+     "box": {
+      "xmax": 0.015,
+      "xmin": -0.015,
+      "ymax": 0.015,
+      "ymin": -0.015,
+      "zmin": 0.0
+     },
+     "name": "tool_side"
+    },
+    "trajectory": {
+     "file": "toolpath.csv"
+    }
+   }
+  ]
+ },
+ "material": {
+  "density": 2670.0,
+  "name": "AA5754-O",
+  "plasticity": {
+   "anisotropy": {
+    "r0": 0.75,
+    "r45": 0.7,
+    "r90": 0.8,
+    "rolling_direction": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "sheet_normal": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "hardening_modulus": 237610605.32948908,
+   "kinematic_hardening_modulus": 0.0,
+   "saturation_rate": 14.377555530345461,
+   "saturation_stress": 123864572.88204344,
+   "yield_criterion": "hill48",
+   "yield_stress": 100000000.0
+  },
+  "poisson_ratio": 0.33,
+  "youngs_modulus": 70000000000.0
+ },
+ "mesh": {
+  "lx": 0.04,
+  "ly": 0.04,
+  "lz": 0.001,
+  "nx": 20,
+  "ny": 20,
+  "nz": 2,
+  "type": "structured_hex",
+  "x0": -0.02,
+  "y0": -0.02,
+  "z0": -0.001
+ },
+ "model": {
+  "element_formulation": "incompatible_modes",
+  "integration": {
+   "thickness_direction": "z",
+   "thickness_points": 5
+  },
+  "stress_state": "three_dimensional"
+ },
+ "name": "spif",
+ "units": "SI"
+}

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/home/user/wt/audit/build/bin/sparlab_form",
+    "--config",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/pyramid-s2026-0001/vm/deck.json",
+    "--output",
+    "/home/user/wt/audit/benchmarks/physics_audit/material/runs/pyramid-s2026-0001/vm/output",
+    "--strict-config"
+  ],
+  "returncode": 0,
+  "runtime_s": 145.5726593110012,
+  "threads": 1,
+  "timeout_s": null
+}

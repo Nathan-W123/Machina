@@ -1,0 +1,18 @@
+{
+ "info": {
+  "robot_deflection_mm": {
+   "max_dz": 0.8283835520818592,
+   "max_norm": 0.8407303304398652,
+   "mean_dxy_contact": 0.11270205422922404,
+   "mean_dz_contact": 0.4979045509828279,
+   "mean_norm_contact": 0.5130230749752775
+  }
+ },
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "robot": {
+   "iso_um_per_N": 1.0
+  }
+ },
+ "variant": "rob_iso1"
+}

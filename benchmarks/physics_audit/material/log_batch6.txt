@@ -1,0 +1,5 @@
+19:53:30 {"part": "truncated_cone-s2026-0000", "variant": "hill_sb110_im5", "ok": true, "wall_s": 529.7024209499359, "error": null} 0.7772751909520482
+19:53:30 {"part": "truncated_cone-s2026-0000", "variant": "kin_mild_im5", "ok": true, "wall_s": 506.37436175346375, "error": null} 0.797897672478891
+19:59:14 {"part": "pyramid-s2026-0001", "variant": "base_im5", "ok": true, "wall_s": 367.5923593044281, "error": null} 0.7462091572822623
+20:01:59 {"part": "pyramid-s2026-0001", "variant": "kin_shutov_im5", "ok": true, "wall_s": 509.63752460479736, "error": null} 0.7219499105432058
+20:07:25 {"part": "truncated_cone-s2026-0000", "variant": "combo_lit_im5", "ok": true, "wall_s": 325.3350193500519, "error": null} 0.7807892993807963

@@ -1,0 +1,13 @@
+{
+ "info": {},
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "material": {
+   "hardening_modulus": 50000000.0,
+   "saturation_rate": 25.0,
+   "saturation_stress": 50000000.0,
+   "yield_stress": 193000000.0
+  }
+ },
+ "variant": "mat_5052H32"
+}

@@ -1,0 +1,28 @@
+[info ] material region 'e_bin_0': 83 element(s) of 'AA5754-O-E59.93'
+[info ] material region 'e_bin_1': 13 element(s) of 'AA5754-O-E61.31'
+[info ] material region 'e_bin_2': 14 element(s) of 'AA5754-O-E63.03'
+[info ] material region 'e_bin_3': 33 element(s) of 'AA5754-O-E64.05'
+[info ] material region 'e_bin_4': 62 element(s) of 'AA5754-O-E65.63'
+[info ] material region 'e_bin_5': 124 element(s) of 'AA5754-O-E66.76'
+[info ] material region 'e_bin_6': 124 element(s) of 'AA5754-O-E68.01'
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.963829 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.466554 failed (solver error: solver error: an element is inverted (det F = -1784.24); the load step is too large or the mesh too coarse for this deformation); halving to 0.00390811
+[info ] forming increment to t = 0.553837 failed (solver error: solver error: an element is inverted (det F = -0.0478714); the load step is too large or the mesh too coarse for this deformation); halving to 0.00293108
+[info ] forming increment to t = 0.564224 failed (solver error: solver error: an element is inverted (det F = -0.56395); the load step is too large or the mesh too coarse for this deformation); halving to 0.00103547
+[info ] forming step 'form': t = 0.563189 s of 0.963829 (93 increment(s), 712 iteration(s), 3 cut(s), 61.0935 s elapsed)
+[info ] forming step 'form' completed: 208 increment(s), 1427 iteration(s), 3 cut(s), reactions 1335.18 N, largest plastic strain 0.266674, largest displacement change 0.00255176 m
+[info ] forming step 'unload' (release, t = 0.963829 .. 1.96383 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 506.369 N
+[warn ] the supports of release step 'unload' carry reactions of 1000.97 N, 0.615724 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 36 iteration(s), 0 cut(s), reactions 1000.97 N, largest plastic strain 0.266674, largest displacement change 9.86354e-05 m
+[info ] forming step 'release' (release, t = 1.96383 .. 2.96383 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 1000.97 N
+[info ] forming step 'release' completed: 10 increment(s), 42 iteration(s), 0 cut(s), reactions 5.92028e-13 N, largest plastic strain 0.266674, largest displacement change 0.000169622 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 208 increment(s), 1427 iteration(s), 3 cut(s), largest plastic strain 0.266674, largest displacement change 0.00255176 m
+  step 2 'unload' (release): completed, 10 increment(s), 36 iteration(s), 0 cut(s), largest plastic strain 0.266674, largest displacement change 9.86354e-05 m
+      warning: the supports of release step 'unload' carry reactions of 1000.97 N, 0.615724 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 42 iteration(s), 0 cut(s), largest plastic strain 0.266674, largest displacement change 0.000169622 m
+  runtime: 122.5 s (228 increments, 1505 Newton iterations; UMFPACK LU x 1741)
+  output:  /home/user/wt/audit/benchmarks/physics_audit/material/runs/pyramid-s2026-0001/combo_lit/output

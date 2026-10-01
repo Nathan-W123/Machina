@@ -1,0 +1,12 @@
+{
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "material": {
+   "hardening_modulus": 284159612.9999444,
+   "saturation_rate": 15.24095639545748,
+   "saturation_stress": 145616385.09565523,
+   "yield_stress": 94100000.0
+  }
+ },
+ "variant": "hard_pow_iadicola"
+}

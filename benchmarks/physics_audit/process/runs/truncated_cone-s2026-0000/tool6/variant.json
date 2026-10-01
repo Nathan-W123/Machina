@@ -1,0 +1,10 @@
+{
+ "info": {},
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "setup": {
+   "tool_radius": 0.006
+  }
+ },
+ "variant": "tool6"
+}

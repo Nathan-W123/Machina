@@ -1,0 +1,8 @@
+# Raw solver output of the study's runs (tens of MB, reproducible bit for bit
+# from cases/<name>/deck with build/bin/sparlab_form); the evaluated surfaces
+# (surfaces/*.npz), summaries, tool forces, decks and logs are kept.
+cases/*/output/*_nodes.csv
+cases/*/output/*_elements.csv
+cases/*/output/mesh.json
+cases/*.claim/
+__pycache__/

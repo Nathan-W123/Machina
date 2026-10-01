@@ -1,0 +1,55 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "max_eq_plastic_strain": 0.3822878693601938,
+ "tool_path_length_m": 0.10478257022868222,
+ "assumptions": {
+  "feed_m_per_s": [
+   0.017,
+   0.1
+  ],
+  "contact_length_m": [
+   0.002,
+   0.003
+  ],
+  "passes_straining_a_point": [
+   2.0,
+   3.0
+  ],
+  "rho_kg_m3": 2670.0,
+  "c_J_kgK": 900.0,
+  "taylor_quinney": 0.9,
+  "k_W_mK": 130.0,
+  "srs_bound_m": 0.005
+ },
+ "strain_increment_per_pass": [
+  0.12742928978673126,
+  0.1911439346800969
+ ],
+ "strain_rate_range_per_s": [
+  0.7220993087914772,
+  9.557196734004847
+ ],
+ "decades_above_quasistatic_coupon_1e-3": [
+  2.858596929279153,
+  3.9803305260122417
+ ],
+ "flow_stress_change_from_rate_bound_rel": [
+  0.032910813381183665,
+  0.04582524867192468
+ ],
+ "plastic_work_max_J_m3": 94363591.05584241,
+ "adiabatic_temperature_rise_total_K": 35.342168934772445,
+ "adiabatic_temperature_rise_per_pass_K": [
+  11.780722978257481,
+  17.671084467386223
+ ],
+ "contact_time_s": [
+  0.02,
+  0.1764705882352941
+ ],
+ "thermal_diffusion_length_in_contact_time_m": [
+  0.001040183088336739,
+  0.003089804187487533
+ ],
+ "sheet_thickness_m": 0.001
+}

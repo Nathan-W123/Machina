@@ -1,0 +1,823 @@
+
+
+===== page 1 =====
+1
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports
+Systematic analysis of geometric 
+inaccuracy and its contributing 
+factors in roboforming
+Sahil Bharti 1,5, Eldho Paul 1,5, Anandu Uthaman 1,4, Hariharan Krishnaswamy 1*, 
+Alexandr Klimchik 2 & Riby Abraham Boby 3
+Incremental sheet metal forming is a highly versatile die-less forming process for manufacturing 
+complex sheet metal components. Robot-assisted incremental sheet forming, or roboforming, 
+allows a wider range of tool motion, providing the capability to shape intricate components. This 
+makes roboforming the most flexible variant of the incremental forming method. However, the 
+serial arrangement of links and joints in a robotic manipulator results in low positional accuracy 
+under forming loads due to insufficient structural stiffness. The stiffness of the machine frame and 
+tool directly impacts the accuracy of the final formed profile. The impact of machine compliance on 
+component shape in incremental sheet forming is substantial in roboforming. This work presents a 
+methodology for systematic analysis of the factors contributing to the errors in the geometric shape 
+of robot-based forming. Experimental and numerical methods are used to estimate the material 
+springback, tool/tool holder deflections, and errors due to machine compliance. The CNC machine 
+frame is relatively stiffer than the industrial robots, such that material springback is estimated based 
+on the experimental trials on CNC for cone and variable wall angle cone profiles. Tool and tool holder 
+deflections are estimated using finite element simulations. The analytical method using the Virtual 
+Joint Model is used to model the joint stiffness, and consequently, the robot Cartesian stiffness 
+is estimated to predict path deviation contributing to geometric shape errors. The proportional 
+contribution of each factor in the overall deviation in the Roboforming is also quantified.
+Incremental sheet metal forming (ISF) is a versatile die-less forming process. Reduced forming loads, improved 
+formability, and implementation of quick design changes with simple tooling make ISF an attractive sheet metal 
+forming process. The approach can be used as a solution for rapid prototyping tasks with reduced costs associated 
+with tooling and dies. This is especially suitable for low-volume production with smaller batch sizes and higher 
+levels of customization, which is relevant in today’s manufacturing trend.
+In ISF , the part is formed continuously with progressive local deformations across a sheet metal using a 
+general-purpose tool. The development of local necks is suppressed in ISF due to the dynamic tool contact zone, 
+which allows higher overall deformation. However, the gradual  thinning1 of the material may eventually lead to 
+fracture. Fracture-forming limit lines (FFL) are used to represent formability limits in  ISF2. Along with material 
+thinning and fracture, the geometric deviation in the final shape of the formed component is one of the critical 
+limitations of  ISF3–6. As pointed out by Ren et al. 7,8, improving geometric accuracy is one of the primary chal -
+lenges for successful industrial adaptation of the ISF process.
+Attempts have been made to improve the geometric accuracy of the formed component by including error 
+compensation in the toolpath or by altering the forming  sequence9. Most compensation approaches rely on 
+empirical  observations10,11, theoretical  predictions12, or regression models based on finite element  simulations13. 
+Various assisted techniques, such as local heating of the deformation  zone14,15, and use of additional tools (double-
+sided incremental forming) or external  support16,17 have also been tried to improve the geometric accuracy. 
+Möllensiep et al. 18 used a regression-based compensation approach through a prediction-based modification 
+of the toolpath to reduce the geometric inaccuracy for ISF-formed parts at elevated temperatures. Asghar et al.9 
+proposed a mechanics-based approach for estimating and correcting sheet and tool deflections in ISF . The 
+OPEN
+1Indian Institute of Technology Madras, Mechanical Engineering, Chennai 600036, India. 2Lincoln Centre 
+for Autonomous Systems (L -CAS), School of Computer Science, University of Lincoln, Lincoln LN6 7TS, 
+UK. 3Department of Mechanical Engineering, Indian Institute of Technology Jodhpur, Jodhpur, Rajasthan 342030, 
+India. 4Present address: Bajaj Auto Limited, Pune, India. 5These authors contributed equally: Sahil Bharti and Eldho 
+Paul. *email: hariharan@iitm.ac.in
+
+===== page 2 =====
+2
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+approach was validated for conical profiles and free-form shapes. The tool and sheet deflection compensation 
+methodology by Asghar et al.9 was adopted by Rakesh et al.19 for double-sided incremental forming (DSIF).
+ISF process has evolved over time, and several variants have been developed ever since it was first patented, as 
+discussed by Jeswiet et al.20,21. CNC-based ISF is the most common adaptation as it is easier to develop and imple-
+ment. However, it is challenging to produce parts with complex designs due to restricted degrees of freedom and 
+limited workspace. Robot-assisted incremental forming, also referred to as “Roboforming” , is the most flexible 
+variant of ISF . The robot offers higher degrees of freedom (usually 6 DOF) for tool positioning and maneuver-
+ability. It makes it easier to accommodate complex part designs and offers a larger workspace. Although flexible, 
+the effective stiffness associated with the serial arrangement of the industrial robot links and joints is low and 
+should be  accounted22–24 for practical robot-based applications. Lower stiffness makes robots more compliant 
+compared to CNC  machines25, which reduces the geometric  accuracy26 of the final formed component under 
+high forming loads. In addition to machine compliance, the geometric deviation can be attributed to the material 
+springback. The net geometric inaccuracy is the accumulative effect of both machine compliance and material 
+springback. Geometric deviation due to material springback is commonly studied. Ambrogio et al.10 studied the 
+effect of process parameters (depth, tool diameter) and geometrical parameters (wall angle, depth of component, 
+thickness of sheet material) on the profile deviation of a truncated pyramid component. The study indicated that 
+the material  springback27and bending of the unsupported sheet are the significant factors contributing to the 
+observed geometric inaccuracy. Overall, machine compliance in ISF can influence part geometry by affecting 
+springback behavior and forming accuracy. Therefore, the geometric error for the formed component should 
+be associated with the accumulated error due to machine compliance and possible deflections in tool assembly 
+along with material  springback4,20,28. Fig. 1 is a schematic depicting possible error-causing factors in Roboform-
+ing. Many research efforts focus on isolating the impact of robot compliance on robot-forming inaccuracies. 
+The robot-compliant model, derived from supplementary calibration  experiments29, is subsequently employed 
+for path compensation. The force data essential for assessing deviations can be obtained through either Finite 
+Element  analysis30 or real-time force  measurements31. Although various studies examine the specific error con-
+tributions of factors such as material  springback32, elastic deflection of the robot, and tool  assembly9 in forming 
+profile deviations, they utilize diverse experimental conditions and methodologies. There is no standardized 
+procedure in the literature to determine these individual error contributions.
+This work systematically investigates sources of inaccuracies affecting the geometrical shape in ISF . The 
+current work envisages proposing a hybrid methodology combining experimental, numerical, and analytical 
+techniques to quantify the deviations occurring during roboforming. The focus of this work is more towards 
+developing a comprehensive methodology rather than measuring the actual deviations as such. As discussed, 
+both the material and machine tool affect the geometric deviation. The CNC machine tool is relatively rigid, and 
+the deviations in the component formed using CNC can be attributed primarily to the material springback. The 
+deviation due to the tool holder is estimated numerically using finite element method. The compliance error in 
+the machine tool, especially in the robot, is modeled analytically using a reduced-order virtual joint model (VJM). 
+The compliance error is sensitive to the robot size and more pronounced when smaller robots with relatively less 
+payload capacity are used for incremental forming. The presented methodology can be seamlessly applied to a 
+wide range of machine tools employed for incremental forming.
+Methods
+The geometric form error in incremental forming is the deviation between the formed and the intended part 
+profile. This geometric inaccuracy is primarily observed at the (a) unsupported regions adjacent to the active 
+deforming area in the sheet due to the bending and (b) deformed section of the part (wall region). The geometric 
+error in the deformed region ( δR ) is caused by (i) machine compliance ( δc ), (ii) springback ( δs ), and (iii) tool 
+Fig. 1.  Deformation in formed component due to deviations in tool path.
+
+===== page 3 =====
+3
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+compliance (tool ( δt ) and tool holder(δth ) ). Since all these deviations are small enough in practice, we can use 
+their superposition to estimate the profile geometric error:
+This work proposes a methodology to analyze individual contributions to forming profile deviations due to 
+the above-mentioned factors in roboformed technological operations. Two different workpiece profiles were used 
+both in CNC and robot-based incremental forming (Fig. 2). Both parts, i.e. variable wall angle conical frustum 
+(VW ACF) and constant wall angle cone (CW A) induce a unique load condition for geometric deviation study.
+The experimental setup is shown in Fig. 3. Consistent forming conditions, i.e., toolpath, tool diameter, lubrica-
+tion, blank size, and material, were maintained in both cases (CNC and Roboforming). Incremental forming (ISF) 
+experiments were carried out over a ‘Jyoti Huron KMill’ CNC machining centre and an IRB7600 ABB robot with 
+500 kg payload capacity; using AA1050 blanks of dimension 150 mm × 150 mm × 1.2 mm. A simple sheet metal 
+fixture with a work area (100 mm × 100 mm) was used, as shown in Fig.  3. Hydraulic oil was used for lubrica -
+tion. The tool was maintained normal to the fixture plane for the entire period of ISF . The fixture ensures a rigid 
+(1)δR = δc + δs + δt + δth
+Fig. 2.  Geometries of designed parts for SPIF along with corresponding 2D sketch: (a) Cone (b) Variable wall 
+angle conical frustum (VW ACF), (all dimensions are in mm).
+Fig. 3.  Experimental setup used for conducting ISF tests.
+
+===== page 4 =====
+4
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+constraint to prevent material ‘draw-in’ during incremental forming. Hydraulic oil provided sufficient lubrication 
+to minimize the interface friction during forming. A simple ball end tool with a 10 mm diameter was used with 
+a constant feed rate of 750 mm/min. A step toolpath with a constant 0.5 mm step depth was used. A six-axis FT 
+Omega191 Force/Torque sensor (mounted at the robot flange) with a maximum load capacity of 9000 N in the 
+z-direction ) and a Kystler multi-component dynamometer with max Fz of 1000 N was used to measure forces 
+and torques during roboforming and CNC-based incremental forming respectively (Fig.  3). Both the sensors 
+were synced to the same frequency of data logging for consistency in force comparison and post-processing.
+The formed components were scanned using a laser scanner (HEXAGON|8325-7 with RS5) with 25 µm 
+accuracy. The scanned components were compared with the nominal CAD profiles to estimate overall profile 
+errors in each case.
+The proposed methodology estimates the overall deviations in the roboformed component by comparing it 
+with the nominal CAD profile; it also isolates the error due to springback, tool deflection, tool holder deflection, 
+and robot compliance. The deviation due to tool holder and tool deflections are estimated using static FE analysis. 
+The springback is estimated from the experimental observations of deviations in CNC-formed components. Due 
+to the considerable stiffness gap between CNC and  robots25,33,34, the deviations in CNC-formed components are 
+assumed to be mainly due to springback after reducing the numerically estimated tool deflections. The error due 
+to robot deflections (robot compliance) is deduced experimentally and validated using the virtual joint method. 
+The steps indicating the individual treatment of each parameter for the estimation of deviations are presented 
+in Fig. 4. The details of each step are thoroughly discussed in the following subsections.
+Roboforming setup
+The actuation of the forming tool is achieved through the relative motion of the machine’s linkages and joints. 
+The position of the tool in space is described relative to a defined reference coordinate frame. In the context of 
+the roboforming setup, several such reference frames are located. A schematic of all the reference coordinate 
+Fig. 4.  Proposed methodology for estimating individual deviations.
+
+===== page 5 =====
+5
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+frames to be defined in ISF is shown in Fig.  5. The Ob , Oe,Ot , Oh,Ow , and Of  are the origins for the robot base, 
+end effector, tool, work object, and force sensor coordinate frames, respectively.
+All the experimental measures (deviations and forces) in ISF are obtained with respect to the work coordinate 
+frame with the origin assigned to the center Ow (0, 0, 0) of the sheet metal blank, as shown in Fig. 5 . i
+j T denotes 
+the transformation of measured parameters (forces, moments and displacements) from reference frame i  to j 
+(the transformation matrices and steps followed are presented in supplementary information Appendix (A).
+In the ISF process, the forming tool moves along a pre-defined toolpath generated for a target geometry. The 
+tool axis is aligned perpendicular to the sheet plane (xy-plane), as shown in Fig.  6. For a spherical tool with a 
+constant radius, the moment experienced by the tooltip varies due to the shifting contact location on the part 
+profile. In the incremental forming process, different tool-tip profiles may be used based on the complexity of 
+the part  profile35. Therefore, the tool and the part profile may influence the moments developed at the forming 
+tool (see Appendix A ). Here, the forming forces at each point ( p(x, y, z) ) along the toolpath are estimated by 
+transforming the forces and moments ( Ff , Mf  ) recorded using a dynamo-meter (make: Kystler) placed under 
+the fixture (Fig. 3) to the tooltip ( Fe, Me ) using the transformation steps discussed in the Appendix A.
+Stiffness model of robotic setup
+The entire roboforming setup can be modeled as a serial arrangement of rigid components, including the tool 
+and the tool holder. The effective compliance ( kef  ) of the entire assembly is defined in a common reference frame 
+(here, tool tip reference frame ( Ot )) by :
+where kt and kth are the tool and tool holder compliance obtained by FE analyses. Jr , Jth and Jt define the trans-
+formations from the local coordinate systems to the Ot . Corresponding transformations can be computed using 
+the following matrix expression:
+where I is 3 × 3 identity matrix, 0  is 3 × 3 zero matrix and (vi×) transforms vectors vi into skew-symmetric 
+matrix for i ={ t, th, r} . Corresponding vectors vi are given in Table 1.
+The compliance matrix kef  is identified based on the experimental force and deflection data measured dur -
+ing roboforming experiments. Similarly, robot compliance ( kr ) can be derived using the following expression:
+While the tool is designed to follow a predetermined path, the deflections or errors in its position change at dif-
+ferent locations due to the changing loads on the tool. The recorded reaction force and moments at the fixture 
+base are transformed to the tool contact point for estimating the deflections. The estimated global tool ( kt ) and 
+tool holder ( kth ) compliance matrices (Table 2) are used to calculate the corresponding deflections in ISF during 
+forming. The detailed methodologies for all stiffness parameter identification from simulation and experimental 
+studies are presented in the subsequent sections.
+(2)k−1
+ef = JT
+r k−1
+r Jr + JT
+thk−1
+th Jth + JT
+t k−1
+t Jt
+(3)Ji =
+[
+I3×3 (vi×)
+0I 3×3
+]
+6×6
+(4)JT
+r k−1
+r Jr = k−1
+ef −
+(
+JT
+t k−1
+t Jt + JT
+thk−1
+th Jth
+)
+Fig. 5.  Schematic representation of all the coordinate reference frames in roboforming.
+
+===== page 6 =====
+6
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+Fig. 6.  Illustration of forming tool, force sensor, workpiece base frame and their coordinate system and 
+corresponding transformations.
+Table 1.  Vector parameters used in geometric transformations.
+Parameter i vT
+i  , in mm
+Tool (t), vt [0, 0, 0]
+T ool holder (th), vth [0, 0, 105]
+Robot (r), vr [0, 0, 374.1]
+Table 2.  Compliance matrices for tool and tool holder identified from FEA experiments.
+Component Compliance in m/N
+Tool
+kt = 
+
+
+9.34 × 10−7 0 0 0 1.88 × 10−8 0
+0 9.34 × 10−7 0 −1.88 × 10−8 00
+0 0 4.45 × 10−9 0 00
+0 −1.88 × 10−8 0 6.74 × 10−10 00
+1.88 × 10−8 0 0 0 6.74 × 10−10 0
+0 0 0 0 0 8.94 × 10−10
+
+
+Tool holder
+kth = 
+
+
+1.07 × 10−7 0 0 0 7.44 × 10−10 0
+0 1.07 × 10−7 0 −7.44 × 10−10 00
+0 0 9.45 × 10−10 0 00
+0 −7.44 × 10−10 0 1.08 × 10−11 00
+7.44 × 10−10 0 0 0 1.08 × 10−11 0
+0 0 0 0 0 1.43 × 10−11
+
+
+
+===== page 7 =====
+7
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+FEA-based approach for identification of tool and tool holder deflection
+The roboforming tool assembly consists of two components: the forming tool and the tool holder (Fig.  7), 
+both with varied cross-sections and material properties. It is necessary to determine the compliance of the tool 
+assembly during the roboforming. In this regard, the individual stiffness matrix of the forming tool ( Kt ) and tool 
+holder ( Kth ) are determined using a static finite element analysis (FEA). The details of the FE model setup and 
+boundary conditions are given in Fig. 8. The tool and tool holder are modeled using C3D20R solid elements. The 
+tooltip surface nodes are coupled to a reference node defined by the tooltip using Kinematic coupling constraints. 
+The trial forces and moments are applied to the reference node. The displacements at the base are constrained.
+The FEA methodology is based on identifying corresponding nodal displacements for a set of external forces 
+and moments. Distributed surface force and moments are applied at the tool hemispherical ball end (Fig.  8) to 
+approximate the contact conditions at the tool-end during forming. The nodal displacements of the deformed tool 
+are extracted for a set of surface nodes at the tool end, as shown in the Fig. 8. T o effectively reduces the inaccura-
+cies associated with local deformation of the nodes, the methodology proposed  by36 is employed. The proposed 
+methodology involves considering a displacement field around the reference point. The displacement field was 
+Fig. 7.  Schematic of the forming tool (a) dimensions  (mm) and (b) segments consisting of tool and tool holder.
+Fig. 8.  FE analysis for tool (a) and tool holder (b) with boundary conditions for stiffness identification (figures 
+are not to scale, enlarged for clear depiction).
+
+===== page 8 =====
+8
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+defined for the nodes surrounding the ball end of the tool Fig.  8, and node displacements were treated as rigid 
+transformations with displacement vector p and rotational displacement δφ represented by a rotation matrix R:
+where the initial location of the node is pi , and /Delta1pi represents the node’ s displacement due to the applied wrench 
+for the n number of considered nodes.
+To find a set of desired parameters, a least squares optimization is used for the error function f:
+This leads to the orthogonal Procrustes  problem37 and involves the minimization of the sum of squared residu-
+als and singular value decomposition in order to identify the translational and rotational parameters within 
+a distinct set of virtual experiments. Further, an indicator for the parameter-to-noise  ratio38 was adopted to 
+assess the impact of errors introduced by mesh distortion and round-off error. This indicator was derived from 
+covariance analysis of the translation and rotation parameters, and the estimation accuracy was evaluated using 
+a common confidence interval technique. The procedure is presented in detail in the work by Klimchik et al.38.
+Wrench vectors (force and moment) in virtual experiments differ in the direction of application to develop 
+a complete compliance matrix (Table 2, supplementary information Appendix C). The deflections and rotations 
+are assumed to be relatively small, and the stiffness K represents a linear relation between the three-dimensional 
+static forces/moments F=(Fx , Fy , Fz )T , M = (Mx , My , Mz )T and the corresponding translations/rotation displace-
+ments δ=(δx , δy , δz )T , θ=(θx , θy , θz )T . K is the 6 × 6 stiffness matrix and the inverse of K is called the compliance 
+matrix ( k ), defined as ([k]=[K]−1).
+A similar procedure is followed to identify the stiffness matrix of the tool Kt and tool holder Kth.
+Robot deflection modelling
+This section describes an approach for computing the Cartesian stiffness and robot deflection using an analytical 
+model. In order to evaluate the stiffness of the robot, a lumped model called the Virtual Joint Model (VJM) is 
+ used39. According to this model, certain virtual joints are introduced in the joint space to describe the control 
+loop and joint/link  flexibility38. The following relation represents the transformation from the base to the tool 
+of the robot.
+Here, TBase represents the transformation from the base of the manipulator to the first actuated joint, and TTool 
+represents the transformation from the flange to the tool. Transformation of the flexible actuated joint is repre-
+sented by Ti
+joint (qi + θi
+joint ) where qi and θi
+joint are the joint and virtual joint variables. Link geometry is described 
+by Ti
+Link . In the VJM model, flexible links are replaced by a combination of rigid links and virtual  joints39.
+Studies show that for heavy industrial manipulators, joint elasticity dominates link  elasticity40. The effective 
+stiffness of the robot, which is generally defined by the Cartesian stiffness matrix Kc , depends on joint and link 
+stiffness. The Cartesian stiffness matrix of the robot can be expressed as a lumped stiffness of joint space stiffness 
+Kθ according to the following  relation41:
+Here, Jθ is the configuration-dependent Jacobian of the robot, describing the mapping between Cartesian and 
+joint spaces. The configurations ( joint angles θ1 to θ6 ) of the robot corresponding to each Cartesian coordinate 
+location on the toolpath are retrieved from the robot controller. Kθ corresponds to the joint stiffness matrix. The 
+impact of configurations on the accuracy of incremental forming was outlined in our earlier  study42. A sche-
+matic diagram of the VJM model of an industrial robot with a tool and tool holder is shown in Fig. 9. Here, each 
+one-dimensional virtual spring represents the compliance of the actuated joint ( ki ) where i = (1 − 6) , while the 
+compliance of the tool and tool holder are described by the spring located prior to them.
+A set of auxiliary elasto-static experiments was carried out to identify robot stiffness properties (the stiffness 
+coefficients of the robot virtual joints Ki used in VJM) following the procedure discussed  in38. Identified joint 
+stiffness is given in the Table 3. These coefficients compose a joint stiffness matrix
+where operator diag(Ki) creates stiffness matrix from the vector Ki with Ki components on the main diagonal, 
+vector Ki composed of virtual joint compliance Ki , i = 1..6.
+Deviation due to robot compliance ( kc ) during the forming experiment was estimated using the following 
+static relation
+where the compliance matrix kc is obtained by taking the inverse of the Cartesian stiffness matrix (Eq. 8), F was 
+calculated based on the wrench data measurements from the force sensor (originally measured in its coordi-
+nate system) and related geometric transformations. Thereby, the force was transformed into the work object 
+(5)pi + �pi = R(δφ)pi + p, i = 1, n
+(6)f =
+n∑
+i=1
+� pi + �pi − R(δφ)pi − p �2 → min
+R,p
+(7)T = TBase
+[ 6∏
+i=1
+Ti
+joint
+(
+qi + θi
+joint
+)
+Ti
+Link
+]
+TTool
+(8)Kc = J−T
+θ Kθ J−1
+θ
+(9)Kθ = diag(Ki)
+(10)/Delta1t= kc F
+
+===== page 9 =====
+9
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+coordinate system of the robot according to the methodology presented in the supplementary information 
+Appendix (A).
+In the following section, we will use the above-described methodology to analyze the contributions of all 
+inaccuracy factors in the roboforming process.
+Results and discussion
+This study is performed using a 1.22 mm thick sheet of commercially pure aluminum alloy (AA1050). The 
+mechanical properties of the material are presented in Table 1, (Supplementary information Appendix B). In a 
+typical incremental sheet metal forming, sheet and tool deflection are the major factors for the geometric errors. 
+However, as mentioned earlier, it is important to consider the effect of machine stiffness in roboforming. The 
+estimated deflections for conical profiles with constant wall angle (cone) and variable wall angle (VW A) are 
+discussed in the following subsections.
+A constant wall angle cone part
+A cone with a constant wall angle (CW A) of 71°, an opening diameter of 87 mm, and a depth of 102.97 mm is 
+developed using both CNC and the robot. In both cases, the step toolpath is employed with a constant incre-
+ment (step size) of 0.5 mm.
+The measured forming load components ( Fx,Fy,Fz ) demonstrate comparable closeness in CNC and roboform-
+ing experiments (Fig. 10). It can be observed that the forming loads gradually saturate after a sharp rise during 
+the initial phase of deformation. The fluctuation in the forming force can be attributed to the observed local 
+thinning of the sheet around the cone opening (z = 0 to 20 mm).
+The CNC and Roboformed parts are scanned and compared with the nominal CAD profiles to analyze devia-
+tions in the part geometry. Figure 11 presents the total deviations along the x, y, and z axes. Significant deviations 
+occur near the cone opening (from z  = 0 to −10 mm) due to the bending of the unsupported sheet (Fig.  11b). 
+The tool stretches the material in contact, creating a pulling force on the forming neighborhood and inducing 
+minor curvature in the area lacking external support. Bending stresses balance the majority of the external load. 
+The data analyzed in this study (from z = −20 mm depth) do not consider the effects of sheet bending on the 
+total deviations.
+When the part is unclamped from the fixture post-deformation, it experiences geometric distortion due to 
+material shrinkage caused by recovery of the elastic strains. This leads to a geometric error known as a spring-
+back error. Along with material springback, tool deflections are considered significant to the overall geometric 
+deviations in the CNC-formed component. All deviations ( δx , δy , and δz ) are measured on an unclamped sheet, 
+considering only global springback values. It is assumed that CNC machines are structurally more rigid than 
+Fig. 9.  VJM-based stiffness model of industrial robot.
+Table 3.  Virtual Joint Stiffness Coefficients for Industrial Robot ABB IRB7600 identified from the 
+experimental study.
+Joint Stiffness coefficient (Nm/rad)
+1 3.73 × 106
+2 4.82 × 106
+3 4.04 × 106
+4 6.38 × 105
+5 7.59 × 105
+6 4.72 × 105
+
+===== page 10 =====
+10
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+serial robots. Thereby, the springback error can be determined by subtracting the tool deflections from the total 
+deviations in the CNC-formed part.
+The deviations due to tool deflections are calculated using finite element (FE) simulations, as depicted in 
+Fig. 12(a). It is assumed that tool deflections are comparable in both CNC and roboforming, considering that 
+the measured forming forces are the same. Notably, the tool holder experiences the least deflection of 0.0003 mm 
+( δth ) along the tool axis ( z-axis). The average deflection of the tool is approximately 0.136 mm along the x and 
+y axes. The main cause of tool and tool holder deflections (Fig.  12(a,b)) is the in-plane forces ( Fx , Fy ) (Fig. 10). 
+This deviation is significant for a 1.22 mm thick sheet across the part cross-section. Accounting for this tool 
+deflection when developing an ISF toolpath can enhance the geometric accuracy of the formed component.
+Fig. 10.  Forming force measured while forming Cone using (a) CNC milling machine and (b) robot.
+Fig. 11.  Comparison of (a) deviation in Cone for both CNC and Robot (b) color map of overall deviation in 
+roboformed Cone.
+
+===== page 11 =====
+11
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+Similarly, the average springback measured along the xy plane (0.72 mm) is larger in magnitude compared to 
+the tool axis (0.49 mm). The springback tends to follow the force trend and the variation in the part profile. In the 
+roboforming setup, the tool is mounted on a slender tool holder (Fig. 7). The errors due to robot compliance are 
+evaluated using the approach illustrated in Fig. 4. The average robot compliance error in the part cross-section 
+varies between 0.3 mm near the cone opening (z = −10 mm) to 1.3 mm around the base region (z = −100 mm). 
+The robot is the least compliant along the tool axis, with a maximum deflection of 0.16 mm. A representative 
+plot of the planar distribution of the radial deviation for cross-sections at three z-heights along the part depth 
+is given in the supplementary information Appendix (D).
+The thickness distribution of the formed cone is shown in Fig.  13. The wall thickness of the cone reduced 
+sharply from 1.22 mm to about 0.25 mm in the initial phase of deformation. It is expected due to the abrupt 
+change in the part wall angle from 0◦ to 71◦ at z = 0. This sharp change in the profile angles leads to the accumula-
+tion of strains in the thickness  direction43 proportional to the degree (rate) of change in wall angles. The thickness 
+(t) reached a stable value of t = 0.4 mm after a depth of z = 20 mm. The wall thickness variances between CNC 
+and roboformed parts are negligible at the mid-depth, with a marginal disparity of 0.05 mm at the upper and 
+lower sections of the formed part.
+A variable wall angle cone part
+To evaluate the deflections for a different load profile, a truncated cone with varying wall angle (VW ACF) ranging 
+from 0◦ to 90◦ is developed. The VW ACF has an opening diameter of 88.15 mm and is formed using both CNC 
+and Robot. A toolpath with a 0.5 mm step size and a 10 mm diameter ball end tool is used. The dimensions of 
+the VW ACF are shown in Fig. 2b.
+The evolution of forming force for VW ACF for both CNC and robot is illustrated in Fig.  14. The forming 
+loads rise gradually to the maximum value of 475 N and eventually drop, leading to fracture. The forces profile in 
+roboforming is close to CNC, with a minor variation. The forces recorded in the robot ISF are slightly less than 
+in CNC during the initial stage of deformation but progressively increase with depth. It should be mentioned 
+that the robot’ s effective stiffness is configuration-dependent. A more compliant robot configuration results in 
+Fig. 12.  Absolute deviations due to (a) tool deflection, (b) tool holder compliance , (c) springback , and 
+(d) Robot compliance in roboforming of cone, all dimensions are in mm.
+
+===== page 12 =====
+12
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+less force being transmitted to the workpiece. These variations can lead to deviations in the tool contact position 
+from the intended toolpath, leading to geometrical inaccuracy.
+The overall geometric deviations in VW ACF from the nominal CAD profile are shown in Fig. 15. The vari-
+ations around the part opening are rather insignificant in the case of VW ACF compared to the cone profile.
+Furthermore, as shown in Fig.  16c, the wall thickness decreases gradually with depth reaching a minimum 
+at fracture. The formed depth for parts obtained by the robot and CNC are presented in Fig.  16. The reduced 
+bending deviation and absence of local thinning in VW ACF can be due to the gradual change in the wall angle 
+of the part profile, unlike the cone with a constant wall angle.
+Fig. 13.  Thickness distribution in Cone for (a) CNC and (b) roboforming, and (c) comparison, all dimensions 
+are in mm.
+Fig. 14.  Forming load evolution for VW ACF formed using (a) CNC and (b) Robot.
+
+===== page 13 =====
+13
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+Figure 17 presents deviations from the tool, tool holder, springback, and robot compliance. It can be observed 
+that the average tool (0.002 mm) and tool holder (0.0004 mm) deviations are negligible along the tool’s axis 
+(z-axis). However, in-plane tool deviations are significant, reaching up to 0.239 mm as depicted in Fig.  17a. It 
+can be suggested that altering the force direction by adjusting the tool’s orientation relative to the sheet plane 
+might reduce these deviations. Additionally, Fig. 17c shows geometric deviation due to springback. Similar to the 
+conical profile, the deviation due to springback is more pronounced in the x–y plane, up to 1.1 mm. Springback 
+Fig. 15.  Comparison of (a) deviation in VW ACF for both CNC and Robot (b) color map of overall deviation in 
+roboformed VW ACF .
+Fig. 16.  Thickness distribution in VW ACF for (a) CNC and (b) roboforming, and (c) comparison, all 
+dimensions are in mm.
+
+===== page 14 =====
+14
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+in VW ACF increases at a part depth of z= (30–35 mm) and diminishes near the fracture area. A significant range 
+of springback (minimum 0.004 mm, maximum 0.364 mm) was observed in VW ACF Although the absolute 
+mean springback error is less compared to cone, the variation in springback along the part depth may indicate 
+that the geometric profile significantly influences the springback error. The deviation due to robot compliance 
+is shown in Fig. 17d. The robot appears to be more compliant towards the beginning of forming, which is also 
+apparent in the load profile (Fig. 14) with an absolute mean deviation of 0.502 mm along the tool axis. The robot 
+deviation tends to reduce up to 0.0005 mm towards the end of forming. The absolute magnitude of mean inplane 
+deviations ( δx , δy ) due to robot compliance reaches up to 0.75 mm and 0.522 mm, respectively. A representative 
+plot of the planar distribution of the radial deviation for cross-sections at three z-heights along the part depth 
+is given in the supplementary information Appendix (E).
+VJM prediction of deviation due to robot compliance
+The deviations due to robot compliance are analytically predicted using the VJM model (Eq. 10) and compared 
+with the experimental observation, as shown in Figs. 18 and 19 for cone and VW ACF , respectively. The margin of 
+error ( � = δExp. − δVJM ) in the average deviation predicted by VJM and measured experimentally is comparable 
+for both cone ( /Delta1x = 0.311, /Delta1y = 0.5, /Delta1z =− 0.840 ) and VW ACF ( /Delta1x = 0.36, /Delta1y = 0.4, /Delta1z =− 0.6 ). However, 
+VJM over-predicts the average absolute deviation along the z-axis. The average resultant error ( /Delta1cone = 1.02 mm) 
+is higher than the VW ACF ( /Delta1VWACF = 0.8 mm), which may indicate that the VJM model predictions are influ-
+enced by the part geometry. It is observed that the deviations due to robot compliance are largely a function of 
+part profile and the robot configuration.
+The specific combination of load and robot joint configuration is unique to the shape of a particular part. The 
+interaction between the robot configuration, part shape, and end effector load introduces a process non-linearity 
+that is challenging to model. The VJM model effectively captures the variation in deviation, which is directly 
+related to the end effector load. When working with certain part shapes (such as Cone and VW ACF) in our case 
+study, the range of achievable joint configurations may be limited due to the small size of the component, leading 
+Fig. 17.  Absolute deviations due to tool deflection (a), tool holder compliance (b), springback (c), and Robot 
+compliance (d) in roboforming of VW ACF , all dimensions are in mm.
+
+===== page 15 =====
+15
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+to a narrow range of active configurations. For clarity, a specific dataset compares predictions and experimental 
+results for a single toolpath contour at z = −11 mm, as shown in Fig. 20.
+Fig. 18.  Comparison of deviations due to robot compliance (a) predicted using VJM and (b) obtained 
+experimentally using the proposed methodology for Cone.
+Fig. 19.  Comparison of deviations due to robot compliance (a) predicted using VJM and (b) obtained 
+experimentally using the proposed methodology for VW ACF .
+
+===== page 16 =====
+16
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+A polar plot (Fig. 20) shows the experimental error, VJM predictions, and the mean error distribution along 
+the toolpath profile at −11 mm depth for the chosen toolpath points. For this specific case, it can be observed 
+that the VJM model over-predicts the errors along the x and z-axis and under-predicts along the y-axis. The 
+discrepancies between the predicted results and the experimental deviations do not seem to be angle-dependent 
+along the toolpath contour in general. Although the range of forces and moments along x &y axes are similar 
+(see Table 4), one can observe (Fig. 20) a significant difference in VJM predictions for robot deflection in x and y 
+directions ( δx and δy ) both for cone and VW ACF profile. These variations are caused by the mutual dependency 
+of the Cartesian deflections due to the high impact of off-diagonal components of the robot compliance matrix 
+for the selected workpiece location. It should be stressed that variations in the compliance matrix components 
+are not essential:
+Fig. 20.  Comparison of absolute deviations due to robot compliance obtained using experiments and VJM 
+predictions for (a) cone (b) VW ACF for a single tool path contour at z = −11 mm.
+Table 4.  The contribution of force components to the robot’s deflections.
+Force Components
+Deflection estimated from average kc
+Absolute total deflection (VJM, Fig. 20)
+Fx (N) Fy (N) Fz (N)
+Range −300.11 ... 247.68 −292.41 ... 246.21 381.13 ± 25.78
+δx (mm) −0.16 ...0.13 −0.03 ...0.03 0.32 ± 0.02 0.18 ...0.52
+δy (mm) −0.03 ...0.03 −0.23 ...0.19 −0.11 ± 0.01 0.01 ...0.25
+δz (mm) −0.25 ...0.21 −0.07 ... 0.08 0.94 ± 0.06 0.63 ...1.42
+
+===== page 17 =====
+17
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+where the means and standard deviations of each component of the Cartesian compliance matrix are given for 
+all robot configurations used in the cone experiment. The compliance matrix shows that the robot’s deflection 
+in the y-direction is significantly influenced by the higher force component Fz due to the k23 component of the 
+compliance matrix. This influence brings the y-direction deflection close to zero.
+Hence, the variations in the robot end-effector deviation in the VJM modelling are related to the robot’s 
+Cartesian compliance. T o demonstrate the contribution of each force component (due to compliance), Table 4 
+contains an estimation (exact values can slightly vary due to variation of compliance matrix components) of a 
+range of deflections induced by each force component; total deflections correspond to the absolute deflection 
+range obtained from the VJM-based simulation presented in Fig.  20. It should be mentioned that moment 
+contributions are negligible to any deflection and lower than ±0.0001 mm. Fz has a major contribution to all 
+Cartesian deflections while for δy it contributes with a negative sign reducing the contribution of the main force 
+component Fy.
+As mentioned earlier, robot compliance is sensitive to changes in joint configurations, and each part profile 
+directs the robot’ s motions and changes in configurations. One of the main factors that can also affect the results 
+could be partial compensation of robot compliance due to the springback effect. Going deeper into these aspects 
+might provide additional insights and is an area of further investigation. Based on the experimental observations, 
+it is implied that there is a scope for improvement in error prediction by carefully incorporating the possible non-
+linearities due to material and part profile. Such overlapping interactions between the process parameters make 
+it difficult to model with simplified criteria. It is important to emphasize that an accurate analytical approach 
+can eliminate the need to experimentally determine the geometric deviation caused by robot compliance. One 
+of the simplifying assumptions of rigid link used in this study may be insufficient to justify the discrepancies 
+completely, but it could not be ignored and should be investigated further.
+In addition, Table 5 presents the summary of the absolute resultant deviations and the percentage contribution 
+of each factor (tool, tool holder, springback, and robot compliance) in the geometric inaccuracy of roboformed 
+components (cone and variable wall angle cone). The resultant deviation Rm is computed as follows:
+Here, ¯δx, ¯δy and ¯δz are the mean of the absolute deviations along x , y and z axes. The Rm value is used to present 
+the percentage contribution of each factor in the overall geometric deviations.
+Based on the data in Table 5, it is clear that robot compliance plays a significant role, contributing to 40.28% of 
+the geometric deviation in cone and 59.98% in variable wall angle cone (VW ACF). Additionally, Table 5 also sug-
+gests that the part profile affects the percentage contribution of robot compliance to the overall geometric devia-
+tion. This can be attributed to the fact that robot compliance varies depending on the active joint configuration, 
+resulting in different robot deflections for different part profiles. Springback is another important factor, which 
+appears to be complementary to robot compliance and is influenced by the part geometry. A larger springback 
+of 1.132 mm is observed for Cone compared to 0.530 mm for VW ACF . The key insight here is the superposi-
+tion of the springback and robot compliance. One of the main factors contributing to this could be the partial 
+compensation of the robot compliance due to springback. In the present work, the springback error is estimated 
+based on the difference between CNC and roboforming. Similarly, other errors are also obtained experimentally 
+by additive superposition. T o perform a parametric study, a finite element simulation of the entire roboforming 
+process is necessary. This analysis is complex not only from the numerical aspect but also from the choice of 
+kc =
+
+
+(5.23 ± 0.15) · 10−7 (1.09 ± 0.02) · 10−7 (8.35 ± 0.18) · 10−7 −(3.27 ± 0.08) · 10−7 −(6.97 ± 0.09) · 10−7 (5.47 ± 0.14) · 10−7
+(1.09 ± 0.02) · 10−7 (8.00 ± 0.08) · 10−7 −(2.87 ± 0.11) · 10−7 −(1.39 ± 0.08) · 10−7 (3.27 ± 0.08) · 10−7 (15.8 ± 0.11) · 10−7
+(8.35 ± 0.18) · 10−7 −(2.87 ± 0.11) · 10−7 (24.8 ± 0.25) · 10−7 −(6.22 ± 0.11) · 10−7 −(18.0 ± 0.09) · 10−7 (4.0 ± 0.07) · 10−10
+−(3.27 ± 0.08) · 10−7 −(1.39 ± 0.08) · 10−7 −(6.22 ± 0.11) · 10−7 (4.69 ± 0.13) · 10−7 (5.42 ± 0.14) · 10−7 −(5.68 ± 0.16) · 10−7
+−(6.97 ± 0.09) · 10−7 (3.27 ± 0.08) · 10−7 −(18.0 ± 0.09) · 10−7 (5.42 ± 0.14) · 10−7 (18.5 ± 0.08) · 10−7 (1.95 ± 0.04) · 10−7
+(5.47 ± 0.14) · 10−7 (15.8 ± 0.11) · 10−7 (4.0 ± 0.07) · 10−10 −(5.68 ± 0.16) · 10−7 (1.95 ± 0.04) · 10−7 (34 ± 0.19) · 10−7
+
+
+(11)Rm =
+√
+¯δx
+2 + ¯δy
+2 + ¯δz
+2
+Table 5.  Summary of absolute resultant mean deviations and percentage contribution of each factor to the 
+overall geometric deviation in roboforming for cone and VW ACF (in mm).
+Resultant deviation ( Rm) % Contribution
+Cone
+ Tool 0.1925 8.54
+ Tool Holder 0.0218 0.96
+ Springback 1.1325 50.22
+ Robot Compliance 0.9083 40.28
+VW ACF
+ Tool 0.156 8.1
+ Tool Holder 0.0182 1.02
+ Springback 0.530 30.9
+ Robot Compliance 1.048 59.98
+
+===== page 18 =====
+18
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+constitutive model, for the estimation of springback for a dynamic process like incremental forming is not well 
+established. The variability in part profiles or the extent of change in the robot configuration from its previous 
+position may lead to a non-linear accumulation of compliance-related parameters. The overall springback in 
+the VW ACF is nearly half of that in the cone, and the robot deflection is higher in VW ACF compared to the 
+cone (Table 5). This raises an interesting discussion on the impact of part stiffness due to its geometric profile.
+Additionally, factors such as material thickness are expected to have a magnifying effect on forming  forces44. 
+For instance, during incremental forming of AA2024-O sheets, an increase of sheet thickness from 0.8 mm to 
+1.4 mm led to an increase in the peak axial forming forces by up to 36.38% for a tool diameter of 15.66  mm45. It 
+should be noted that the trend of forming force evolution depends more on the part profile (as presented in this 
+work Figs. 10 and 14) and less on the material thickness. As shown by Kumar et al. 45, a 2◦ increase in the wall 
+angle of the profile can lead to a 15% increase in the forming force. Such increased forming forces due to material 
+and part profile parameters can lead to an overall increase in compliance-related deviations. On the other hand, 
+material properties such as Y oung’ s modulus (E), strain hardening exponent (n), and sheet metal thickness can 
+have a direct effect on geometric deviation due to  springback46. For materials with a higher yield stress, the area 
+of the elastically deformed regions is greater, which can contribute to a larger  springback47,48. The thickness of 
+the material has an inverse effect on the springback due to increased region of plastic  deformation49.
+The data provided in the Table  5 is valuable for roboforming applications as it helps in making decisions 
+on quantifying the approximate compensations in the toolpath related to robot deflections. This data presents 
+a general idea of the possible compensations needed for each factor to improve the geometric accuracy in the 
+roboformed component. It should be noted that the springback and deflections in the robot are part profile and 
+robot configuration dependent and which vary throughout the roboforming operation. However, mean values 
+are presented here for quantitative comparison.
+Conclusion
+This study proposes a systematic analysis of factors contributing to the geometric shape error in roboforming. 
+Experimental and numerical approaches were used to estimate material springback, tool/tool holder, and robot 
+link deflections. Since CNC machines are relatively stiffer than industrial robots, material springback is estimated 
+from parts (cone and variable wall angle conical frustum) developed in CNC. Finite element simulations with 
+an ABAQUS static solver estimate tool and tool holder deflections. Using a Virtual Joint Model (VJM), robot 
+elasto-static behavior is modeled, and virtual joint deflections that cause geometric shape errors are estimated. 
+A comprehensive framework is presented to account for the geometric deviations that arise during roboform -
+ing. The difference in a geometric deviation between the CNC and robot-formed components indicates that the 
+robot stiffness has a significant role, contributing to 40.28% in the cone and 59.98% in the variable wall angle 
+cone (VW ACF) of the overall geometric error. It is observed that the material springback varies with formed 
+depth and is sensitive to the part design. Robot deflections are not constant during the roboforming of a part; the 
+effective stiffness of the robot is sensitive to the robot link configurations. Also, part design affects the instantane-
+ous evolution of tool contact force in roboforming. In the present work, the difference in recorded deviations is 
+rather small, as the payload capacity of the robot, as well as its workspace compared to the CNC machine that was 
+used, causing minimum deviation. Nevertheless, the procedure presented is more important than the absolute 
+deviation, as practical roboforming experiments often employ a mid-range robot, including one with lower stiff-
+ness. The simplified VJM model used in the present work can be extended to include link stiffness in the future.
+Data availability
+Data analysed for this work is available within the supplementary information with this article.
+Received: 10 March 2024; Accepted: 20 August 2024
+References
+ 1. Malhotra, R., Xue, L., Belytschko, T. & Cao, J. Mechanics of fracture in single point incremental forming. J. Mater. Process. Technol. 
+212, 1573–1590. https:// doi. org/ 10. 1016/j. jmatp rotec. 2012. 02. 021 (2012).
+ 2. Bharti, S., Gupta, A., Krishnaswamy, H., Panigrahi, S. & Lee, M.-G. Evaluation of uncoupled ductile damage models for fracture 
+prediction in incremental sheet metal forming. CIRP J. Manuf. Sci. Technol. 37, 499–517. https:// doi. org/ 10. 1016/j. cirpj. 2022. 02. 
+023 (2022).
+ 3. Bârsan, A., Racz, S.-G., Breaz, R. & Crenganis, M. Evaluation of the dimensional accuracy through 3d optical scanning in incre-
+mental sheet forming. Mater. Today Proc. 93, 594–598. https:// doi. org/ 10. 1016/j. matpr. 2023. 03. 175 (2023).
+ 4. Reddy, N., Lingam, R. & Cao, J. Incremental metal forming processes in manufacturing. Handbook Manufact. Eng. Technol. 411–452 
+(2014).
+ 5. Behera, A. K., de Sousa, R. A., Ingarao, G. & Oleksik, V . Single point incremental forming: An assessment of the progress and 
+technology trends from 2005 to 2015. J. Manuf. Process. 27, 37–62. https:// doi. org/ 10. 1016/j. jmapro. 2017. 03. 014 (2017).
+ 6. Gatea, S., Ou, H. & McCartney, G. Review on the influence of process parameters in incremental sheet forming. Int. J. Adv. Manuf. 
+Technol. 87, 479–499. https:// doi. org/ 10. 1007/ s00170- 016- 8426-6 (2016).
+ 7. Ren, H. et al. General contact force control algorithm in double-sided incremental forming. CIRP Ann. 67, 381–384. https:// doi. 
+org/ 10. 1016/j. cirp. 2018. 04. 057 (2018).
+ 8. Ren, H. et al. In-situ springback compensation in incremental sheet forming. CIRP Ann.  68, 317–320. https:// doi. org/ 10. 1016/j. 
+cirp. 2019. 04. 042 (2019).
+ 9. Asghar, J., Lingam, R., Shibin, E. & Reddy, N. V . Tool path design for enhancement of accuracy in single-point incremental form-
+ing. Proc. Inst. Mech. Eng. Part B: J. Eng. Manuf. 228, 1027–1035 (2014).
+ 10. Ambrogio, G. et al. Influence of some relevant process parameters on the dimensional accuracy in incremental forming: A numeri-
+cal and experimental investigation. J. Mater. Process. Technol. 153–154, 501–507. https:// doi. org/ 10. 1016/j. jmatp rotec. 2004. 04. 139 
+(2004) (Proceedings of the International Conference in Advances in Materials and Processing Technologies).
+
+===== page 19 =====
+19
+Vol.:(0123456789)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+ 11. Hirt, G., Junk, S., Bambach, M. & Chouvalova, I. Process limits and material behaviour in incremental sheet forming with cnc-
+tools. Mater. Sci. Forum 426, 3825–3830. https:// doi. org/ 10. 4028/ www. scien tific. net/ MSF . 426- 432. 3825 (2003).
+ 12. Lingam, R., Bansal, A. & Reddy, N. V . Analytical prediction of formed geometry in multi-stage single point incremental forming. 
+Int. J. Mater. Form. 9, 1960–6214. https:// doi. org/ 10. 1007/ s12289- 015- 1226-y (2016).
+ 13. Ren, H. et al. In-situ springback compensation in incremental sheet forming. CIRP Ann.  68, 317–320. https:// doi. org/ 10. 1016/j. 
+cirp. 2019. 04. 042 (2019).
+ 14. Duflou, J., Callebaut, B., Verbert, J. & De Baerdemaeker, H. Laser assisted incremental forming: Formability and accuracy improve-
+ment. CIRP Ann. 56, 273–276. https:// doi. org/ 10. 1016/j. cirp. 2007. 05. 063 (2007).
+ 15. Duflou, J., Callebaut, B., Verbert, J. & De Baerdemaeker, H. Improved spif performance through dynamic local heating. Int. J. 
+Mach. Tools Manuf 48, 543–549. https:// doi. org/ 10. 1016/j. ijmac htools. 2007. 08. 010 (2008).
+ 16. Malhotra, R. et al. Improvement of geometric accuracy in incremental forming by using a squeezing toolpath strategy with two 
+forming tools. J. Manuf. Sci. Eng. 133, 5179. https:// doi. org/ 10. 1115/1. 40051 79 (2011).
+ 17. Malhotra, R. et al. Accumulative-dsif strategy for enhancing process capabilities in incremental forming. CIRP Ann. 61, 251–254. 
+https:// doi. org/ 10. 1016/j. cirp. 2012. 03. 093 (2012).
+ 18. Möllensiep, D., Kulessa, P ., Thyssen, L. & Kuhlenkötter, B. Regression-based compensation of part inaccuracies in incremental 
+sheet forming at elevated temperatures. Int. J. Adv. Manuf. Technol. 109, 1917–1928. https:// doi. org/ 10. 1007/ s00170- 020- 05625-y 
+(2020) (Cited by: 6; All Open Access, Green Open Access, Hybrid Gold Open Access).
+ 19. Rakesh, L., Amit, S. & Reddy, N. V . Deflection compensations for tool path to enhance accuracy during double-sided incremental 
+forming. J. Manuf. Sci. Eng. 138, 091008. https:// doi. org/ 10. 1115/1. 40339 56 (2016).
+ 20. Jeswiet, J. Asymmetric incremental sheet forming. Adv. Mater. Res. 6, 35–58. https:// doi. org/ 10. 4028/ www. scien tific. net/ AMR.6- 8. 
+35 (2005).
+ 21. Emmens, W ., Sebastiani, G. & van den Boogaard, A. The technology of incremental sheet forming—A brief review of the history. 
+J. Mater. Process. Technol. 210, 981–997. https:// doi. org/ 10. 1016/j. jmatp rotec. 2010. 02. 014 (2010).
+ 22. Boby, R. A. Identification of elasto-static parameters of an industrial robot using monocular camera. Robot. Comput. Integr. Manuf. 
+74, 102276. https:// doi. org/ 10. 1016/j. rcim. 2021. 102276 (2022).
+ 23. Petric, T. & Žlajpah, L. Kinematic model calibration of a collaborative redundant robot using a closed kinematic chain. Sci. Rep.  
+13, 17804. https:// doi. org/ 10. 1038/ s41598- 023- 45156-6 (2023).
+ 24. Li, Z., Li, S. & Luo, X. An overview of calibration technology of industrial robots. IEEE/CAA J. Autom. Sin. 8, 23–36. https:// doi. 
+org/ 10. 1109/ JAS. 2020. 10033 81 (2021).
+ 25. Belchior, J. et al. Off-line compensation of the tool path deviations on robotic machining: Application to incremental sheet form-
+ing. Robot. Comput. Integr. Manuf. 29, 58–69. https:// doi. org/ 10. 1016/j. rcim. 2012. 10. 008 (2013).
+ 26. Meier, H., Buff, B., Laurischkat, R. & Smukala, V . Increasing the part accuracy in dieless robot-based incremental sheet metal 
+forming. CIRP Ann. 58, 233–238. https:// doi. org/ 10. 1016/j. cirp. 2009. 03. 056 (2009).
+ 27. Shaker, W . K. & Klimchik, A. Towards single point incremental forming accuracy: An approach for the springback effect compen-
+sation. In 2023 IEEE 19th International Conference on Automation Science and Engineering (CASE), 1–6. https:// doi. org/ 10. 1109/ 
+CASE5 6687. 2023. 10260 568 (2023).
+ 28. Lu, H., Liu, H. & Wang, C. Review on strategies for geometric accuracy improvement in incremental sheet forming. Int. J. Adv. 
+Manuf. Technol. 102, 3381–3417. https:// doi. org/ 10. 1007/ s00170- 019- 03348-3 (2019).
+ 29. Liu, Y . et al. An iterative path compensation method for double-sided robotic roller forming of compact thin-walled profiles. Robot. 
+Comput. Integr. Manuf. 86, 102689. https:// doi. org/ 10. 1016/j. rcim. 2023. 102689 (2024).
+ 30. Meier, H., Laurischkat, R. & Zhu, J. A model based approach to increase the part accuracy in robot based incremental sheet metal 
+forming. AIP Conf. Proc. 1315, 1407–1412. https:// doi. org/ 10. 1063/1. 35523 83 (2011).
+ 31. Möllensiep, D. et al. Real-time stiffness compensation and force control of cooperating robots in robot-based double sided incre-
+mental sheet forming. Prod. Eng. Res. Dev. 15, 683–699. https:// doi. org/ 10. 1007/ s11740- 021- 01052-4 (2021).
+ 32. Shaker, W . K. & Klimchik, A. Comparative analysis of springback compensation for various profiles in incremental forming. In 
+2023 International Russian Automation Conference (RusAutoCon), 1040–1045. https:// doi. org/ 10. 1109/ RusAu toCon 58002. 2023. 
+10272 754 (2023).
+ 33. Bo Tao, X. Z. H. D. Mobile-robotic machining for large complex components: A review study. SCIENCE CHINA Technol. Sci. 62, 
+1869–1900. https:// doi. org/ 10. 1007/ s11431- 019- 9510-1 (2019).
+ 34. Yuan, L., Pan, Z., Ding, D., Sun, S. & Li, W . A review on chatter in robotic machining process regarding both regenerative and mode 
+coupling mechanism. IEEE/ASME Trans. Mechatron. 23, 2240–2251. https:// doi. org/ 10. 1109/ TMECH. 2018. 28646 52 (2018).
+ 35. John Timothy Roth, G.C, Tyler John Grimm. New incremental forming tools and method.  (2017). https:// paten  ts. google. com/ 
+patent/ US201 90099 799A1/ en
+ 36. Klimchik, A., Pashkevich, A. & Chablat, D. Cad-based approach for identification of elasto-static parameters of robotic manipula-
+tors. Finite Elem. Anal. Des. 75, 19–30. https:// doi. org/ 10. 1016/j. finel. 2013. 06. 008 (2013).
+ 37. Schönemann, P . H. A generalized solution of the orthogonal procrustes problem. Psychometrika 31, 1–10. https:// doi. org/ 10. 1007/ 
+BF022 89451 (1966).
+ 38. Klimchik, A., Furet, B., Caro, S. & Pashkevich, A. Identification of the manipulator stiffness model parameters in industrial envi-
+ronment. Mech. Mach. Theory 90, 1–22. https:// doi. org/ 10. 1016/j. mechm achth eory. 2015. 03. 002 (2015).
+ 39. Pashkevich, A., Klimchik, A. & Chablat, D. Enhanced stiffness modeling of manipulators with passive joints. Mech. Mach. Theory 
+46, 662–679. https:// doi. org/ 10. 1016/j. mechm achth eory. 2010. 12. 008 (2011).
+ 40. Dumas, C., Caro, S., Garnier, S. & Furet, B. Joint stiffness identification of six-revolute industrial serial robots. Robot. Comput. 
+Integr. Manuf. 27, 881–888. https:// doi. org/ 10. 1016/j. rcim. 2011. 02. 003 (2011) (Conference papers of Flexible Automation and 
+Intelligent Manufacturing).
+ 41. Salisbury, J. K. Active stiffness control of a manipulator in cartesian coordinates. 1980 19th IEEE Conference on Decision and Control 
+including the Symposium on Adaptive Processes, 95–100, https:// doi. org/ 10. 1109/ CDC. 1980. 272026 (1980).
+ 42. Paul, E. et al. Evaluation of deviations due to robot configuration for robot-based incremental sheet metal forming. In Proceedings 
+of the 2023 6th International Conference on Advances in Robotics, AIR’23 (Association for Computing Machinery, New Y ork, NY , 
+USA, 2023), https:// doi. org/ 10. 1145/ 36104 19. 36104 71.
+ 43. Bharti, S., Karvaje, K. S., Krishnaswamy, H., Agrawal, A. & Panigrahi, S. K. Investigation of feature-based and space-filling tool 
+path strategies for formability in incremental sheet metal forming. Int. J. Mater. Form. 16, 60. https:// doi. org/ 10. 1007/ s12289- 023- 
+01781-0 (2023).
+ 44. Shaker, W . K. & Klimchik, A. Comparative analysis of springback compensation for various profiles in incremental forming. In 
+2023 International Russian Automation Conference (RusAutoCon), 1040–1045 (IEEE, 2023).
+ 45. Kumar, A., Gulati, V . & Kumar, P . Investigation of process variables on forming forces in incremental sheet forming. Int. J. Eng. 
+Technol. 10, 680–684 (2018).
+ 46. Buang, M. S., Abdullah, S. A. & Saedon, J. An overview of the impacts of material parameters on springback. Appl. Mech. Mater. 
+564, 323–328 (2014).
+ 47. Gan, W ., Babu, S., Kapustka, N. & Wagoner, R. H. Microstructural effects on the springback of advanced high-strength steel. Metall. 
+Mater. Trans. A. 37, 3221–3231 (2006).
+
+===== page 20 =====
+20
+Vol:.(1234567890)Scientific Reports |        (2024) 14:20291  | https://doi.org/10.1038/s41598-024-70746-3
+www.nature.com/scientificreports/
+ 48. Slota, J., Jurčišin, M. & Spišák, E. Numerical and experimental springback determination of sheet metals in an air bending process. 
+Acta Metall. Slovaca 18, 200–209 (2012).
+ 49. Mohameed, B. R., Mubarak, E. M. M. & Alsalihi, N. H. Effect of die’s shape, sheet thickness and type of alloy on the springback 
+phenomenon. Eng. Technol. J. textbf 30, 2012 (2012).
+Acknowledgements
+The authors would like to express their gratitude to the Department of Science and Technology for providing 
+financial assistance via Project No. DST/INT/RUS/RSF/P-50/2021 titled “Enhancing the accuracy of roboforming 
+through prediction and compensation of elastic behavior using Artificial Intelligence techniques” . Part of this 
+work was supported by the RSF (Project Number 22-41-02006).
+Author contributions
+All authors contributed to the study’s conception and design. S.B., E.P ., and A.U. performed material preparation, 
+data collection, and analysis. S.B. and E.P . wrote the first draft of the manuscript; K.H., A.K., and R.A. supervised 
+the experiments and corrected the manuscript. All authors commented on previous versions of the manuscript. 
+All authors read and approved the final manuscript.
+Competing interests 
+The authors declare no competing interests.
+Additional information
+Supplementary Information The online version contains supplementary material available at https:// doi. org/ 
+10. 1038/ s41598- 024- 70746-3.
+Correspondence and requests for materials should be addressed to H.K.
+Reprints and permissions information is available at www.nature.com/reprints.
+Publisher’s note Springer Nature remains neutral with regard to jurisdictional claims in published maps and 
+institutional affiliations.
+Open Access  This article is licensed under a Creative Commons Attribution-NonCommercial-NoDerivatives 
+4.0 International License, which permits any non-commercial use, sharing, distribution and reproduction in 
+any medium or format, as long as you give appropriate credit to the original author(s) and the source, provide 
+a link to the Creative Commons licence, and indicate if you modified the licensed material. Y ou do not have 
+permission under this licence to share adapted material derived from this article or parts of it. The images or 
+other third party material in this article are included in the article’s Creative Commons licence, unless indicated 
+otherwise in a credit line to the material. If material is not included in the article’s Creative Commons licence and 
+your intended use is not permitted by statutory regulation or exceeds the permitted use, you will need to obtain 
+permission directly from the copyright holder. To view a copy of this licence, visit http:// creat iveco mmons. org/ 
+licen ses/ by- nc- nd/4. 0/.
+© The Author(s) 2024

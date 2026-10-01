@@ -1,0 +1,27 @@
+[info ] applied 0 boundary condition group(s): 0 of 2646 DOFs prescribed, 2646 free
+[info ] forming 'spif': 400 Hex8 elements, 2646 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 1296 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.243332 failed (solver error: solver error: Hex8 element 170: the incompatible modes did not converge in 25 local iterations (residual 220.94 N of 144404 N); the step is cut); halving to 0.00466931
+[info ] forming increment to t = 0.282242 failed (solver error: solver error: an element is inverted (det F = -3.17418); the load step is too large or the mesh too coarse for this deformation); halving to 0.000127248
+[info ] forming step 'form': t = 0.287714 s of 0.951429 (60 increment(s), 455 iteration(s), 2 cut(s), 60.3585 s elapsed)
+[info ] forming increment to t = 0.354929 failed (solver error: solver error: Hex8 element 210: the incompatible modes did not converge in 25 local iterations (residual 137971 N of 3.14295e+08 N); the step is cut); halving to 0.00244591
+[info ] forming step 'form': t = 0.352484 s of 0.951429 (158 increment(s), 1036 iteration(s), 3 cut(s), 121.425 s elapsed)
+[info ] forming step 'form': t = 0.604851 s of 0.951429 (210 increment(s), 1473 iteration(s), 3 cut(s), 182.377 s elapsed)
+[info ] forming increment to t = 0.636763 failed (solver error: solver error: Hex8 element 146: the incompatible modes did not converge in 25 local iterations (residual 98.5593 N of 685014 N); the step is cut); halving to 0.00381176
+[info ] forming increment to t = 0.72896 failed (solver error: solver error: Hex8 element 187: the incompatible modes did not converge in 25 local iterations (residual 17.4097 N of 12556.6 N); the step is cut); halving to 0.00428823
+[info ] forming increment to t = 0.892972 failed (solver error: solver error: an element is inverted (det F = -0.682126); the load step is too large or the mesh too coarse for this deformation); halving to 0.00472497
+[info ] forming step 'form' completed: 277 increment(s), 1912 iteration(s), 6 cut(s), reactions 815.304 N, largest plastic strain 0.333671, largest displacement change 0.00308955 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1296 prescribed DOF(s)): start imbalance 502.913 N
+[warn ] the supports of release step 'unload' carry reactions of 480.882 N, 0.459053 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 36 iteration(s), 0 cut(s), reactions 480.882 N, largest plastic strain 0.333671, largest displacement change 9.05217e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 480.882 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 1.43329e-13 N, largest plastic strain 0.333671, largest displacement change 0.000190565 m
+case: spif
+  mesh:    400 elements, 2646 DOFs
+  step 1 'form' (form): completed, 277 increment(s), 1912 iteration(s), 6 cut(s), largest plastic strain 0.333671, largest displacement change 0.00308955 m
+  step 2 'unload' (release): completed, 10 increment(s), 36 iteration(s), 0 cut(s), largest plastic strain 0.333671, largest displacement change 9.05217e-05 m
+      warning: the supports of release step 'unload' carry reactions of 480.882 N, 0.459053 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.333671, largest displacement change 0.000190565 m
+  runtime: 248.7 s (297 increments, 1988 Newton iterations; CHOLMOD supernodal LLT x 551, SimplicialLDLT x 18, UMFPACK LU x 1790)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 18
+  output:  /home/user/wt/audit/benchmarks/physics_audit/convergence/cases/h2_L1_im_tp5/output

@@ -1,0 +1,61 @@
+01:38:37 start strip_reference.py ccx ref_h0.5_nz4 h=0.5 nz=4
+01:41:02 done ref_h0.5_nz4 rc=0
+01:41:09 start case_punch.py plate_h2_im_mu0.1_drag3 kind=plate elem=im depth=3 drag=3
+01:48:22 done plate_h2_im_mu0.1_drag3 rc=0
+01:48:24 start strip_reference.py ccx ref_h0.5_nz4 h=0.5 nz=4
+01:48:27 start case_punch.py strip_h1_std_nz4 kind=strip h=1 nz=4 elem=std
+01:48:49 done ref_h0.5_nz4 rc=0
+01:48:50 start case_punch.py strip_h2_std_nz2_tp5 kind=strip h=2 nz=2 elem=std tp=5
+01:49:04 done strip_h2_std_nz2_tp5 rc=0
+01:49:14 start case_punch.py plate_h2_im_mu0.1_drag3 kind=plate elem=im depth=3 drag=3
+01:49:54 done strip_h1_std_nz4 rc=0
+01:49:57 start case_punch.py strip_h2_im_mu0.1_remove kind=strip h=2 nz=2 elem=im
+01:50:12 done strip_h2_im_mu0.1_remove rc=0
+01:50:20 start case_punch.py strip_h1_std_nz4 kind=strip h=1 nz=4 elem=std
+01:50:22 done strip_h1_std_nz4 rc=0
+01:50:23 start case_punch.py strip_h2_std_nz2_tp5 kind=strip h=2 nz=2 elem=std tp=5
+01:50:24 done strip_h2_std_nz2_tp5 rc=0
+01:50:26 start case_punch.py strip_h2_im_nz4 kind=strip h=2 nz=4 elem=im
+01:50:53 done strip_h2_im_nz4 rc=0
+01:50:59 start case_punch.py strip_h1_im_nz2 kind=strip h=1 nz=2 elem=im
+01:51:34 done strip_h1_im_nz2 rc=0
+01:51:42 start case_punch.py strip_h2_std_nz2_trav1 kind=strip h=2 nz=2 elem=std travel=1.0
+01:51:56 done strip_h2_std_nz2_trav1 rc=0
+01:52:05 start case_punch.py strip_h2_std_nz4_tp5 kind=strip h=2 nz=4 elem=std tp=5
+01:52:31 done strip_h2_std_nz4_tp5 rc=0
+01:52:38 start case_punch.py strip_h0.5_std_nz4 kind=strip h=0.5 nz=4 elem=std
+01:54:45 done strip_h0.5_std_nz4 rc=0
+01:54:52 start strip_reference.py ccx ref_h0.25_nz8 h=0.25 nz=8
+01:56:34 done ref_h0.25_nz8 rc=0
+01:56:35 start case_punch.py plate_h2_std_mu0.1_drag3 kind=plate elem=std depth=3 drag=3 only=sparlab
+01:57:19 done plate_h2_std_mu0.1_drag3 rc=0
+01:57:28 start case_punch.py plate_h2_std_mu0.1_drag3_trav1 kind=plate elem=std depth=3 drag=3 travel=1.0 only=sparlab
+01:58:20 done plate_h2_std_mu0.1_drag3_trav1 rc=0
+01:58:21 start case_punch.py plate_h2_im_mu0.1_drag3_trav1 kind=plate elem=im depth=3 drag=3 travel=1.0 only=sparlab
+01:58:54 done plate_h2_im_mu0.1_drag3_trav1 rc=0
+01:58:54 start case_punch.py plate_h2_nobbar_mu0.1_drag3 kind=plate elem=std_nobbar depth=3 drag=3
+02:07:20 done plate_h2_im_mu0.1_drag3 rc=0
+02:07:26 start strip_reference.py ccx ref_h0.5_nz4_s2s h=0.5 nz=4 contact=s2s
+02:11:20 done ref_h0.5_nz4_s2s rc=0
+02:11:23 start case_punch.py strip_h0.5_im_nz8 kind=strip h=0.5 nz=8 elem=im
+02:18:44 done strip_h0.5_im_nz8 rc=0
+02:18:50 done plate_h2_nobbar_mu0.1_drag3 rc=0
+02:18:51 start case_punch.py plate_h2_std_mu0.1_drag3_tp5 kind=plate elem=std depth=3 drag=3 tp=5 only=sparlab
+02:18:51 start case_punch.py strip_h1_im_nz4 kind=strip h=1 nz=4 elem=im
+02:19:59 done strip_h1_im_nz4 rc=0
+02:19:59 start case_punch.py strip_h0.5_im_nz4 kind=strip h=0.5 nz=4 elem=im
+02:20:32 done plate_h2_std_mu0.1_drag3_tp5 rc=0
+02:20:32 queue finished
+02:20:36 start strip_reference.py ccx ref_h0.25_nz8_s2s h=0.25 nz=8 contact=s2s
+02:23:06 done strip_h0.5_im_nz4 rc=0
+02:32:53 start case_punch.py plate_h1_std_mu0.1_drag3 kind=plate h=1 nz=2 elem=std depth=3 drag=3 only=sparlab
+02:35:56 done ref_h0.25_nz8_s2s rc=0
+02:35:56 queue6 finished
+02:36:02 start case_punch.py plate_h1_im_mu0.1_drag3 kind=plate h=1 nz=2 elem=im depth=3 drag=3 only=sparlab
+02:39:56 done plate_h1_std_mu0.1_drag3 rc=0
+02:40:02 start case_punch.py plate_h1_std_nz4_mu0.1_drag3 kind=plate h=1 nz=4 elem=std depth=3 drag=3 only=sparlab
+02:41:34 done plate_h1_im_mu0.1_drag3 rc=0
+02:44:34 start strip_reference.py ccx ref_h0.25_nz8_s2s_retract h=0.25 nz=8 contact=s2s unload=retract
+02:58:53 done plate_h1_std_nz4_mu0.1_drag3 rc=0
+02:58:53 queue8 finished
+03:12:16 done ref_h0.25_nz8_s2s_retract rc=0

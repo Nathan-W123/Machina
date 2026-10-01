@@ -1,0 +1,487 @@
+{
+  "name": "homog_shear",
+  "units": "SI",
+  "mesh": {
+    "type": "structured_hex",
+    "x0": 0,
+    "y0": 0,
+    "z0": 0,
+    "lx": 0.001,
+    "ly": 0.001,
+    "lz": 0.001,
+    "nx": 1,
+    "ny": 1,
+    "nz": 1
+  },
+  "model": {
+    "stress_state": "three_dimensional"
+  },
+  "material": {
+    "name": "AA5754-O",
+    "youngs_modulus": 70000000000,
+    "poisson_ratio": 0.33000000000000002,
+    "density": 2670,
+    "plasticity": {
+      "yield_stress": 100000000,
+      "hardening_modulus": 237610605.32948908,
+      "saturation_stress": 123864572.88204344,
+      "saturation_rate": 14.377555530345461,
+      "kinematic_hardening_modulus": 0
+    }
+  },
+  "forming": {
+    "kinematics": "finite_logarithmic",
+    "steps": [
+      {
+        "name": "s00",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              1.9999999999999999e-06,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s01",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              1.0000000000000001e-05,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s02",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              5.0000000000000002e-05,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s03",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.0001,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s04",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00020000000000000001,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s05",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00029999999999999997,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s06",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00040000000000000002,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s07",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00059999999999999995,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s08",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00080000000000000004,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s09",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "bottom",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "top",
+            "fix": [
+              "x",
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.001,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmin": 0.001
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "newton": {
+      "max_iterations": 50,
+      "residual_tolerance": 1.0000000000000001e-09,
+      "displacement_tolerance": 1.0000000000000001e-09,
+      "max_cuts": 12
+    },
+    "output": {
+      "vtk": false,
+      "snapshots": "steps"
+    }
+  }
+}

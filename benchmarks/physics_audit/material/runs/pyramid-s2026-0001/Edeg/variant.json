@@ -1,0 +1,11 @@
+{
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "e_of_ep": {
+   "Ea": 59500000000.0,
+   "from": "base",
+   "xi": 20.0
+  }
+ },
+ "variant": "Edeg"
+}

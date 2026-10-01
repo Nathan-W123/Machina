@@ -1,0 +1,9 @@
+{
+ "part": "elliptic_cone-s2026-0001",
+ "spec": {
+  "material": {
+   "youngs_modulus": 63000000000.0
+  }
+ },
+ "variant": "E63"
+}

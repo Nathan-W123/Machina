@@ -1,0 +1,176 @@
+{
+  "case": "spif",
+  "sparlab_version": "1.0.0 (b1a81217b6e3-dirty)",
+  "completed": true,
+  "termination": "completed every step",
+  "runtime_s": 1146.653134762,
+  "timing": {
+    "contact_s": 0.26664147699999952,
+    "element_residual_s": 67.467098593000003,
+    "element_tangent_s": 920.71848125599888,
+    "factor_cholmod_llt_s": 3.2613370089999982,
+    "factor_ldlt_s": 0.19258625200000001,
+    "factor_umfpack_lu_s": 119.94100642700012,
+    "factorisation_s": 127.60859718900001,
+    "output_s": 0.028165506,
+    "solve_s": 21.715368620000014,
+    "total_s": 1146.6304198089999,
+    "increments": 474,
+    "iterations": 3254,
+    "cuts": 3,
+    "explicit_steps": 0,
+    "linear_solver": "CHOLMOD supernodal LLT x 281, SimplicialLDLT x 4, UMFPACK LU x 3351",
+    "failed_factorisations": "CHOLMOD supernodal LLT (not positive definite) x 4",
+    "suitesparse": true
+  },
+  "analysis": {
+    "kinematics": "finite_logarithmic",
+    "plastic": true,
+    "mean_dilatation": false,
+    "friction_tangent": "exact",
+    "residual_tolerance": 9.9999999999999995e-07,
+    "displacement_tolerance": 9.9999999999999995e-07,
+    "max_iterations": 30,
+    "max_cuts": 10,
+    "line_search": true,
+    "explicit_tolerances": []
+  },
+  "steps": [
+    {
+      "name": "form",
+      "type": "form",
+      "completed": true,
+      "increments": 454,
+      "iterations": 3179,
+      "cuts": 3,
+      "max_plastic_strain": 0.39979264515994495,
+      "reaction_norm_N": 267.56279512038429,
+      "warnings": [],
+      "termination": "reached the end of its window",
+      "files_stem": "step_1_form",
+      "t_begin_s": 0,
+      "t_end_s": 0.96460191940935758,
+      "tools": [
+        "tool"
+      ],
+      "constrained_dofs": 5040,
+      "start_imbalance_N": 0,
+      "reference_force_N": 525.25545444996635,
+      "max_displacement_change_m": 0.0026496924135323615,
+      "max_displacement_m": 0.0026496924135323615
+    },
+    {
+      "name": "unload",
+      "type": "release",
+      "completed": true,
+      "increments": 10,
+      "iterations": 35,
+      "cuts": 0,
+      "max_plastic_strain": 0.39979264515994495,
+      "reaction_norm_N": 225.58554436704765,
+      "warnings": [
+        "the supports of release step 'unload' carry reactions of 225.586 N, 0.429478 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports"
+      ],
+      "termination": "released",
+      "files_stem": "step_2_unload",
+      "t_begin_s": 0.96460191940935758,
+      "t_end_s": 1.9646019194093576,
+      "tools": [],
+      "constrained_dofs": 5040,
+      "start_imbalance_N": 136.00278840609616,
+      "reference_force_N": 525.25545444996635,
+      "max_displacement_change_m": 2.920076719436124e-05,
+      "max_displacement_m": 0.0026266629785002406
+    },
+    {
+      "name": "release",
+      "type": "release",
+      "completed": true,
+      "increments": 10,
+      "iterations": 40,
+      "cuts": 0,
+      "max_plastic_strain": 0.39979264515994495,
+      "reaction_norm_N": 1.5589631133746739e-13,
+      "warnings": [],
+      "termination": "released",
+      "files_stem": "step_3_release",
+      "t_begin_s": 1.9646019194093576,
+      "t_end_s": 2.9646019194093576,
+      "tools": [],
+      "constrained_dofs": 6,
+      "start_imbalance_N": 225.58554436704765,
+      "reference_force_N": 525.25545444996635,
+      "max_displacement_change_m": 0.00018372120755891843,
+      "max_displacement_m": 0.002803494928847532
+    }
+  ],
+  "tools": [
+    {
+      "name": "tool",
+      "shape": "sphere",
+      "radius_m": 0.0040000000000000001,
+      "friction": 0.10000000000000001,
+      "penalty": 10,
+      "tangential_penalty": 1,
+      "trajectory_knots": 139,
+      "trajectory_t_start_s": 0,
+      "trajectory_t_end_s": 1,
+      "trajectory_length_m": 0.13071251502069831,
+      "peak_force_N": [
+        -12.951061393249574,
+        -88.340375158105815,
+        682.06322735420645
+      ],
+      "peak_force_time_s": 0.77494576836683926,
+      "max_active_nodes": 5,
+      "max_penetration_m": 5.6727645220047002e-07
+    }
+  ],
+  "mesh": {
+    "source": "structured_hex 40 x 40 x 1",
+    "element_type": "Hex8",
+    "element_formulation": "incompatible_modes",
+    "stiffness_rule_points": 20,
+    "dim": 3,
+    "nodes": 3362,
+    "elements": 1600,
+    "dofs": 10086,
+    "bounding_box_min_m": [
+      -0.02,
+      -0.02,
+      -0.001
+    ],
+    "bounding_box_max_m": [
+      0.02,
+      0.02,
+      0
+    ]
+  },
+  "warnings": [
+    "step 'unload': the supports of release step 'unload' carry reactions of 225.586 N, 0.429478 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports"
+  ],
+  "files": [
+    "summary.json",
+    "config.json",
+    "mesh.json",
+    "step_1_form_nodes.csv",
+    "step_1_form_elements.csv",
+    "step_2_unload_nodes.csv",
+    "step_2_unload_elements.csv",
+    "step_3_release_nodes.csv",
+    "step_3_release_elements.csv",
+    "tool_forces.csv"
+  ],
+  "provenance": {
+    "code": "SparLab",
+    "version": "1.0.0",
+    "build_type": "Release",
+    "compiler": "gcc 13.3.0",
+    "eigen_version": "3.4.0",
+    "config_source": "/home/user/wt/audit/benchmarks/physics_audit/convergence/cases/c1_h1_L1_im_tp5/deck/deck.json",
+    "case": "spif",
+    "description": "Single-point incremental forming of a AA5754-O blank, written by precomp 0.1.0",
+    "units": "SI: m, N, Pa, kg, kg/m^3, Hz, J",
+    "timestamp_utc": "2026-09-30T23:18:08Z"
+  }
+}

@@ -1,0 +1,26 @@
+2026-09-30T18:12:13Z worker A: start h2_L2_std (load 2.81 1.20 1.06)
+h2_L2_std: rc=0 wall=215s
+2026-09-30T18:15:49Z worker A: end h2_L2_std rc=0
+2026-09-30T18:15:49Z worker A: start h2_L1_im_tp5 (load 6.76 4.35 2.38)
+h2_L1_im_tp5: rc=0 wall=249s
+2026-09-30T18:19:58Z worker A: end h2_L1_im_tp5 rc=0
+2026-09-30T18:19:58Z worker A: start h2_L2_im (load 5.64 4.96 3.10)
+h2_L2_im: rc=0 wall=392s
+2026-09-30T18:26:31Z worker A: end h2_L2_im rc=0
+2026-09-30T18:26:31Z worker A: start h2_L4_std (load 8.67 7.60 4.95)
+h2_L4_std: rc=0 wall=630s
+2026-09-30T18:37:03Z worker A: end h2_L4_std rc=0
+2026-09-30T18:37:03Z worker A: start h0.5_L1_im_tp7 (load 5.69 6.57 5.88)
+h0.5_L1_im_tp7: rc=-15 wall=827s
+2026-09-30T18:50:52Z worker A: end h0.5_L1_im_tp7 rc=0
+2026-09-30T18:50:52Z worker A: start h0.625_L1_im_tp7 (load 5.04 4.73 5.11)
+h0.625_L1_im_tp7: rc=0 wall=4441s
+2026-09-30T20:04:54Z worker A: end h0.625_L1_im_tp7 rc=0
+2026-09-30T20:04:54Z worker A: start h0.625_L2_std_x05 (load 3.10 3.34 3.59)
+2026-09-30T21:46:24Z worker A2: start h0.625_L2_std_x05 (rerun after restart)
+h0.625_L2_std_x05: rc=0 wall=6617s
+2026-09-30T23:37:05Z worker A2: end rc=0
+2026-09-30T23:37:16Z worker A3: start c1_h0.625_L1_im_tp5 (load 3.86 4.01 4.05)
+c1_h0.625_L1_im_tp5: rc=0 wall=3924s
+2026-10-01T00:42:41Z worker A3: end c1_h0.625_L1_im_tp5 rc=0
+2026-10-01T00:42:41Z worker A3: queue empty

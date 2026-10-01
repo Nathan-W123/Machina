@@ -1,0 +1,12 @@
+plate_h2_im_mu0.1_drag sparlab rc 0 78.6 s
+plate_h2_im_mu0.1_drag ccx rc 201 1288.3 s
+Traceback (most recent call last):
+  File "/home/user/wt/audit/benchmarks/physics_audit/calculix/case_punch.py", line 390, in <module>
+    main()
+  File "/home/user/wt/audit/benchmarks/physics_audit/calculix/case_punch.py", line 382, in main
+    res = collect(name, p, case)
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/wt/audit/benchmarks/physics_audit/calculix/case_punch.py", line 327, in collect
+    cb = np.array(ulast[cstep[st]][3])
+                  ~~~~~^^^^^^^^^^^
+KeyError: 3

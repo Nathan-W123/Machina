@@ -1,0 +1,32 @@
+[info ] material region 'e_bin_0': 64 element(s) of 'AA5754-O-E59.81'
+[info ] material region 'e_bin_1': 10 element(s) of 'AA5754-O-E61.60'
+[info ] material region 'e_bin_2': 26 element(s) of 'AA5754-O-E62.62'
+[info ] material region 'e_bin_3': 35 element(s) of 'AA5754-O-E64.35'
+[info ] material region 'e_bin_4': 58 element(s) of 'AA5754-O-E65.32'
+[info ] material region 'e_bin_5': 100 element(s) of 'AA5754-O-E66.83'
+[info ] material region 'e_bin_6': 136 element(s) of 'AA5754-O-E68.19'
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 'form': t = 0.252876 s of 0.951429 (27 increment(s), 209 iteration(s), 0 cut(s), 60.6082 s elapsed)
+[info ] forming increment to t = 0.301147 failed (solver error: solver error: Hex8 element 591: the incompatible modes did not converge in 25 local iterations (residual 60.0098 N of 29014 N); the step is cut); halving to 0.00470302
+[info ] forming step 'form': t = 0.405763 s of 0.951429 (60 increment(s), 456 iteration(s), 1 cut(s), 126.946 s elapsed)
+[info ] forming increment to t = 0.500812 failed (solver error: solver error: Hex8 element 171: the incompatible modes did not converge in 25 local iterations (residual 79.9406 N of 31902.6 N); the step is cut); halving to 0.003436
+[info ] forming step 'form': t = 0.570932 s of 0.951429 (92 increment(s), 685 iteration(s), 2 cut(s), 188.265 s elapsed)
+[info ] forming increment to t = 0.588225 failed (solver error: solver error: Hex8 element 629: the incompatible modes did not converge in 25 local iterations (residual 1.76962 N of 13415.7 N); the step is cut); halving to 0.00419408
+[info ] forming increment to t = 0.627271 failed (solver error: solver error: an element is inverted (det F = -0.0912325); the load step is too large or the mesh too coarse for this deformation); halving to 0.00314556
+[info ] forming step 'form': t = 0.6857 s of 0.951429 (124 increment(s), 929 iteration(s), 4 cut(s), 252.352 s elapsed)
+[info ] forming step 'form' completed: 157 increment(s), 1181 iteration(s), 4 cut(s), reactions 1436.62 N, largest plastic strain 0.334035, largest displacement change 0.00308949 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 454.604 N
+[warn ] the supports of release step 'unload' carry reactions of 754.821 N, 0.416485 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 754.821 N, largest plastic strain 0.334353, largest displacement change 0.000107567 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 754.821 N
+[info ] forming step 'release' completed: 10 increment(s), 42 iteration(s), 0 cut(s), reactions 5.88929e-13 N, largest plastic strain 0.334353, largest displacement change 0.000158148 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 157 increment(s), 1181 iteration(s), 4 cut(s), largest plastic strain 0.334035, largest displacement change 0.00308949 m
+  step 2 'unload' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.334353, largest displacement change 0.000107567 m
+      warning: the supports of release step 'unload' carry reactions of 754.821 N, 0.416485 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 42 iteration(s), 0 cut(s), largest plastic strain 0.334353, largest displacement change 0.000158148 m
+  runtime: 325.1 s (177 increments, 1263 Newton iterations; UMFPACK LU x 1506)
+  output:  /home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/combo_lit_im5/output

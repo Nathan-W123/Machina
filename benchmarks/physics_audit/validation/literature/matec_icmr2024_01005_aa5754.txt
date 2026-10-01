@@ -1,0 +1,290 @@
+
+
+===== page 1 =====
+Single-Point Incremental Forming (SPIF) of 
+AA5754 Aluminium Alloy Blanks: experimental 
+and numerical studies 
+Yuhai Jin1,2, Xiangnan Yu1,2, Heli Liu1,2, Denis J. Politis3, Liliang Wang1,2,* 
+1 Department of Mechanical Engineering, Imperial College London, London, SW7 2AZ, UK 
+2 SmartForming Research Base, Imperial College London, London, SW7 2AZ, UK  
+3Department of Mechanical and Manufacturing Engineering, University of Cyprus, Nicosia, 
+1678, Cyprus 
+Abstract: This study presents a Finite Element (FE) simulation model for 
+Single-Point Incremental Forming (SPIF) of a panel  part using AA5754 
+Aluminium Alloy . The  precision of model was highly enhanced  through 
+experimental data integration by uniaxial tensile tests (UATT) to determine 
+material flow stress and anisotropic properties. The Voce model accurately 
+predicted material flow stress within a 5% error margin, and equations were 
+concluded to convert Lankford coefficients (R-values) into anisotropic stress 
+ratios for Abaqus/Explicit simulation.  Experimental validation 
+demonstrated a close agreement in major strain and thickness distribution, 
+with a maximum error below 5.8% across high and low forming speeds. 
+ 
+Keywords: Single-point increment al forming (SPIF); Uniaxial tensile test (UATT); Sheet metal 
+forming; Finite element analysis (FEA). 
+1 Introduction 
+Single point incremental forming (SPIF)  is characterized as a dieless metal forming 
+technology[1], where sheet metal s undergo incremental transformation to their  definitive 
+geometry via successive, minor, localized deformations [2,3]. Recognized for its innovative 
+approach to deformation , SPIF is acclaimed for enhancing formability, low-cost, and 
+operational flexibility. Localized deformation within a small plastic zone  and incremental 
+nature were considered as the distinctive features of this process, which contributes to 
+elevated material formability, enabling forming process on metals that were traditionally 
+unprioritized due to their limited formability[2,4]. Flexibility is another advantage of SPIF, 
+facilitated by Computer Numerical Control (CNC) machine s, e nabling the precise 
+customization of tool paths to achieve desired  shape while simultaneously ensuring 
+geometric accuracy[5]. From a cost perspective, the dieless nature presents a cost-effective 
+alternative to conventional metal forming techniques such as stamping[6] and deep 
+drawing[7] in low batch size manufacturing, of typically fewer than 250 parts for larger 
+components and 700 for smaller ones [8,9]. Low-cost tooling[10] is another advantage of 
+                                                           
+* Corresponding author(s): liliang.wang@imperial.ac.uk 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+  © The Authors, published by EDP Sciences. This is an open access article distributed under  the terms of  the Creative
+Commons Attribution License 4.0 (https://creativecommons.org/licenses/by/4.0/). 
+
+===== page 2 =====
+SPIF compared to other incremental sheet forming (ISF) variations such as two points 
+incremental forming  (TPIF) and multi points incremental forming  (MPIF), where the 
+adoption of double -sided ISF over conventional processes could  already provide estimated 
+annual savings of approximately $60 million from 2018 to 2030 in the  US automotive 
+industry[11]. Beyond the automotive industry, SPIF has extensive applications across various 
+sectors, including the aerospace industry for the production of prototypes[12], biomedical 
+sector[13], and robotics[14]. Based on the wide applications and research interest, this paper 
+will focus on developing a FE model for SPIF with embedded material cards of AA5754.  
+2 Methodology 
+2.1 Uniaxial Tensile Test (UATT) of AA5754 Blanks 
+An Aluminium Alloy 5754 (AA5754) sheet with a thickness of 1.5 mm was selected as the 
+testing specimen. Two uniaxial tensile tests (UATT) were conducted at room temperature 
+under different strain rates, 0.1/s and 0.001/s respectively. The specimen was securely fixed 
+to the grips of an Instron machine parallel to the sensor of Digital Image Correlation (DIC) 
+system for capturing the material deformation  (Fig. 1a). The surface of each specimen was 
+treated with two different types of sprays to create a stochastic patter n (Fig. 1b) for strain 
+analysis facilitated by the DIC system (Fig. 1c and 1d).  
+The stress data obtained from the Instron machine was integrated with strain data to plot 
+the stress-strain relationship from UATT experiments (Fig. 1f). Strain rate exhibits minimal 
+influence on the flow stress of AA5754 at room temperature, with the stress observed at the 
+lower strain rate (0.001/s) marginally exceeding that at the higher strain rate (0.1/s ). This 
+phenomenon was caused by dynamic aging  resulting from the interaction between 
+dislocations and solute atoms [15,16]. The Voce model represented in Equation 1 was 
+calibrated to describe the plastic flow stress behaviour . It demonstrated a strong alignment 
+with the stress-strain curve derived from the UATT experiments, with an error no more than 
+5%. The degree of precision validated the effectiveness of the model accuracy in describing 
+the generalized deformation behaviour of the AA5754. 
+𝜎 =  𝜎0 − 𝐴𝜎0𝑒−𝛽𝜀 (1) 
+where 𝜎0 is the yield stress, and 𝐴, −𝛽, 𝜀 are constants to be determined.  
+  
+Fig. 1. (a) UATT setup with Instron machine Model No. EC1613; (b) Firwood 75 paint on specimen 
+in stochastic pattern; (c) DIC strain analysis on specimen before UATT; (d) DIC strain analysis on 
+specimen after UATT; (e) DIC strain analysis on specimen at different plastic strains; (f) Voce model 
+fitted to experimental flow stress data obtained by UATT under strain rate of 0.001/s and 0.1/s. 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+2
+
+===== page 3 =====
+Table 1. Mechanical properties of AA5754 
+The points close to the fracture zone were selected as stage points  on determining 
+Lankford coefficients. True strains in X and Y directions at stage points were measured at 
+room temperature under  a strain rate of 0.1/s through  DIC analysis  (Fig. 1e). Lankford 
+coefficients along the rolling direction of 0° , 45° , 90° ,  were calculated using these 
+measurements, denoted as r0, r45, r90 along with mechanical properties of the specimen in 
+Table 1.  
+Equation 2 represents the Hill 48 yield criterion to describe anisotropic yield behaviour  
+[17], where 𝜎𝑖𝑗 is the stress component and 𝐹, 𝐺, 𝐻, 𝐿, 𝑀, 𝑁 are material constants which can 
+be further expressed from Equation 3 and 4 using anisotropic stress ratios 𝑅𝑖𝑗. In sheet metal 
+forming process such as SPIF, by taking plane stress assumptions, anisotropic stress ratios 
+𝑅𝑖𝑗  can be further expressed using experimental Lankford coefficients  rθ as specified  in 
+Equation 5. Subsequently, anisotropic stress ratios 𝑅𝑖𝑗 were imported to a commercial finite 
+element software Abaqus to model the anisotropic behaviour of the material [18].  
+ 
+𝑓(𝜎) = √𝐹(𝜎22 − 𝜎33)2 + 𝐹(𝜎33 − 𝜎11)2 + 𝐹(𝜎11 − 𝜎22)2 + 2𝐿𝜎232 + 2𝑀𝜎312 + 2𝑁𝜎122 (2) 
+𝐹 =  1
+2 [ 1
+𝑅22
+2 + 1
+𝑅33
+2 − 1
+𝑅11
+2] ;  𝐺 =  1
+2 [ 1
+𝑅33
+2 + 1
+𝑅11
+2 − 1
+𝑅22
+2] ;  𝐻 =  1
+2 [ 1
+𝑅11
+2 + 1
+𝑅22
+2 − 1
+𝑅33
+2] (3) 
+𝐿 =  3
+2𝑅23
+2 ;  𝑀 =  3
+2𝑅13
+2 ;  𝑁 =  3
+2𝑅12
+2 (4) 
+𝑅11 = 1;  𝑅22 = √𝑟90(𝑟0 + 1)
+𝑟0(𝑟90 + 1) ;  𝑅33 = √𝑟90(𝑟0 + 1)
+𝑟0 + 𝑟90
+; 𝑅12 = √3(𝑟0 + 1)𝑟90
+𝑟0 + 𝑟90
+;  𝑅13 =  𝑅23 = 1 (5) 
+2.2 Single point incremental forming (SPIF) of AA5754 Blanks 
+In this study, the manufacturing target was a truncated cone, specified by an outer diameter 
+Do of 150 mm, an inner diameter Di of 50 mm, and a vertical height of 50 mm. This geometry 
+was manufactured from 195 mm x 195 mm square sheet of AA5754 aluminium alloy using 
+SPIF under two different forming speeds. The high forming speed experiment had a feed rate 
+of 3000 mm/min and a radi al incremental step of 2 mm, and the low forming speed 
+experiment had a feed rate of 900 mm/min and a radial incremental step of 0.5 mm. The high-
+speed steel forming tool, with a hemispherical head of diameter 12.7 mm and surface 
+roughness Ra = 0.4, was inserted into a CNC milling machine to perform the process at a 
+constant spindle speed of 500 RPM. The clamping fixture held the sheet at a fixed position 
+(Fig. 2a) for the CNC machine to perform any desired tool path programmed by G -code, 
+specifically a spiral in this case. 
+The electrolytic etching was used to create a regular grid pattern for the DIC system to 
+measure strain behaviour, characterized by nodes with a diameter of 1 mm and spaced 1 mm 
+apart. The distribution of surface major strain and thickness of test specimens were measured 
+using a GOM -ARGUS photogrammetry system. Approximately 150 -200 images were 
+captured from multiple angles by adjusting the height of the camera and rotating the turntable, 
+on which the specimen was mounted, through a full 3 60°  rotation, as illustrated in Fig. 2b. 
+The turntable was enclosed with 4 rectangular scale bars, each featuring 3 calibration squares, 
+total 12 calibration points to ensure precise spatial referencing and accuracy in the 
+measurement process. 
+Properties Young’s modulus 
+(MPa) 
+Poisson 
+Ratio 
+Density 
+(kg/m3) 
+Lankford anisotropy coefficients 
+r0 r45 r90 
+AA5754 69000 0.33 2700 0.75 0.57 0.60 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+3
+
+===== page 4 =====
+ 
+Fig. 2. (a) SPIF process setup using HASS CNC milling machine; (b) DIC measurement setup for post-
+formed truncated cone. 
+2.3 FE model setup 
+In the Abaqus/Explicit simulation setup, an analytical rigid forming tool was assembled with 
+a 3D deformable she ll featured with embedded material card with experimental flow stress 
+behaviour and anisotropic properties . To enhance the precision of the simulation and to 
+comprehensively account for the effects of bending and stretching on the material, the model 
+incorporated five elements in the thickness direction of the blank[19]. The simulation model 
+had a total of 8464 elements classified as S4R type. In the forming region, a mesh grid with 
+2 mm element size was employed to ensure precise capture of deformation behaviour. A 
+larger mesh size was applied in the clamping area which has all degrees of freedom restricted, 
+optimizing computational efficiency without compromising the accuracy of the simulation 
+results in areas critical to the analysis (Fig. 3a). The interaction between the forming tool and 
+the sheet was governed by the penalty contact method  with Coulomb's friction law  
+implemented. Coefficient of friction (CoF) was assumed to be 0.2 considering lubrication 
+was used in the SPIF process. The post-form truncated cone was simulated in Fig. 3b.  
+ 
+Fig. 3. (a) Simulation assembly set-up before SPIF process in Abaqus/Explicit; (b) Simulation of the 
+blank deformation after SPIF process. 
+3 Results and Discussion 
+Fig. 4a shows the major strain distribution obtained in FE simulation results , a nodal path  
+along the diagonal was established for data extraction , which provides the representative 
+characteristics of the overall forming behaviours . For experimental DIC post-processing 
+analysis, images captured from an angle that displayed the maximum number of identifiable 
+grid points were selected to improve the accuracy of the results  (Fig. 4b). Furthermore, 3 
+cross-sections positioned along the diagonal and spaced equally at 1  mm intervals were 
+measured and averaged to enhance the reliability of the data (Fig. 4c). 
+The thickness and major strain distribution along the diagonal curvilinear length of the 
+final truncated cone product by SPIF manufacturing were compared to outcomes derived 
+from Abaqus simulation, which embedded a material model integrating Voce hardening law 
+and anisotropic constants. The comparisons of SPIF at a fast forming speed (3000 mm/min 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+4
+
+===== page 5 =====
+feed rate) were illustrated in Fig. 4e and 4d, and slow forming process (900 mm/min fe ed) 
+are illustrated in Fig. 4f and 4g. The experimental results exhibited a trend closely resembling 
+the curves extracted from the Abaqus simulation results.  Diagonal curvilinear length of the 
+designed truncated cone was approximately 300 mm, with the majo rity o f high localized 
+deformation and thinning occurring at intervals of 75-125 mm and 175 -225 mm, 
+corresponding to the side wall region of the cone.  
+The scatter in experimental thickness data has a minor deviation from the simulation 
+curve at both ends along the diagonal, due to considerable clamping forces exerted at the 
+edges. Despite these variations, the FE simulation predictions demonstrated a significant 
+degree of alignment with the experimental measurements. The maximum major strain and 
+maximum thinning errors were 5.8% and 4.2% respectively in the SPIF with a fast forming 
+speed (3000 mm/min feed rate) process. For the slow SPIF (900 mm/min feed) process, the 
+errors were slightly lower at 5.0% for maximum major strain and 3.2% for maximum thinning. 
+ 
+Fig. 4. (a) Extraction of diagonal nodal data (major strain) from FE simulation; (b) Strain distribution 
+in a post-formed truncated cone-shaped part measured using DIC-ARGUS software; (c) Extraction of 
+diagonal experimental data from a post -formed part through ARGUS software; (d) (e) Comparison of 
+major strain and thickness distribution between FE simulation and experimental results obtained from 
+high-speed (3000 mm/min) SPIF; (f) (g) Comparison of major strain and thickness distribution between 
+FE simulation and experimental results obtained from low-speed (900 mm/min) SPIF. 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+5
+
+===== page 6 =====
+4 Conclusions 
+In this work, a finite element (FE) model was developed for the single point incremental 
+forming (SPIF) process of AA5754 blanks. Embedded with a comprehensive material card 
+derived from experimental data, the FE model generated results reached close agreement with 
+the experimental outcomes, regarding blank major strain and thickness distribution.  
+(1) Uni -axial Tensile Test (UATT) experiment s were performed on AA5754 -H111 
+aluminium alloy at room temperature to characterize flow stress and anisotropic behaviours. 
+The Voce model closely aligned with the UATT results with an error of less than 5%. 
+(2) A method to convert Lankford coefficients to Abaqus embedded anisotropic stress 
+ratio 𝑅𝑖𝑗 was recorded, specifically tailored for sheet metal forming simulations. 
+(3) A comprehensive material card incorporating both plastic flow stress and anisotropic 
+properties was developed and integrated into the FE model. This implementation 
+significantly improved the accuracy of the simulation results, with a maximum error of no 
+more than 5.8%. 
+5 References 
+1.  I. Cerro, E. Maidagan, J. Arana, A. Rivero, P. P. Rodrí guez, J. Mater. Process. 
+Technol. 177, 404 (2006) 
+2.  J.-J. Park, Y.-H. Kim, J. Mater. Process. Technol. 140, 447 (2003) 
+3.  Y. H. Kim, J. J. Park, J. Mater. Process. Technol. 130–131, 42 (2002) 
+4.  T. McAnulty, J. Jeswiet, M. Doolan, CIRP. J. Manuf. Sci. Technol. 16, 43 (2017) 
+5.  D. Y. Yang, M. Bambach, J. Cao, J. R. Duflou, P. Groche, T. Kuboki, A. Sterzing, 
+A. E. Tekkaya, C. W. Lee, CIRP. Annals. 67, 743 (2018) 
+6.  G. Ingarao, G. Ambrogio, F. Gagliardi, R. Di Lorenzo, J. Clean. Prod. 29–30, 255 
+(2012) 
+7.  A. Petek, G. Gantar, T. Pepelnjak, K. Kuzman, Key. Eng. Mater. 344, 931 (2007) 
+8.  A. J. B. Hirt G, Economical and Ecological Benefits of CNC Incremental Sheet 
+Forming (ISF), In Proceedings of the International Conference on ME, 2003, 
+Madrid, Spain (2003) 
+9.  F. Liu, Y. Li, S. Ghafoor, Z. Cheng, F. Li, J. Li, Int. J. Adv. Manuf. Technol. 119, 
+1385 (2022) 
+10.  J. R. Duflou, A.-M. Habraken, J. Cao, R. Malhotra, M. Bambach, D. Adams, H. 
+Vanhove, A. Mohammadi, J. Jeswiet, Int. J. Mater. Form. 11, 743 (2018) 
+11.  D. R. Cooper, T. G. Gutowski, J. Ind. Ecol. 24, 38 (2020) 
+12.  P. Gupta, A. Szekeres, J. Jeswiet, Int. J. Adv. Manuf. Technol. 103, 3683 (2019) 
+13.  M. Sbayti, R. Bahloul, H. BelHadjSalah, F. Zemzemi, Int. J. Adv. Manuf. Technol. 
+95, 1789 (2018) 
+14.  A. Kalo, M. J. Newsum, Robotic Fabrication in Architecture, Art and Design, 
+Springer International Publishing, Cham, Switzerland, (2014) 
+15.  N. Abedrabbo, F. Pourboghrat, J. Carsley, Int. J. Plast. 23, 841 (2007) 
+16.  A. S. Khan, M. Baig, Int. J. Plast. 27, 522 (2011) 
+17.  Abaqus, Analysis User’s Manual 6.10, Dassault Systemes Simulia, Providence, 
+(2010) 
+18.  S. Bagherzadeh, M. J. Mirnia, B. Mollaei Dariani, J. Manuf. Process. 18, 131 
+(2015) 
+19.  O. El Fakir, L. Wang, D. Balint, J. P. Dear, J. Lin, T. A. Dean, Int. J. Mach. Tools. 
+Manuf. 87, 39 (2014) 
+ 
+MATEC Web of Conferences 401, 01005 (2024)
+ICMR2024
+https://doi.org/10.1051/matecconf/202440101005
+6

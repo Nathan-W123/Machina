@@ -1,0 +1,9 @@
+case,section,springback_z_rms_mm,springback_z_max_mm
+x_std_dz4_v10,RD,0.218,0.338
+x_std_dz4_v10,TD,0.228,0.282
+x_std_dz4_v20,RD,0.198,0.308
+x_std_dz4_v20,TD,0.208,0.255
+x_std_dz4_v20_kin,RD,0.137,0.214
+x_std_dz4_v20_kin,TD,0.128,0.155
+x_std_dz2_v20,RD,0.134,0.212
+x_std_dz2_v20,TD,0.133,0.162

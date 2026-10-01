@@ -1,0 +1,10 @@
+{
+ "info": {},
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "setup": {
+   "step_down": 0.0005
+  }
+ },
+ "variant": "stepdown05"
+}

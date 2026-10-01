@@ -1,0 +1,24 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "deck": {
+   "material": {
+    "plasticity": {
+     "backstresses": [
+      {
+       "modulus": 2000000000.0,
+       "recovery": 100.0
+      }
+     ]
+    }
+   }
+  },
+  "material": {
+   "hardening_modulus": 235383708.21594667,
+   "saturation_rate": 13.66679622785453,
+   "saturation_stress": 119965214.09722385,
+   "yield_stress": 85035902.23893243
+  }
+ },
+ "variant": "kin_mild"
+}

@@ -1,0 +1,39 @@
+[info ] read cases/x_std_dz4_v40/mesh.inp (abaqus): 10515 nodes, 6912 Hex8 cells, 0 boundary element(s), 0 node set(s), 0 element set(s); quality min 0.707107, mean 0.995644
+[info ] applied 0 boundary condition group(s): 0 of 31545 DOFs prescribed, 31545 free
+[info ] forming 'x_std_dz4_v40': 6912 Hex8 elements, 31545 DOFs, 2 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form_explicit, t = 0 .. 2.96671 s, 2 tool(s), 864 prescribed DOF(s))
+[info ] forming step 'form': explicit, 0.0741677 s of physical time (tool speed 40.000000 m/s)
+[info ] explicit: 6912 elements, stable step 7.86306e-08 s (element_eigenvalue), selective mass scaling (added 8702.19 %), time step 1e-06 s, duration 0.0741677 s: about 74168 steps; dedicated Hex8
+[info ] explicit: step 2226, t = 0.002226 s of 0.0741677 s (pseudo-time 0.08904 s), time step 1e-06 s, kinetic 0.934331 J, internal work 12.8364 J, 60.6275 s elapsed
+[info ] explicit: step 4457, t = 0.004457 s of 0.0741677 s (pseudo-time 0.17828 s), time step 1e-06 s, kinetic 2.6067 J, internal work 72.4934 J, 120.649 s elapsed
+[info ] explicit: step 6692, t = 0.006692 s of 0.0741677 s (pseudo-time 0.26768 s), time step 1e-06 s, kinetic 8.76944 J, internal work 274.179 J, 180.673 s elapsed
+[info ] explicit: step 8900, t = 0.0089 s of 0.0741677 s (pseudo-time 0.356 s), time step 1e-06 s, kinetic 15.4783 J, internal work 710.734 J, 240.694 s elapsed
+[info ] explicit: step 11080, t = 0.01108 s of 0.0741677 s (pseudo-time 0.4432 s), time step 1e-06 s, kinetic 17.3893 J, internal work 1323.4 J, 300.716 s elapsed
+[info ] explicit: step 13253, t = 0.013253 s of 0.0741677 s (pseudo-time 0.53012 s), time step 1e-06 s, kinetic 6.46016 J, internal work 1694.74 J, 360.732 s elapsed
+[info ] explicit: step 15478, t = 0.015478 s of 0.0741677 s (pseudo-time 0.61912 s), time step 1e-06 s, kinetic 2.51778 J, internal work 1862.19 J, 420.737 s elapsed
+[info ] explicit: step 17719, t = 0.017719 s of 0.0741677 s (pseudo-time 0.70876 s), time step 1e-06 s, kinetic 1.43729 J, internal work 1891.96 J, 480.738 s elapsed
+[info ] explicit: step 19975, t = 0.019975 s of 0.0741677 s (pseudo-time 0.799 s), time step 1e-06 s, kinetic 2.52112 J, internal work 1906.69 J, 540.752 s elapsed
+[info ] explicit: step 22197, t = 0.022197 s of 0.0741677 s (pseudo-time 0.88788 s), time step 1e-06 s, kinetic 9.34603 J, internal work 2079.78 J, 600.763 s elapsed
+[info ] explicit: step 24379, t = 0.024379 s of 0.0741677 s (pseudo-time 0.97516 s), time step 1e-06 s, kinetic 16.6882 J, internal work 2531.6 J, 660.773 s elapsed
+[info ] explicit: step 26573, t = 0.026573 s of 0.0741677 s (pseudo-time 1.06292 s), time step 1e-06 s, kinetic 14.3382 J, internal work 3082.22 J, 720.774 s elapsed
+[info ] explicit: step 28717, t = 0.028717 s of 0.0741677 s (pseudo-time 1.14868 s), time step 1e-06 s, kinetic 14.4863 J, internal work 3607.38 J, 780.781 s elapsed
+[info ] explicit: step 30891, t = 0.030891 s of 0.0741677 s (pseudo-time 1.23564 s), time step 1e-06 s, kinetic 2.12967 J, internal work 3890.66 J, 840.791 s elapsed
+[info ] explicit: step 33090, t = 0.03309 s of 0.0741677 s (pseudo-time 1.3236 s), time step 1e-06 s, kinetic 3.11142 J, internal work 3922.46 J, 900.814 s elapsed
+[info ] explicit: step 35312, t = 0.035312 s of 0.0741677 s (pseudo-time 1.41248 s), time step 1e-06 s, kinetic 2.79318 J, internal work 4030.22 J, 960.839 s elapsed
+[info ] explicit: step 37545, t = 0.037545 s of 0.0741677 s (pseudo-time 1.5018 s), time step 1e-06 s, kinetic 14.427 J, internal work 4278.43 J, 1020.85 s elapsed
+[warn ] explicit run stopped: step 37913 (t = 0.037912 s of 0.0741677 s): solver error: element 5434 is inverted (det F = -0.00186585 at an integration point); the state of step 37800 (t = 0.0378 s) is kept
+[warn ] explicit: the contact penetration reached 0.0663765 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)
+[warn ] explicit: the energy balance error reached 0.339087 of the largest energy (warning above 0.05)
+[info ] explicit run STOPPED: 37800 steps, 1031.3 s (27.283 ms a step), kinetic/internal 0.049416 (peak 0.876231), penetration/thickness 0.0663765, energy error 0.339087, added mass 11281 %
+[info ] forming step 'form' STOPPED: 189 increment(s), 0 iteration(s), 0 cut(s), reactions 4184.06 N, largest plastic strain 12.0387, largest displacement change 0.020263 m
+[warn ] forming analysis stopped: step 'form' (1 of 3): the explicit integration stopped at step 37913 (t = 0.037912 s of 0.0741677 s): solver error: element 5434 is inverted (det F = -0.00186585 at an integration point); the state of step 37800 (t = 0.0378 s) is kept
+case: x_std_dz4_v40
+  mesh:    6912 elements, 31545 DOFs
+  step 1 'form' (form_explicit): STOPPED, 189 increment(s), 0 iteration(s), 0 cut(s), largest plastic strain 12.0387, largest displacement change 0.020263 m
+      the explicit integration stopped at step 37913 (t = 0.037912 s of 0.0741677 s): solver error: element 5434 is inverted (det F = -0.00186585 at an integration point); the state of step 37800 (t = 0.0378 s) is kept
+      warning: the contact penetration reached 0.0663765 of the element thickness at the node (warning above 0.01): the formed shape is biased by about that much, at any tool speed - raise 'contact_stiffness' (up to 1)
+      warning: the energy balance error reached 0.339087 of the largest energy (warning above 0.05)
+  runtime: 1032 s (0 increments, 0 Newton iterations; )
+  output:  cases/x_std_dz4_v40/output
+[error] the forming analysis stopped: step 'form' (1 of 3): the explicit integration stopped at step 37913 (t = 0.037912 s of 0.0741677 s): solver error: element 5434 is inverted (det F = -0.00186585 at an integration point); the state of step 37800 (t = 0.0378 s) is kept
+exit 3 wall 1032 s

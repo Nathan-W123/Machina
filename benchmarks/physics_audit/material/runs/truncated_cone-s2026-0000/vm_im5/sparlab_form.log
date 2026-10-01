@@ -1,0 +1,31 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.140547 failed (solver error: solver error: an element is inverted (det F = -0.0330894); the load step is too large or the mesh too coarse for this deformation); halving to 0.00467304
+[info ] forming increment to t = 0.253182 failed (solver error: solver error: Hex8 element 150: the incompatible modes did not converge in 25 local iterations (residual 26.7396 N of 53199.7 N); the step is cut); halving to 0.000152865
+[info ] forming increment to t = 0.253029 failed (solver error: solver error: Hex8 element 131: the incompatible modes did not converge in 25 local iterations (residual 2853.42 N of 200333 N); the step is cut); halving to 7.64326e-05
+[info ] forming increment to t = 0.252952 failed (solver error: solver error: Hex8 element 172: the incompatible modes did not converge in 25 local iterations (residual 46.6808 N of 19309.6 N); the step is cut); halving to 3.82163e-05
+[info ] forming increment to t = 0.252914 failed (solver error: solver error: Hex8 element 531: the incompatible modes did not converge in 25 local iterations (residual 3.52803 N of 9243.73 N); the step is cut); halving to 1.91082e-05
+[info ] forming step 'form': t = 0.252895 s of 0.951429 (31 increment(s), 240 iteration(s), 5 cut(s), 84.7574 s elapsed)
+[info ] forming step 'form': t = 0.287201 s of 0.951429 (99 increment(s), 647 iteration(s), 5 cut(s), 145.266 s elapsed)
+[info ] forming increment to t = 0.325894 failed (solver error: solver error: Hex8 element 232: the incompatible modes did not converge in 25 local iterations (residual 293.042 N of 37569.6 N); the step is cut); halving to 0.00185941
+[info ] forming step 'form': t = 0.396748 s of 0.951429 (138 increment(s), 946 iteration(s), 6 cut(s), 205.343 s elapsed)
+[info ] forming increment to t = 0.588225 failed (solver error: solver error: Hex8 element 609: the incompatible modes did not converge in 25 local iterations (residual 0.0205739 N of 49324.3 N); the step is cut); halving to 0.00419408
+[info ] forming increment to t = 0.584031 failed (solver error: solver error: Hex8 element 609: the incompatible modes did not converge in 25 local iterations (residual 74.4383 N of 12868.2 N); the step is cut); halving to 0.00209704
+[info ] forming step 'form': t = 0.581934 s of 0.951429 (167 increment(s), 1231 iteration(s), 8 cut(s), 268.051 s elapsed)
+[info ] forming step 'form': t = 0.729303 s of 0.951429 (209 increment(s), 1566 iteration(s), 8 cut(s), 331.069 s elapsed)
+[info ] forming step 'form' completed: 235 increment(s), 1744 iteration(s), 8 cut(s), reactions 1084.18 N, largest plastic strain 0.331685, largest displacement change 0.00308962 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 467.453 N
+[warn ] the supports of release step 'unload' carry reactions of 551.423 N, 0.365575 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 551.423 N, largest plastic strain 0.331685, largest displacement change 8.65043e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 551.423 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 5.71319e-13 N, largest plastic strain 0.331685, largest displacement change 0.000188406 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 235 increment(s), 1744 iteration(s), 8 cut(s), largest plastic strain 0.331685, largest displacement change 0.00308962 m
+  step 2 'unload' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.331685, largest displacement change 8.65043e-05 m
+      warning: the supports of release step 'unload' carry reactions of 551.423 N, 0.365575 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.331685, largest displacement change 0.000188406 m
+  runtime: 372.1 s (255 increments, 1824 Newton iterations; CHOLMOD supernodal LLT x 609, SimplicialLDLT x 18, UMFPACK LU x 1625)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 18
+  output:  /home/user/wt/audit/benchmarks/physics_audit/material/runs/truncated_cone-s2026-0000/vm_im5/output

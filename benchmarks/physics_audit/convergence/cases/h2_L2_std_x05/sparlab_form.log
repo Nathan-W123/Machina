@@ -1,0 +1,29 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form_explicit, t = 0 .. 0.951429 s, 1 tool(s), 1944 prescribed DOF(s))
+[info ] forming step 'form': explicit, 0.199386 s of physical time (tool speed 0.500000 m/s)
+[info ] explicit: 800 elements, stable step 7.89592e-08 s (element_eigenvalue), selective mass scaling (added 22530.9 %), time step 1e-06 s, duration 0.199386 s: about 199387 steps; dedicated Hex8
+[info ] explicit: step 22908, t = 0.022908 s of 0.199386 s (pseudo-time 0.109312 s), time step 1e-06 s, kinetic 0.000513046 J, internal work 0.0865847 J, 60.0483 s elapsed
+[info ] explicit: step 43087, t = 0.043087 s of 0.199386 s (pseudo-time 0.205602 s), time step 1e-06 s, kinetic 4.68371e-05 J, internal work 0.382808 J, 120.052 s elapsed
+[info ] explicit: step 62251, t = 0.062251 s of 0.199386 s (pseudo-time 0.297048 s), time step 1e-06 s, kinetic 5.92955e-05 J, internal work 0.831855 J, 180.06 s elapsed
+[info ] explicit: step 80879, t = 0.080879 s of 0.199386 s (pseudo-time 0.385937 s), time step 1e-06 s, kinetic 2.42793e-05 J, internal work 1.40801 J, 240.061 s elapsed
+[info ] explicit: step 100165, t = 0.100165 s of 0.199386 s (pseudo-time 0.477966 s), time step 1e-06 s, kinetic 0.000746418 J, internal work 2.04494 J, 300.063 s elapsed
+[info ] explicit: step 119126, t = 0.119126 s of 0.199386 s (pseudo-time 0.568444 s), time step 1e-06 s, kinetic 2.89806e-05 J, internal work 3.06072 J, 360.063 s elapsed
+[info ] explicit: step 137901, t = 0.137901 s of 0.199386 s (pseudo-time 0.658034 s), time step 1e-06 s, kinetic 8.65101e-05 J, internal work 4.35039 J, 420.064 s elapsed
+[info ] explicit: step 157729, t = 0.157729 s of 0.199386 s (pseudo-time 0.752649 s), time step 1e-06 s, kinetic 0.000882073 J, internal work 6.03558 J, 480.065 s elapsed
+[info ] explicit: step 178655, t = 0.178655 s of 0.199386 s (pseudo-time 0.852503 s), time step 1e-06 s, kinetic 0.00335917 J, internal work 6.34771 J, 540.067 s elapsed
+[info ] explicit run completed: 199387 steps, 599.458 s (3.00651 ms a step), kinetic/internal 0.0197387 (peak 0.936235), penetration/thickness 0.00499391, energy error 0.000266101, added mass 22982.8 %
+[info ] forming step 'form' completed: 997 increment(s), 0 iteration(s), 0 cut(s), reactions 996.722 N, largest plastic strain 0.384749, largest displacement change 0.00308888 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 542.321 N
+[warn ] the supports of release step 'unload' carry reactions of 901.462 N, 0.904427 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 31 iteration(s), 0 cut(s), reactions 901.462 N, largest plastic strain 0.384749, largest displacement change 5.4175e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 901.462 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 4.75168e-13 N, largest plastic strain 0.384749, largest displacement change 0.000125067 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form_explicit): completed, 997 increment(s), 0 iteration(s), 0 cut(s), largest plastic strain 0.384749, largest displacement change 0.00308888 m
+  step 2 'unload' (release): completed, 10 increment(s), 31 iteration(s), 0 cut(s), largest plastic strain 0.384749, largest displacement change 5.4175e-05 m
+      warning: the supports of release step 'unload' carry reactions of 901.462 N, 0.904427 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.384749, largest displacement change 0.000125067 m
+  runtime: 603.9 s (20 increments, 71 Newton iterations; CHOLMOD supernodal LLT x 71)
+  output:  /home/user/wt/audit/benchmarks/physics_audit/convergence/cases/h2_L2_std_x05/output

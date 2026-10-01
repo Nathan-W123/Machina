@@ -1,0 +1,8 @@
+# bulky, reproducible solver outputs (summaries are in result.json / *.csv)
+**/ccx/job.frd
+**/ccx/job.dat
+**/ccx/job.cvg
+**/ccx/job.12d
+**/ccx/spooles.out
+**/sparlab/out/*.vtk
+__pycache__/

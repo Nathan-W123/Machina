@@ -1,0 +1,11 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "e_of_ep": {
+   "Ea": 59500000000.0,
+   "from": "base",
+   "xi": 20.0
+  }
+ },
+ "variant": "Edeg"
+}

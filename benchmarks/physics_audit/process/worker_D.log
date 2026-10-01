@@ -1,0 +1,33 @@
+20:28:55 D start pyramid-s2026-0001 dsif_ng load (4.146484375, 3.92138671875, 3.3974609375)
+20:33:56 D end pyramid-s2026-0001 dsif_ng ok=True wall=301s 
+20:33:56 D start truncated_cone-s2026-0000 rob_iso1_it3 load (4.0, 3.9873046875, 3.580078125)
+20:36:00 D end truncated_cone-s2026-0000 rob_iso1_it3 ok=True wall=124s 
+20:36:00 D start truncated_cone-s2026-0000 rob_iso1_it4 load (4.04296875, 4.03173828125, 3.65771484375)
+20:37:46 D end truncated_cone-s2026-0000 rob_iso1_it4 ok=True wall=106s 
+20:37:46 D start truncated_cone-s2026-0000 dsif_ng_gap02 load (4.0048828125, 4.02001953125, 3.69873046875)
+20:41:30 D end truncated_cone-s2026-0000 dsif_ng_gap02 ok=True wall=224s 
+20:41:30 D start truncated_cone-s2026-0000 rob_iso1_it5 load (4.01708984375, 4.0244140625, 3.78125)
+20:43:27 D end truncated_cone-s2026-0000 rob_iso1_it5 ok=True wall=117s 
+20:43:27 D start truncated_cone-s2026-0000 clamp8 load (4.0859375, 4.06298828125, 3.83056640625)
+20:45:29 D end truncated_cone-s2026-0000 clamp8 ok=True wall=122s 
+20:45:29 D start truncated_cone-s2026-0000 blank60 load (4.0087890625, 4.0380859375, 3.85400390625)
+20:52:43 D end truncated_cone-s2026-0000 blank60 ok=True wall=433s 
+20:52:43 D start elliptic_cone-s2026-0001 dsif_ng load (4.06689453125, 4.03125, 3.9375)
+20:58:55 D end elliptic_cone-s2026-0001 dsif_ng ok=True wall=372s 
+20:58:55 D start truncated_cone-s2026-0000 stepdown05 load (4.0390625, 4.03125, 3.98974609375)
+21:02:24 D end truncated_cone-s2026-0000 stepdown05 ok=True wall=209s 
+21:02:24 D start truncated_cone-s2026-0000 tool6 load (4.10595703125, 4.0419921875, 4.0078125)
+21:03:43 D end truncated_cone-s2026-0000 tool6 ok=True wall=79s 
+21:03:43 D start pyramid-s2026-0001 rob_iso1 load (4.08349609375, 4.04345703125, 4.005859375)
+21:05:54 D end pyramid-s2026-0001 rob_iso1 ok=True wall=131s 
+21:05:54 D start truncated_cone-s2026-0000 offset_z03 load (4.1279296875, 4.0556640625, 4.00927734375)
+21:07:56 D end truncated_cone-s2026-0000 offset_z03 ok=True wall=122s 
+21:07:56 D start truncated_cone-s2026-0000 dsif_ng_gap05 load (4.26318359375, 4.109375, 4.02587890625)
+21:11:02 D end truncated_cone-s2026-0000 dsif_ng_gap05 ok=True wall=186s 
+21:11:02 D start truncated_cone-s2026-0000 mat_5052H32 load (4.12109375, 4.0947265625, 4.02490234375)
+21:13:46 D end truncated_cone-s2026-0000 mat_5052H32 ok=True wall=164s 
+21:13:46 D start elliptic_cone-s2026-0001 rob_iso1 load (4.11767578125, 4.0810546875, 4.02099609375)
+21:15:28 D end elliptic_cone-s2026-0001 rob_iso1 ok=True wall=103s 
+21:15:28 D start pyramid-s2026-0001 blank60 load (4.1943359375, 4.1259765625, 4.03955078125)
+21:28:28 D end pyramid-s2026-0001 blank60 ok=True wall=779s 
+21:28:28 D queue empty

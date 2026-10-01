@@ -1,0 +1,21 @@
+# heavy solver outputs: regenerated bit for bit by re-running the decks
+# (runs/<part>/<variant>/deck.json + toolpath.csv [+ support.csv]) with
+# build/bin/sparlab_form; the measured numbers are in results.jsonl /
+# results.csv, and surfaces.npz, tool_forces.csv, summary.json are kept.
+__pycache__/
+runs/*/*.claim/
+runs/*/*.claim2/
+runs/*/*/output/*.vtk
+runs/*/*/output/*_nodes.csv
+runs/*/*/output/*_elements.csv
+runs/*/*/output/mesh.json
+runs/*/*/output/config.json
+# links to the benchmark's run cache (outside this worktree)
+runs/*/base/output
+# CalculiX result and scratch files (job.inp and gravity.json are kept)
+gravity/*/job.frd
+gravity/*/job.dat
+gravity/*/job.sta
+gravity/*/job.cvg
+gravity/*/spooles.out
+gravity/*/job.12d

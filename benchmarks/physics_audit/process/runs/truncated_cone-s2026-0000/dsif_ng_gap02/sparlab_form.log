@@ -1,0 +1,27 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'spif': 800 Hex8 elements, 3969 DOFs, 2 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 0.951429 s, 2 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming increment to t = 0.385828 failed (solver error: solver error: an element is inverted (det F = -0.030566); the load step is too large or the mesh too coarse for this deformation); halving to 0.0020738
+[info ] forming step 'form': t = 0.383754 s of 0.951429 (121 increment(s), 781 iteration(s), 1 cut(s), 61.4576 s elapsed)
+[info ] forming increment to t = 0.429764 failed (solver error: solver error: an element is inverted (det F = -1.03673); the load step is too large or the mesh too coarse for this deformation); halving to 0.0010369
+[info ] forming increment to t = 0.459185 failed (solver error: solver error: an element is inverted (det F = -0.387921); the load step is too large or the mesh too coarse for this deformation); halving to 0.00174977
+[info ] forming increment to t = 0.515424 failed (solver error: solver error: an element is inverted (det F = -0.74679); the load step is too large or the mesh too coarse for this deformation); halving to 0.00147333
+[info ] forming step 'form': t = 0.55587 s of 0.951429 (218 increment(s), 1497 iteration(s), 4 cut(s), 121.511 s elapsed)
+[info ] forming increment to t = 0.6254 failed (solver error: solver error: an element is inverted (det F = -0.0324243); the load step is too large or the mesh too coarse for this deformation); halving to 0.001105
+[info ] forming increment to t = 0.660555 failed (solver error: solver error: an element is inverted (det F = -2.84093); the load step is too large or the mesh too coarse for this deformation); halving to 0.000828746
+[info ] forming step 'form': t = 0.698493 s of 0.951429 (328 increment(s), 2244 iteration(s), 6 cut(s), 181.658 s elapsed)
+[info ] forming step 'form' completed: 425 increment(s), 2769 iteration(s), 6 cut(s), reactions 939.696 N, largest plastic strain 0.445473, largest displacement change 0.00309021 m
+[info ] forming step 'unload' (release, t = 0.951429 .. 1.95143 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 607.476 N
+[warn ] the supports of release step 'unload' carry reactions of 542.716 N, 0.411943 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 10 increment(s), 33 iteration(s), 0 cut(s), reactions 542.716 N, largest plastic strain 0.445473, largest displacement change 9.36149e-05 m
+[info ] forming step 'release' (release, t = 1.95143 .. 2.95143 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 542.716 N
+[info ] forming step 'release' completed: 10 increment(s), 40 iteration(s), 0 cut(s), reactions 3.69803e-13 N, largest plastic strain 0.445473, largest displacement change 4.73121e-05 m
+case: spif
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 425 increment(s), 2769 iteration(s), 6 cut(s), largest plastic strain 0.445473, largest displacement change 0.00309021 m
+  step 2 'unload' (release): completed, 10 increment(s), 33 iteration(s), 0 cut(s), largest plastic strain 0.445473, largest displacement change 9.36149e-05 m
+      warning: the supports of release step 'unload' carry reactions of 542.716 N, 0.411943 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 10 increment(s), 40 iteration(s), 0 cut(s), largest plastic strain 0.445473, largest displacement change 4.73121e-05 m
+  runtime: 223.5 s (445 increments, 2842 Newton iterations; CHOLMOD supernodal LLT x 397, SimplicialLDLT x 20, UMFPACK LU x 2991)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 20
+  output:  /home/user/wt/audit/benchmarks/physics_audit/process/runs/truncated_cone-s2026-0000/dsif_ng_gap02/output

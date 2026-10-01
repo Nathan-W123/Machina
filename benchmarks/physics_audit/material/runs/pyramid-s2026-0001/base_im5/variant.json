@@ -1,0 +1,15 @@
+{
+ "part": "pyramid-s2026-0001",
+ "spec": {
+  "deck": {
+   "model": {
+    "element_formulation": "incompatible_modes",
+    "integration": {
+     "thickness_direction": "z",
+     "thickness_points": 5
+    }
+   }
+  }
+ },
+ "variant": "base_im5"
+}

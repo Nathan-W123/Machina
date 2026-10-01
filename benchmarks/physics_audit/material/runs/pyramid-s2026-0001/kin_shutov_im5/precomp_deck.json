@@ -1,0 +1,98 @@
+{
+  "commanded_grid": {
+    "h": 0.00025,
+    "nx": 161,
+    "ny": 161,
+    "x0": -0.02,
+    "y0": -0.02
+  },
+  "commanded_metadata": {
+    "part": {
+      "bottom_fillet": 0.0018539213333278895,
+      "corner_radius": 0.0042210846608504654,
+      "depth": 0.0025796693954616787,
+      "family": "pyramid",
+      "half_width_x": 0.008118318067863584,
+      "half_width_y": 0.006990132736042142,
+      "top_fillet": 0.0018067737156525253,
+      "wall_angle_deg": 41.209640093147755
+    }
+  },
+  "precomp_version": "0.1.0",
+  "setup": {
+    "blank_size": 0.04,
+    "clamp_margin": 0.005,
+    "contact": {},
+    "element": "hex8",
+    "element_size": 0.002,
+    "executable": "/home/user/wt/audit/build/bin/sparlab_form",
+    "friction": 0.1,
+    "kinematics": "finite_logarithmic",
+    "layers": 2,
+    "material": {
+      "af_C": null,
+      "af_gamma": null,
+      "density": 2670.0,
+      "hardening_modulus": 236141228.74996015,
+      "hardening_source": {
+        "K": 420000000.0,
+        "eps0": 0.008365701520368928,
+        "fit_range": [
+          0.0,
+          0.6
+        ],
+        "law": "hollomon (as swift with eps0 = (yield_stress / K)^(1/n))",
+        "max_relative_error": 0.06240921163390905,
+        "n": 0.3,
+        "rms_relative_error": 0.015606017669492888
+      },
+      "kinematic_hardening_modulus": 0.0,
+      "name": "AA5754-O",
+      "poisson_ratio": 0.33,
+      "r0": 0.75,
+      "r45": 0.7,
+      "r90": 0.8,
+      "saturation_rate": 14.158512602787667,
+      "saturation_stress": 108179062.52001843,
+      "source": "nominal handbook-order values, not certified data; measure the batch before trusting a prediction",
+      "yield_stress": 29519439.24215209,
+      "youngs_modulus": 70000000000.0
+    },
+    "max_tool_travel": 0.001,
+    "name": "spif",
+    "release": "321",
+    "solver": {},
+    "step_down": 0.001,
+    "thickness": 0.001,
+    "threads": 1,
+    "timeout": 86400.0,
+    "tool_radius": 0.004,
+    "toolpath_direction": "ccw",
+    "toolpath_spacing": 0.001,
+    "toolpath_style": "spiral"
+  },
+  "toolpath": {
+    "contact_length_m": 0.12000542389010153,
+    "length_m": 0.12658409328556322,
+    "levels": 3,
+    "max_segment_m": 0.004578669395461679,
+    "points": 138,
+    "tool_radius_m": 0.004,
+    "z_max_m": 0.006,
+    "z_min_m": 0.0014213306045383213
+  },
+  "toolpath_metadata": {
+    "clearance": 0.002,
+    "direction": "ccw",
+    "final_loop": true,
+    "level_heights": [
+      0.003,
+      0.002,
+      0.0014213306045383213
+    ],
+    "max_gouge_m": 0.0,
+    "spacing": 0.001,
+    "step_down": 0.001,
+    "style": "spiral"
+  }
+}

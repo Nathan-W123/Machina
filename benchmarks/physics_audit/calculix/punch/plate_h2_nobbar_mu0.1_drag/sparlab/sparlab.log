@@ -1,0 +1,18 @@
+[info ] applied 0 boundary condition group(s): 0 of 3969 DOFs prescribed, 3969 free
+[info ] forming 'punch': 800 Hex8 elements, 3969 DOFs, 1 tool(s), 3 step(s); linear algebra SuiteSparse (CHOLMOD, UMFPACK)
+[info ] forming step 'form' (form, t = 0 .. 3 s, 1 tool(s), 1944 prescribed DOF(s)): start imbalance 0 N
+[info ] forming step 'form' completed: 90 increment(s), 638 iteration(s), 0 cut(s), reactions 8925.96 N, largest plastic strain 0.326408, largest displacement change 0.00317788 m
+[info ] forming step 'unload' (release, t = 3 .. 4 s, 0 tool(s), 1944 prescribed DOF(s)): start imbalance 1152.47 N
+[warn ] the supports of release step 'unload' carry reactions of 7425.81 N, 0.831934 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+[info ] forming step 'unload' completed: 20 increment(s), 82 iteration(s), 0 cut(s), reactions 7425.81 N, largest plastic strain 0.327405, largest displacement change 0.000230574 m
+[info ] forming step 'release' (release, t = 4 .. 5 s, 0 tool(s), 6 prescribed DOF(s)): start imbalance 7425.81 N
+[info ] forming step 'release' completed: 20 increment(s), 81 iteration(s), 0 cut(s), reactions 1.33876e-12 N, largest plastic strain 0.327515, largest displacement change 0.000300468 m
+case: punch
+  mesh:    800 elements, 3969 DOFs
+  step 1 'form' (form): completed, 90 increment(s), 638 iteration(s), 0 cut(s), largest plastic strain 0.326408, largest displacement change 0.00317788 m
+  step 2 'unload' (release): completed, 20 increment(s), 82 iteration(s), 0 cut(s), largest plastic strain 0.327405, largest displacement change 0.000230574 m
+      warning: the supports of release step 'unload' carry reactions of 7425.81 N, 0.831934 of the reference force: they are not statically determinate (over-constrained) and hold the part in a deformed shape - release onto 3-2-1 supports
+  step 3 'release' (release): completed, 20 increment(s), 81 iteration(s), 0 cut(s), largest plastic strain 0.327515, largest displacement change 0.000300468 m
+  runtime: 46.86 s (130 increments, 801 Newton iterations; CHOLMOD supernodal LLT x 345, SimplicialLDLT x 1, UMFPACK LU x 556)
+  failed factorisations: CHOLMOD supernodal LLT (not positive definite) x 1
+  output:  out

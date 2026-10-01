@@ -1,0 +1,220 @@
+{
+ "name": "x_std_dz2_v20",
+ "units": "SI",
+ "description": "NUMISHEET 2014 BM3 replica (Neto et al. 2016): dz=2.0 mm, O-grid N=96 hr=2.5 mm, std, spiral, explicit v=20.0 m/s dt=1e-06",
+ "mesh": {
+  "type": "file",
+  "path": "mesh.inp",
+  "scale": 0.001
+ },
+ "model": {
+  "stress_state": "three_dimensional"
+ },
+ "material": {
+  "name": "AA7075-O",
+  "youngs_modulus": 72000000000.0,
+  "poisson_ratio": 0.33,
+  "density": 2810,
+  "plasticity": {
+   "yield_stress": 103770663.86090763,
+   "hardening_modulus": 115578188.73000638,
+   "saturation_stress": 129741819.90919456,
+   "saturation_rate": 29.853954668698584
+  }
+ },
+ "forming": {
+  "kinematics": "finite_logarithmic",
+  "tools": [
+   {
+    "name": "tool",
+    "shape": "sphere",
+    "radius": 0.0063300000000000006,
+    "friction": 0.01,
+    "penalty": 3.0,
+    "surface": {
+     "circle": {
+      "center": [
+       0,
+       0,
+       0
+      ],
+      "radius": 0.0695
+     }
+    },
+    "trajectory": {
+     "file": "toolpath.csv"
+    }
+   },
+   {
+    "name": "backing",
+    "shape": "plane",
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "friction": 0.0,
+    "penalty": 3.0,
+    "surface": {
+     "annulus": {
+      "center": [
+       0,
+       0,
+       0
+      ],
+      "inner_radius": 0.07,
+      "radius": 0.08
+     }
+    },
+    "trajectory": {
+     "times": [
+      0.0,
+      5.763323379866443
+     ],
+     "points": [
+      [
+       0,
+       0,
+       -0.00163
+      ],
+      [
+       0,
+       0,
+       -0.00163
+      ]
+     ]
+    }
+   }
+  ],
+  "steps": [
+   {
+    "name": "form",
+    "type": "form_explicit",
+    "tools": [
+     "tool",
+     "backing"
+    ],
+    "time": [
+     0.0,
+     5.763323379866443
+    ],
+    "boundary_conditions": [
+     {
+      "name": "clamp",
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "region": {
+       "annulus": {
+        "center": [
+         0,
+         0,
+         0
+        ],
+        "inner_radius": 0.0787,
+        "radius": 0.08
+       }
+      }
+     }
+    ],
+    "explicit": {
+     "tool_speed": 20.0,
+     "mass_scaling": {
+      "mode": "selective",
+      "target_time_step": 1e-06,
+      "max_added_mass_fraction": 1000.0,
+      "dynamic": true
+     },
+     "contact_stiffness": 0.5,
+     "history_every": 200
+    }
+   },
+   {
+    "name": "unload",
+    "type": "release",
+    "tools": [],
+    "boundary_conditions": [
+     {
+      "name": "clamp",
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "region": {
+       "annulus": {
+        "center": [
+         0,
+         0,
+         0
+        ],
+        "inner_radius": 0.0787,
+        "radius": 0.08
+       }
+      }
+     }
+    ]
+   },
+   {
+    "name": "release",
+    "type": "release",
+    "tools": [],
+    "boundary_conditions": [
+     {
+      "name": "support_xyz",
+      "fix": [
+       "x",
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "region": {
+       "nearest_node": [
+        0.074,
+        0,
+        0
+       ]
+      }
+     },
+     {
+      "name": "support_yz",
+      "fix": [
+       "y",
+       "z"
+      ],
+      "mode": "hold",
+      "region": {
+       "nearest_node": [
+        -0.074,
+        0,
+        0
+       ]
+      }
+     },
+     {
+      "name": "support_z",
+      "fix": [
+       "z"
+      ],
+      "mode": "hold",
+      "region": {
+       "nearest_node": [
+        0,
+        0.074,
+        0
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "output": {
+   "vtk": false,
+   "snapshots": "steps"
+  }
+ }
+}

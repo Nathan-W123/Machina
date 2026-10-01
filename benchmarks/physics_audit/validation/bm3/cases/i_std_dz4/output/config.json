@@ -1,0 +1,387 @@
+{
+  "name": "i_std_dz4",
+  "units": "SI",
+  "description": "NUMISHEET 2014 BM3 replica (Neto et al. 2016): dz=4.0 mm, O-grid N=96 hr=2.5 mm, std, spiral",
+  "mesh": {
+    "type": "file",
+    "path": "mesh.inp",
+    "scale": 0.001
+  },
+  "model": {
+    "stress_state": "three_dimensional"
+  },
+  "material": {
+    "name": "AA7075-O",
+    "youngs_modulus": 72000000000,
+    "poisson_ratio": 0.33000000000000002,
+    "density": 2810,
+    "plasticity": {
+      "yield_stress": 103770663.86090763,
+      "hardening_modulus": 115578188.73000638,
+      "saturation_stress": 129741819.90919456,
+      "saturation_rate": 29.853954668698584
+    }
+  },
+  "forming": {
+    "kinematics": "finite_logarithmic",
+    "tools": [
+      {
+        "name": "tool",
+        "shape": "sphere",
+        "radius": 0.0063300000000000006,
+        "friction": 0.01,
+        "penalty": 3,
+        "surface": {
+          "circle": {
+            "center": [
+              0,
+              0,
+              0
+            ],
+            "radius": 0.069500000000000006
+          }
+        },
+        "trajectory": {
+          "file": "toolpath.csv"
+        }
+      },
+      {
+        "name": "backing",
+        "shape": "plane",
+        "normal": [
+          0,
+          0,
+          1
+        ],
+        "friction": 0,
+        "penalty": 3,
+        "surface": {
+          "annulus": {
+            "center": [
+              0,
+              0,
+              0
+            ],
+            "inner_radius": 0.070000000000000007,
+            "radius": 0.080000000000000002
+          }
+        },
+        "trajectory": {
+          "times": [
+            0,
+            2.9667073233506605
+          ],
+          "points": [
+            [
+              0,
+              0,
+              -0.0016299999999999999
+            ],
+            [
+              0,
+              0,
+              -0.0016299999999999999
+            ]
+          ]
+        }
+      }
+    ],
+    "steps": [
+      {
+        "name": "form_d08",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          0,
+          0.73765952828616987
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "form_d16",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          0.73765952828616987,
+          1.3724970538532053
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "form_d24",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          1.3724970538532053,
+          1.9048046144946507
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "form_d32",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          1.9048046144946507,
+          2.3395657279696982
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "form_d40",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          2.3395657279696982,
+          2.6717553500827056
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "form",
+        "type": "form",
+        "tools": [
+          "tool",
+          "backing"
+        ],
+        "time": [
+          2.6717553500827056,
+          2.9667073233506605
+        ],
+        "max_tool_travel": 0.0040000000000000001,
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "unload",
+        "type": "release",
+        "tools": [
+          "backing"
+        ],
+        "boundary_conditions": [
+          {
+            "name": "clamp",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "annulus": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "inner_radius": 0.078700000000000006,
+                "radius": 0.080000000000000002
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "release",
+        "type": "release",
+        "tools": [],
+        "boundary_conditions": [
+          {
+            "name": "support_xyz",
+            "fix": [
+              "x",
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                0.073999999999999996,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "name": "support_yz",
+            "fix": [
+              "y",
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                -0.073999999999999996,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "name": "support_z",
+            "fix": [
+              "z"
+            ],
+            "mode": "hold",
+            "region": {
+              "nearest_node": [
+                0,
+                0.073999999999999996,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "output": {
+      "vtk": false,
+      "snapshots": "steps"
+    }
+  }
+}

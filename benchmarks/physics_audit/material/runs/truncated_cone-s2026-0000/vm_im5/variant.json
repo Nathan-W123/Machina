@@ -1,0 +1,20 @@
+{
+ "part": "truncated_cone-s2026-0000",
+ "spec": {
+  "deck": {
+   "model": {
+    "element_formulation": "incompatible_modes",
+    "integration": {
+     "thickness_direction": "z",
+     "thickness_points": 5
+    }
+   }
+  },
+  "material": {
+   "r0": null,
+   "r45": null,
+   "r90": null
+  }
+ },
+ "variant": "vm_im5"
+}

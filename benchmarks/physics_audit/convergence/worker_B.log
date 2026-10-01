@@ -1,0 +1,69 @@
+2026-09-30T18:12:15Z worker B: start h1_L2_std (load 2.81 1.20 1.06)
+h1_L2_std: rc=0 wall=1601s
+2026-09-30T18:38:57Z worker B: end h1_L2_std rc=0
+2026-09-30T18:38:57Z worker B: start h1_L1_im_tp7 (load 5.23 6.13 5.80)
+h1_L1_im_tp7: rc=0 wall=1589s
+2026-09-30T19:05:27Z worker B: end h1_L1_im_tp7 rc=0
+2026-09-30T19:05:27Z worker B: start h2_L1_im_tp7 (load 4.14 4.52 4.86)
+h2_L1_im_tp7: rc=0 wall=308s
+2026-09-30T19:10:36Z worker B: end h2_L1_im_tp7 rc=0
+2026-09-30T19:10:36Z worker B: start h2_L2_std_t0.5 (load 4.02 4.26 4.65)
+h2_L2_std_t0.5: rc=0 wall=154s
+2026-09-30T19:13:11Z worker B: end h2_L2_std_t0.5 rc=0
+2026-09-30T19:13:11Z worker B: start h2_L2_std_p30 (load 3.49 4.01 4.50)
+h2_L2_std_p30: rc=0 wall=221s
+2026-09-30T19:16:53Z worker B: end h2_L2_std_p30 rc=0
+2026-09-30T19:16:53Z worker B: start h2_L2_std_x05 (load 3.04 3.52 4.19)
+h2_L2_std_x05: rc=0 wall=604s
+2026-09-30T19:26:58Z worker B: end h2_L2_std_x05 rc=0
+2026-09-30T19:26:58Z worker B: start h1_L1_im_tp5 (load 2.06 2.52 3.38)
+h1_L1_im_tp5: rc=0 wall=1030s
+2026-09-30T19:44:09Z worker B: end h1_L1_im_tp5 rc=0
+2026-09-30T19:44:09Z worker B: start h1_L2_std_x05 (load 3.24 3.60 3.48)
+h1_L2_std_x05: rc=0 wall=2463s
+2026-09-30T20:25:14Z worker B: end h1_L2_std_x05 rc=0
+2026-09-30T20:25:14Z worker B: start h0.833_L1_im_tp5 (load 4.19 3.46 3.13)
+h0.833_L1_im_tp5: rc=0 wall=1586s
+2026-09-30T20:51:40Z worker B: end h0.833_L1_im_tp5 rc=0
+2026-09-30T20:51:40Z worker B: start h2_L2_std_tol1e-8 (load 4.00 4.02 3.93)
+h2_L2_std_tol1e-8: rc=0 wall=138s
+2026-09-30T20:54:00Z worker B: end h2_L2_std_tol1e-8 rc=0
+2026-09-30T20:54:00Z worker B: start h2_L2_std_rel40 (load 4.02 4.02 3.94)
+h2_L2_std_rel40: rc=0 wall=161s
+2026-09-30T20:56:42Z worker B: end h2_L2_std_rel40 rc=0
+2026-09-30T20:56:42Z worker B: start h2_L2_std_tp5 (load 4.07 4.03 3.97)
+h2_L2_std_tp5: rc=0 wall=308s
+2026-09-30T21:01:51Z worker B: end h2_L2_std_tp5 rc=0
+2026-09-30T21:01:51Z worker B: start h1_L2_im_tp3 (load 4.07 4.03 4.00)
+h1_L2_im_tp3: rc=0 wall=1668s
+2026-09-30T21:29:39Z worker B: end h1_L2_im_tp3 rc=0
+2026-09-30T21:29:39Z worker B: start h2_L2_std_p3 (load 3.57 3.89 3.96)
+h2_L2_std_p3: rc=0 wall=77s
+2026-09-30T21:30:57Z worker B: end h2_L2_std_p3 rc=0
+2026-09-30T21:30:57Z worker B: queue empty
+2026-09-30T21:31:33Z worker B: start h0.833_L1_im_tp5_p3 (load 2.75 3.53 3.82)
+h0.833_L1_im_tp5_p3: rc=0 wall=798s
+2026-09-30T21:44:52Z worker B: end h0.833_L1_im_tp5_p3 rc=0
+2026-09-30T21:44:52Z worker B: queue empty
+2026-09-30T21:47:59Z worker B2: start h0.714_L1_im_tp5_p3 (load 1.00 0.40 0.15)
+h0.714_L1_im_tp5_p3: rc=0 wall=1448s
+2026-09-30T22:12:07Z worker B2: end h0.714_L1_im_tp5_p3 rc=0
+2026-09-30T22:12:07Z worker B2: start c1_h2_L2_std (load 4.00 3.95 3.01)
+c1_h2_L2_std: rc=0 wall=178s
+2026-09-30T22:15:06Z worker B2: end c1_h2_L2_std rc=0
+2026-09-30T22:15:06Z worker B2: start c1_h2_L1_im_tp5 (load 4.01 4.00 3.21)
+c1_h2_L1_im_tp5: rc=0 wall=190s
+2026-09-30T22:18:16Z worker B2: end c1_h2_L1_im_tp5 rc=0
+2026-09-30T22:18:16Z worker B2: start h0.714_L1_im_tp5 (load 4.03 4.01 3.37)
+h0.714_L1_im_tp5: rc=0 wall=2443s
+2026-09-30T22:59:01Z worker B2: end h0.714_L1_im_tp5 rc=0
+2026-09-30T22:59:01Z worker B2: start c1_h1_L1_im_tp5 (load 4.15 4.22 4.10)
+c1_h1_L1_im_tp5: rc=0 wall=1147s
+2026-09-30T23:18:08Z worker B2: end c1_h1_L1_im_tp5 rc=0
+2026-09-30T23:18:08Z worker B2: start c1_h0.833_L1_im_tp5 (load 4.04 4.08 4.12)
+c1_h0.833_L1_im_tp5: rc=0 wall=1965s
+2026-09-30T23:50:54Z worker B2: end c1_h0.833_L1_im_tp5 rc=0
+2026-09-30T23:50:54Z worker B2: start c1_h0.833_L1_im_tp5_p3 (load 4.22 4.09 4.05)
+c1_h0.833_L1_im_tp5_p3: rc=0 wall=1172s
+2026-10-01T00:10:27Z worker B2: end c1_h0.833_L1_im_tp5_p3 rc=0
+2026-10-01T00:10:27Z worker B2: queue empty

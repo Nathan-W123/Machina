@@ -1,0 +1,1022 @@
+{
+  "name": "homog_uniaxial",
+  "units": "SI",
+  "mesh": {
+    "type": "structured_hex",
+    "x0": 0,
+    "y0": 0,
+    "z0": 0,
+    "lx": 0.001,
+    "ly": 0.001,
+    "lz": 0.001,
+    "nx": 1,
+    "ny": 1,
+    "nz": 1
+  },
+  "model": {
+    "stress_state": "three_dimensional"
+  },
+  "material": {
+    "name": "AA5754-O",
+    "youngs_modulus": 70000000000,
+    "poisson_ratio": 0.33000000000000002,
+    "density": 2670,
+    "plasticity": {
+      "yield_stress": 100000000,
+      "hardening_modulus": 237610605.32948908,
+      "saturation_stress": 123864572.88204344,
+      "saturation_rate": 14.377555530345461,
+      "kinematic_hardening_modulus": 0
+    }
+  },
+  "forming": {
+    "kinematics": "finite_logarithmic",
+    "steps": [
+      {
+        "name": "s00",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              2.0020013340003028e-06,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s01",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              1.005016708416795e-05,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s02",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              5.1271096376024116e-05,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s03",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00010517091807564772,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s04",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00022140275816016986,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s05",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00034985880757600318,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s06",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00049182469764127035,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s07",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00064872127070012822,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s08",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00049182469764127035,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s09",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00034985880757600318,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s10",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00022140275816016986,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s11",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0.00010517091807564772,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "s12",
+        "type": "form",
+        "increments": 20,
+        "boundary_conditions": [
+          {
+            "name": "x0",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmax": 0
+              }
+            }
+          },
+          {
+            "name": "y0",
+            "fix": [
+              "y"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "ymax": 0
+              }
+            }
+          },
+          {
+            "name": "z0",
+            "fix": [
+              "z"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "zmax": 0
+              }
+            }
+          },
+          {
+            "name": "pull",
+            "fix": [
+              "x"
+            ],
+            "mode": "absolute",
+            "value": [
+              0,
+              0,
+              0
+            ],
+            "region": {
+              "box": {
+                "xmin": 0.001
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "newton": {
+      "max_iterations": 50,
+      "residual_tolerance": 1.0000000000000001e-09,
+      "displacement_tolerance": 1.0000000000000001e-09,
+      "max_cuts": 12
+    },
+    "output": {
+      "vtk": false,
+      "snapshots": "steps"
+    }
+  }
+}
