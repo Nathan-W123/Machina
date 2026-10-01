@@ -1,5 +1,5 @@
 {
-  "chains_done": 4,
+  "chains_done": 6,
   "chains_total": 24,
   "command": "springback_fine_benchmark.py --out benchmarks/springback_fine --work benchmarks/springback_fine/work --workers 4",
   "config": {
@@ -35,23 +35,23 @@
   },
   "cpu_count": 4,
   "data_source": "SparLab simulation",
-  "elapsed_s": 9542.548758268356,
+  "elapsed_s": 4217.664834022522,
   "load_average_end": [
-    4.01513671875,
+    4.06298828125,
     4.0380859375,
-    4.0
+    4.0029296875
   ],
   "load_average_start": [
-    0.57421875,
-    1.06689453125,
-    1.0908203125
+    0.72021484375,
+    0.20068359375,
+    0.06884765625
   ],
-  "started_utc": "2026-10-01T19:40:45Z",
+  "started_utc": "2026-10-01T22:40:37Z",
   "versions": {
-    "git_revision": "878adda",
+    "git_revision": "7c3dd86",
     "numpy": "2.4.6",
     "pandas": "3.0.6",
-    "platform": "Linux-6.18.44-fc-v50-x86_64-with-glibc2.39",
+    "platform": "Linux-6.18.44-fc-v51-x86_64-with-glibc2.39",
     "precomp": "0.1.0",
     "python": "3.11.15",
     "scipy": "1.17.1",
