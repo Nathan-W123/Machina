@@ -29,3 +29,9 @@ pyramid-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,9,0.501111,1082.39,
 pyramid-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,plate,plane,52,0.380629,1601.86,281,279,0,-1594.46,1127.15,1,SparLab simulation
 pyramid-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,10,0.480555,1088.89,677,675,1003.78,0,619.779,1,SparLab simulation
 pyramid-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,plate,plane,1176,0.371419,1589.88,677,676,0,-1582.8,1180.57,1,SparLab simulation
+dome-s2026-0000,dsif,uncompensated,uncompensated,tool,sphere,7,0.570818,889.253,363,355,836.381,0,495.505,1,SparLab simulation
+dome-s2026-0000,dsif,uncompensated,uncompensated,support,sphere,6,0.735067,809.454,363,317,0,-730.699,290.57,1,SparLab simulation
+dome-s2026-0000,dsif,FE-DA-1,FE-DA-1,tool,sphere,7,0.558352,892.414,271,263,847.111,0,472.651,1,SparLab simulation
+dome-s2026-0000,dsif,FE-DA-1,FE-DA-1,support,sphere,6,0.699851,805.744,271,243,0,-738.409,293.055,1,SparLab simulation
+dome-s2026-0000,dsif,FE-DA-2,FE-DA-2,tool,sphere,8,0.569605,941.448,286,274,893.774,0,465.698,1,SparLab simulation
+dome-s2026-0000,dsif,FE-DA-2,FE-DA-2,support,sphere,6,0.852185,847.045,286,254,0,-788.032,278.512,1,SparLab simulation
