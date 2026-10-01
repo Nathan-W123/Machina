@@ -35,3 +35,15 @@ dome-s2026-0000,dsif,FE-DA-1,FE-DA-1,tool,sphere,7,0.558352,892.414,271,263,847.
 dome-s2026-0000,dsif,FE-DA-1,FE-DA-1,support,sphere,6,0.699851,805.744,271,243,0,-738.409,293.055,1,SparLab simulation
 dome-s2026-0000,dsif,FE-DA-2,FE-DA-2,tool,sphere,8,0.569605,941.448,286,274,893.774,0,465.698,1,SparLab simulation
 dome-s2026-0000,dsif,FE-DA-2,FE-DA-2,support,sphere,6,0.852185,847.045,286,254,0,-788.032,278.512,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,uncompensated,uncompensated,tool,sphere,9,0.595255,1045.91,668,666,985.203,0,625.933,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,uncompensated,uncompensated,plate,plane,44,0.40871,1507.23,668,666,0,-1500.82,1137.87,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,9,0.551228,1057.32,569,567,997.395,0,653.052,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,plate,plane,44,0.374968,1497.97,569,567,0,-1491.9,1145.51,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,9,0.52748,1068.74,240,238,1017.54,0,653.774,1,SparLab simulation
+truncated_cone-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,plate,plane,44,0.374527,1524.74,240,238,0,-1518.18,1133.94,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,uncompensated,uncompensated,tool,sphere,9,0.588644,981.757,879,877,965.895,0,590.332,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,uncompensated,uncompensated,plate,plane,56,0.429353,1587.16,879,877,0,-1585.28,1205.05,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,9,0.511636,866.712,578,569,788.524,0,540.29,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,plate,plane,1176,0.386388,1405.78,578,577,0,-1401.58,1125.81,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,12,0.533624,1102.83,520,518,1008.98,0,669.584,1,SparLab simulation
+pyramid-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,plate,plane,56,0.401622,1597.11,520,518,0,-1590.7,1240.36,1,SparLab simulation

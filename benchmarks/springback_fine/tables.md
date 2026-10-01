@@ -2,13 +2,13 @@
 
 Setup `springback_fine` (0.833 mm incompatible-mode Hex8, 1 layer, 5 thickness points, penalty 10); the 8 test parts of benchmarks/springback. Deviation of the released part from the target over the part [mm]; rim sag = mean vertical deviation of the part less than 1 mm deep (negative = too deep); interior = the part deeper than that.
 
-18 simulations complete, 0 failed records.
+24 simulations complete, 0 failed records.
 
 | strategy | method | FE runs / part | parts | vertical RMS mean | median | max mean | normal RMS | rim sag | upper band RMS | interior RMS (bias) | flange bias | runtime / run [s] | CPU h / part | Newton its | failed |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| backing_plate | uncompensated | 1 | 5 | **0.306** | 0.298 | 0.639 | 0.287 | -0.419 | 0.428 | 0.174 (-0.05) | -0.048 | 2424 | 0.67 | 4210 | 0 |
-| backing_plate | FE-DA-1 | 2 | 5 | **0.248** | 0.245 | 0.492 | 0.239 | -0.318 | 0.339 | 0.151 (0.05) | -0.046 | 2297 | 1.31 | 3908 | 0 |
-| backing_plate | FE-DA-2 | 3 | 5 | **0.242** | 0.236 | 0.503 | 0.233 | -0.296 | 0.323 | 0.152 (0.09) | -0.049 | 3594 | 2.31 | 5924 | 0 |
+| backing_plate | uncompensated | 1 | 7 | **0.302** | 0.298 | 0.632 | 0.282 | -0.425 | 0.435 | 0.162 (-0.05) | -0.046 | 3307 | 0.92 | 5616 | 0 |
+| backing_plate | FE-DA-1 | 2 | 7 | **0.270** | 0.245 | 0.524 | 0.261 | -0.317 | 0.340 | 0.189 (0.11) | -0.043 | 2815 | 1.70 | 4719 | 0 |
+| backing_plate | FE-DA-2 | 3 | 7 | **0.258** | 0.245 | 0.531 | 0.248 | -0.312 | 0.339 | 0.176 (0.06) | -0.046 | 3347 | 2.63 | 5533 | 0 |
 | dsif | uncompensated | 1 | 1 | **0.341** | 0.341 | 0.614 | 0.328 | -0.419 | 0.431 | 0.181 (-0.11) | -0.102 | 1164 | 0.32 | 2504 | 0 |
 | dsif | FE-DA-1 | 2 | 1 | **0.252** | 0.252 | 0.574 | 0.249 | -0.288 | 0.335 | 0.065 (0.03) | -0.094 | 1090 | 0.63 | 2084 | 0 |
 | dsif | FE-DA-2 | 3 | 1 | **0.183** | 0.183 | 0.391 | 0.176 | -0.094 | 0.205 | 0.152 (0.13) | -0.022 | 1238 | 0.97 | 2257 | 0 |
@@ -32,6 +32,8 @@ Per part, vertical RMS [mm] (max |dev| in brackets; rim sag after the slash):
 | elliptic_cone-s2026-0000 | 0.621 (1.21) / -0.96 | - | - | - | 0.277 (0.57) / -0.42 | 0.239 (0.50) / -0.32 | 0.266 (0.61) / -0.27 | - | - | - |
 | elliptic_cone-s2026-0001 | 0.841 (1.51) / -1.24 | - | - | - | 0.305 (0.61) / -0.44 | 0.285 (0.55) / -0.37 | 0.279 (0.55) / -0.36 | - | - | - |
 | pyramid-s2026-0000 | 0.791 (1.45) / -1.14 | - | - | - | 0.290 (0.57) / -0.41 | 0.245 (0.48) / -0.28 | 0.236 (0.47) / -0.27 | - | - | - |
+| pyramid-s2026-0001 | 0.699 (1.38) / -1.08 | - | - | - | 0.308 (0.69) / -0.46 | 0.426 (0.73) / -0.31 | 0.349 (0.67) / -0.40 | - | - | - |
+| truncated_cone-s2026-0000 | 0.766 (1.43) / -1.15 | - | - | - | 0.280 (0.55) / -0.42 | 0.226 (0.48) / -0.32 | 0.245 (0.53) / -0.31 | - | - | - |
 
 Failures:
 
