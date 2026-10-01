@@ -1,0 +1,17 @@
+point_id,strategy,method,case,tool,shape,max_active_nodes,max_penetration_um,peak_force_N,rows,increments_in_contact,fz_max_N,fz_min_N,mean_abs_fz_in_contact_N,steps,data_source
+dome-s2026-0000,backing_plate,uncompensated,uncompensated,tool,sphere,7,0.610255,734.395,133,131,706.527,0,511.588,1,SparLab simulation
+dome-s2026-0000,backing_plate,uncompensated,uncompensated,plate,plane,48,0.349359,1230.37,133,131,0,-1225.87,988.14,1,SparLab simulation
+dome-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,7,0.60106,727.079,108,106,701.193,0,493.394,1,SparLab simulation
+dome-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,plate,plane,48,0.312295,1201.58,108,106,0,-1196.44,946.591,1,SparLab simulation
+dome-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,7,0.567619,733.997,116,114,706.942,0,486.647,1,SparLab simulation
+dome-s2026-0000,backing_plate,FE-DA-2,FE-DA-2,plate,plane,48,0.310735,1204.62,116,114,0,-1199.49,930.26,1,SparLab simulation
+elliptic_cone-s2026-0000,backing_plate,uncompensated,uncompensated,tool,sphere,8,0.552024,842.749,339,337,806.023,0,463.526,1,SparLab simulation
+elliptic_cone-s2026-0000,backing_plate,uncompensated,uncompensated,plate,plane,51,0.420309,1533.17,339,337,0,-1527.09,1103.29,1,SparLab simulation
+elliptic_cone-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,8,0.630946,862.143,598,596,803.74,0,531.384,1,SparLab simulation
+elliptic_cone-s2026-0000,backing_plate,FE-DA-1,FE-DA-1,plate,plane,51,0.421288,1494.69,598,596,0,-1490.35,1184.7,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,uncompensated,uncompensated,tool,sphere,13,0.563837,1296.05,265,263,1187.49,0,686.934,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,uncompensated,uncompensated,plate,plane,1176,0.471445,1688.29,265,264,0,-1680.83,1137.2,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,14,0.68525,1346.39,322,320,1213.42,0,724.908,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,plate,plane,40,0.454807,1702.69,322,320,0,-1695.63,1160.86,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,15,0.655025,1355.67,687,684,1205.02,0,694.649,1,SparLab simulation
+elliptic_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,plate,plane,40,0.45881,1687.77,687,685,0,-1681.62,1129.77,1,SparLab simulation
