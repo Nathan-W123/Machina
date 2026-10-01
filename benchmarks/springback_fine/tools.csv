@@ -47,3 +47,15 @@ pyramid-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,9,0.511636,866.712,
 pyramid-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,plate,plane,1176,0.386388,1405.78,578,577,0,-1401.58,1125.81,1,SparLab simulation
 pyramid-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,12,0.533624,1102.83,520,518,1008.98,0,669.584,1,SparLab simulation
 pyramid-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,plate,plane,56,0.401622,1597.11,520,518,0,-1590.7,1240.36,1,SparLab simulation
+dome-s2026-0001,dsif,uncompensated,uncompensated,tool,sphere,9,0.90792,1278.7,803,794,1142.5,0,668.155,1,SparLab simulation
+dome-s2026-0001,dsif,uncompensated,uncompensated,support,sphere,7,0.950669,1213.68,803,751,0,-1019.29,423.242,1,SparLab simulation
+dome-s2026-0001,dsif,FE-DA-1,FE-DA-1,tool,sphere,9,0.804871,1358.88,882,872,1218.96,0,687.383,1,SparLab simulation
+dome-s2026-0001,dsif,FE-DA-1,FE-DA-1,support,sphere,6,0.987149,1112.44,882,787,0,-908.886,381.14,1,SparLab simulation
+dome-s2026-0001,dsif,FE-DA-2,FE-DA-2,tool,sphere,9,0.665656,1075.82,748,738,979.024,0,615.715,1,SparLab simulation
+dome-s2026-0001,dsif,FE-DA-2,FE-DA-2,support,sphere,7,0.752046,980.723,748,460,0,-848.053,313.909,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,uncompensated,uncompensated,tool,sphere,9,0.530174,908.734,658,653,883.09,0,590.815,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,uncompensated,uncompensated,plate,plane,1176,0.433383,1522.58,658,657,0,-1518.04,1246.21,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,tool,sphere,8,0.526907,763.532,589,583,734.185,0,528.869,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,FE-DA-1,FE-DA-1,plate,plane,48,0.369363,1408.9,589,587,0,-1406.31,1171.12,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,tool,sphere,10,0.487028,1034.42,381,372,961.766,0,663.851,1,SparLab simulation
+truncated_cone-s2026-0001,backing_plate,FE-DA-2,FE-DA-2,plate,plane,48,0.424041,1594.63,381,379,0,-1590.03,1273.53,1,SparLab simulation
