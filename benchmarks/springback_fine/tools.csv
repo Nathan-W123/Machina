@@ -103,3 +103,6 @@ elliptic_cone-s2026-0000,none,FE-DA-1,FE-DA-1,tool,sphere,6,0.534928,582.093,255
 elliptic_cone-s2026-0000,none,FE-DA-2,FE-DA-2,tool,sphere,6,0.506703,542.424,245,243,525.431,0,366.747,1,SparLab simulation
 pyramid-s2026-0000,none,uncompensated,uncompensated,tool,sphere,7,0.580837,807.177,626,624,771.03,0,526.535,1,SparLab simulation
 pyramid-s2026-0000,none,FE-DA-1,FE-DA-1,tool,sphere,8,0.685976,842.595,532,530,803.276,0,512.555,1,SparLab simulation
+elliptic_cone-s2026-0001,none,uncompensated,uncompensated,tool,sphere,7,0.578844,876.918,478,476,831.649,0,554.063,1,SparLab simulation
+elliptic_cone-s2026-0001,none,FE-DA-1,FE-DA-1,tool,sphere,9,0.643299,900.559,370,368,833.243,0,502.424,1,SparLab simulation
+elliptic_cone-s2026-0001,none,FE-DA-2,FE-DA-2,tool,sphere,11,0.627575,907.344,347,345,821.014,0,571.026,1,SparLab simulation
