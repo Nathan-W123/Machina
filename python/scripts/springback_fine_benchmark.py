@@ -174,6 +174,7 @@ def run_chain(cfg: Dict[str, Any], point, strategy: str, work: Path,
                                 direction=da["direction"], smoothing=da["smoothing"],
                                 max_wall_angle_deg=da["max_wall_angle_deg"],
                                 upper_bound=upper, hold_mask=hold, adjust_mask=adjust,
+                                tool_radius=setup.tool_radius if da.get("tool_reach") else None,
                                 callback=cb)
     except Exception as exc:  # recorded, reported
         k = len(records) + 1
@@ -393,6 +394,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--alpha", type=float,
                     help="DA relaxation factor instead of the protocol's (a study: give it its "
                          "own --out; the run cache can be shared)")
+    ap.add_argument("--tool-reach", action="store_true",
+                    help="clip every DA command to the tool's reach (a study: its own --out)")
+    ap.add_argument("--fe-runs", type=int,
+                    help="FE runs per DA chain instead of the protocol's (a new --out only)")
     ap.add_argument("--executable",
                     help="sparlab_form; default: a copy of build/bin/sparlab_form kept in "
                          "<work>/bin, so a rebuild during the benchmark cannot change the "
@@ -408,10 +413,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cfg = json.loads(cfg_path.read_text())
         if args.alpha is not None and args.alpha != cfg["da"]["alpha"]:
             ap.error(f"{cfg_path} has alpha {cfg['da']['alpha']}; use another --out")
+        if args.tool_reach and not cfg["da"].get("tool_reach"):
+            ap.error(f"{cfg_path} does not clip to the tool's reach; use another --out")
+        if args.fe_runs is not None:
+            cfg["da"]["fe_runs"] = args.fe_runs   # a longer chain resumes from the cache
+            cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
     else:
         cfg = copy.deepcopy(PROTOCOL)
         if args.alpha is not None:
             cfg["da"]["alpha"] = args.alpha
+        if args.tool_reach:
+            cfg["da"]["tool_reach"] = True
+        if args.fe_runs is not None:
+            cfg["da"]["fe_runs"] = args.fe_runs
         cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
     if args.executable:
         exe = str(Path(args.executable).resolve())

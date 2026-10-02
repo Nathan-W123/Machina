@@ -595,14 +595,20 @@ def perturbed_commanded(target: HeightMap, setup: FormingSetup, rng: np.random.G
     return hm, info
 
 
-def compensated_commanded(target: HeightMap, formed: HeightMap, alpha: float = 1.0
-                          ) -> HeightMap:
+def compensated_commanded(target: HeightMap, formed: HeightMap, alpha: float = 1.0,
+                          **da_options: Any) -> HeightMap:
     """One displacement-adjustment step from a predicted (or simulated)
     formed surface of the target: t - alpha (f - t), conditioned as in
-    `precomp.compensation` (flange held, z <= 0, wall angle <= 65 deg)."""
-    res = displacement_adjustment(target, lambda c: formed, iterations=1, alpha=alpha)
+    `precomp.compensation` (flange held, z <= 0, wall angle <= 65 deg).
+    `da_options`: further keywords of `displacement_adjustment` - a
+    support's `upper_bound`, `hold_mask` and `adjust_mask`, the tool's reach
+    (`tool_radius`)."""
+    res = displacement_adjustment(target, lambda c: formed, iterations=1, alpha=alpha,
+                                  **da_options)
     out = res.proposed
     out.metadata["commanded"] = {"kind": "compensated", "alpha": alpha}
+    if da_options.get("tool_radius") is not None:
+        out.metadata["commanded"]["tool_reach_radius_m"] = float(da_options["tool_radius"])
     return out
 
 
@@ -632,6 +638,7 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
              created_at: str, kinds: Sequence[str] = VARIANTS, seed: int = 0,
              perturbation: PerturbationSpec = PerturbationSpec(),
              compensator: Optional[Callable[[HeightMap, FormingSetup], HeightMap]] = None,
+             da_options: Optional[Callable[["DesignPoint"], Mapping[str, Any]]] = None,
              store_toolpath: bool = False) -> GenerationReport:
     """Simulate the requested variants of every design point into `dataset`.
 
@@ -651,6 +658,9 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
     compensator : ``(target, setup) -> commanded`` for the "compensated"
         variant (e.g. surrogate DA with an earlier model); default: one DA
         step from the simulated uncompensated part.
+    da_options : ``point -> {keyword: value}`` of `displacement_adjustment`
+        for that default step (a support's masks and command bound, the
+        tool's reach `tool_radius`); None: the defaults.
     store_toolpath : also store the setup's tool path of every commanded
         surface (features rebuild it deterministically otherwise).
     """
@@ -760,7 +770,9 @@ def generate(dataset: Dataset, points: Sequence[DesignPoint], simulator: Simulat
                             fail(point, "compensated", "dependency failed: no uncompensated "
                                  "sample (request the 'uncompensated' variant too)")
                             continue
-                    cmd = compensated_commanded(target, f0)
+                    cmd = compensated_commanded(target, f0,
+                                                **(dict(da_options(point)) if da_options
+                                                   else {}))
                     info = {"kind": "compensated", "from": "one DA step on the simulated "
                             "uncompensated part"}
             except (PrecompError, ValueError) as exc:

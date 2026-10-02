@@ -81,6 +81,28 @@ def tool_center_surface(hm: HeightMap, tool_radius: float) -> HeightMap:
                                             "tool_radius": float(tool_radius)})
 
 
+def tool_reach_surface(hm: HeightMap, tool_radius: float) -> HeightMap:
+    """The surface a ball of radius `tool_radius` pressing from above forms
+    at most under `hm` [m]: the lowest points of the balls at the drop-cutter
+    heights, ``min over |d| <= R of [c_z(x + d) - sqrt(R^2 - |d|^2)]`` - the
+    morphological closing of the surface by the ball. It is never below
+    `hm` and equals it wherever the ball fits; a pit narrower than the ball
+    or a concave corner tighter than R (a floor fillet) is filled to what
+    the ball reaches. Its drop-cutter surface is `hm`'s (closing does not
+    change the dilation), so a tool path made for either is the same.
+    Metadata: the nodes raised and the largest raise [m]."""
+    footprint, structure = spherical_structure(tool_radius, hm.grid.h)
+    cz = tool_center_surface(hm, tool_radius).z
+    z = ndimage.grey_erosion(cz, footprint=footprint, structure=structure, mode="nearest")
+    z = np.maximum(z, hm.z)                 # round-off: never below the surface
+    raised = z - hm.z
+    meta = dict(hm.metadata)
+    meta["tool_reach"] = {"tool_radius": float(tool_radius),
+                          "nodes_raised": int(np.sum(raised > 1e-12)),
+                          "max_raise_m": float(raised.max())}
+    return HeightMap(hm.grid, z, hm.mask, meta)
+
+
 # ---------------------------------------------------------------------------
 # Toolpath container
 # ---------------------------------------------------------------------------

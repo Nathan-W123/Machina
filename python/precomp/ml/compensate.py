@@ -148,7 +148,11 @@ def surrogate_compensate(target: HeightMap, setup: Any, surrogate: Any, *,
                          level: float = 0.9,
                          max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
                          allow_out_of_envelope: bool = False,
-                         interval_stop: bool = False) -> SurrogateCompensation:
+                         interval_stop: bool = False,
+                         upper_bound: Any = None,
+                         hold_mask: Optional[np.ndarray] = None,
+                         adjust_mask: Optional[np.ndarray] = None,
+                         tool_radius: Optional[float] = None) -> SurrogateCompensation:
     """Displacement adjustment of `target` on `surrogate` (see the module docstring).
 
     iterations : at most this many surrogate predictions.
@@ -172,6 +176,9 @@ def surrogate_compensate(target: HeightMap, setup: Any, surrogate: Any, *,
         targets of the tests (0.054 against 0.056 mm), 9 % larger on the 11
         of the demonstration (0.049 against 0.045 mm) and the same on the 10
         of its freeform run (0.040 mm). Off by default.
+    upper_bound, hold_mask, adjust_mask, tool_radius : as for
+        `displacement_adjustment` (a support's command bound and masks,
+        `precomp.fea.support`; the tool's reach). None: the defaults.
     """
     if iterations < 1:
         raise ValueError("iterations must be >= 1")
@@ -211,7 +218,9 @@ def surrogate_compensate(target: HeightMap, setup: Any, surrogate: Any, *,
                 break
         da = displacement_adjustment(target, pred, iterations=1, alpha=alpha,
                                      direction=direction, smoothing=smoothing,
-                                     max_wall_angle_deg=max_wall_angle_deg, initial=c)
+                                     max_wall_angle_deg=max_wall_angle_deg, initial=c,
+                                     upper_bound=upper_bound, hold_mask=hold_mask,
+                                     adjust_mask=adjust_mask, tool_radius=tool_radius)
         h = dict(da.history[0])
         h["iteration"] = k
         h["predicted"] = True

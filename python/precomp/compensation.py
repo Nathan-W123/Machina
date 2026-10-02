@@ -29,7 +29,15 @@ Every update here is conditioned the same way:
   whose slope nowhere exceeds `max_wall_angle_deg` (`limit_wall_angle`). It
   only ever raises the surface - it never cuts deeper than asked. It is the
   forming tool's limit and applies to the command below the sheet plane; a
-  command above it (the support's) is kept as it is.
+  command above it (the support's) is kept as it is;
+* optionally (`tool_radius`), the tool's reach: the command is raised to
+  the lowest surface a ball of that radius pressing from above forms
+  (`precomp.toolpath.tool_reach_surface`, the closing by the ball). A pit
+  narrower than the tool, which DA digs where the formed part keeps coming
+  out too shallow, is never formed; without the clip the next update digs
+  it deeper still, and a model trained on the command learns depth that
+  never reached the sheet. The tool path is the same with and without the
+  clip (the drop-cutter surface does not change).
 
 All heights are in metres, angles in degrees where named `_deg`.
 """
@@ -172,7 +180,8 @@ def _upper(upper_bound: Optional[UpperBound], shape: Tuple[int, int],
 
 def _condition(commanded: HeightMap, z_new: np.ndarray, hold: np.ndarray, target: HeightMap,
                max_wall_angle_deg: Optional[float],
-               upper_bound: Optional[UpperBound] = None) -> HeightMap:
+               upper_bound: Optional[UpperBound] = None,
+               tool_radius: Optional[float] = None) -> HeightMap:
     z = np.where(hold, target.z, z_new)
     z = np.minimum(z, _upper(upper_bound, z.shape, z))
     hm = commanded.with_z(z)
@@ -184,6 +193,13 @@ def _condition(commanded: HeightMap, z_new: np.ndarray, hold: np.ndarray, target
             # plane); the part above it is the support's and stays as it is
             below = limit_wall_angle(hm.with_z(np.minimum(z, 0.0)), max_wall_angle_deg)
             hm = below.with_z(np.where(z > 0.0, z, below.z))
+    if tool_radius is not None:
+        from .toolpath import tool_reach_surface
+
+        # the forming tool's reach, on its part of the command (as above)
+        z = hm.z
+        reach = tool_reach_surface(hm.with_z(np.minimum(z, 0.0)), tool_radius)
+        hm = reach.with_z(np.where(z > 0.0, z, reach.z))
     return hm
 
 
@@ -255,6 +271,7 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
                             adjust_mask: Optional[np.ndarray] = None,
                             max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
                             upper_bound: Optional[UpperBound] = None,
+                            tool_radius: Optional[float] = None,
                             tolerance: Optional[float] = None,
                             initial: Optional[HeightMap] = None,
                             callback: Optional[Callable[[int, HeightMap, HeightMap, HeightMap],
@@ -281,6 +298,8 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
         from above). A support that pushes up gives it with
         `precomp.fea.support.command_upper_bound(setup, target)` (and its
         masks with `compensation_masks`).
+    tool_radius : clip every update to the reach of a ball tool of this
+        radius [m] (`setup.tool_radius`; see the module docstring), or None.
     tolerance : stop when the RMS error over the adjusted region is <= this [m].
     initial : the first commanded surface (default: the target).
     callback : called as callback(k, commanded, formed, error) after each
@@ -317,7 +336,8 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
         if callback is not None:
             callback(k, c, f, err)
         z_new = _apply_update(c, target, err, adjust, alpha, direction, smoothing)
-        proposed = _condition(c, z_new, hold, target, max_wall_angle_deg, upper_bound)
+        proposed = _condition(c, z_new, hold, target, max_wall_angle_deg, upper_bound,
+                              tool_radius)
         entry["update_rms_m"] = float(np.sqrt(np.mean((proposed.z - c.z)[adjust] ** 2)))
         history.append(entry)
         if tolerance is not None and m["rms"] <= tolerance:
@@ -328,7 +348,7 @@ def displacement_adjustment(target: HeightMap, predictor: Predictor, *, iteratio
     cbest = cbest.copy()
     cbest.metadata["compensation"] = {"method": "displacement_adjustment", "alpha": alpha,
                                       "direction": direction, "iteration": kbest,
-                                      "smoothing_m": smoothing}
+                                      "smoothing_m": smoothing, "tool_radius_m": tool_radius}
     return DAResult(target, cbest, fbest, kbest, proposed, history, converged)
 
 
@@ -340,7 +360,8 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
                      max_gap: Optional[float] = None,
                      upper_bound: Optional[UpperBound] = None,
                      hold_mask: Optional[np.ndarray] = None,
-                     adjust_mask: Optional[np.ndarray] = None
+                     adjust_mask: Optional[np.ndarray] = None,
+                     tool_radius: Optional[float] = None
                      ) -> Tuple[HeightMap, Dict[str, Any]]:
     """One shop-floor DA step from a measured part.
 
@@ -352,7 +373,7 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
     than `max_gap` [m], default 3 grid spacings, from any scan point are
     left without data) and the DA update ``c - alpha (scan - target)`` is
     applied where the scan has data, conditioned as in the module docstring
-    (`upper_bound`, `hold_mask` and `adjust_mask` as for
+    (`upper_bound`, `hold_mask`, `adjust_mask` and `tool_radius` as for
     `displacement_adjustment`: by default the flange is held and the part
     adjusted; a setup with a rim pass adjusts the flange strip it sweeps,
     `precomp.fea.support.compensation_masks`).
@@ -384,7 +405,8 @@ def update_from_scan(commanded: HeightMap, scan: Union[PathLike, np.ndarray, Hei
     report["scan_error"] = metrics(err, adjust)
     report["coverage"] = float(np.mean(err.mask[adjust]))
     z_new = _apply_update(commanded, target, err, adjust, alpha, direction, smoothing)
-    new = _condition(commanded, z_new, hold, target, max_wall_angle_deg, upper_bound)
+    new = _condition(commanded, z_new, hold, target, max_wall_angle_deg, upper_bound,
+                     tool_radius)
     new.metadata["compensation"] = {"method": "update_from_scan", "alpha": alpha,
                                     "direction": direction, "smoothing_m": smoothing}
     return new, report
