@@ -2,21 +2,27 @@
 
 Setup `springback_fine` (0.833 mm incompatible-mode Hex8, 1 layer, 5 thickness points, penalty 10); the 8 test parts of benchmarks/springback. Deviation of the released part from the target over the part [mm]; rim sag = mean vertical deviation of the part less than 1 mm deep (negative = too deep); interior = the part deeper than that.
 
-18 simulations complete, 0 failed records.
+24 simulations complete, 0 failed records.
 
 | strategy | method | FE runs / part | parts | vertical RMS mean | median | max mean | normal RMS | rim sag | upper band RMS | interior RMS (bias) | flange bias | runtime / run [s] | CPU h / part | Newton its | failed |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| backing_plate | uncompensated | 1 | 6 | **0.294** | 0.297 | 0.580 | 0.274 | -0.421 | 0.431 | 0.143 (-0.06) | -0.045 | 3189 | 0.89 | 5420 | 0 |
-| backing_plate | FE-DA-1 | 2 | 6 | **0.249** | 0.252 | 0.504 | 0.238 | -0.316 | 0.340 | 0.149 (0.07) | -0.042 | 3285 | 1.80 | 5653 | 0 |
-| backing_plate | FE-DA-2 | 3 | 6 | **0.256** | 0.259 | 0.562 | 0.245 | -0.303 | 0.332 | 0.170 (0.11) | -0.053 | 2656 | 2.54 | 4353 | 0 |
+| backing_plate | uncompensated | 1 | 7 | **0.294** | 0.290 | 0.582 | 0.273 | -0.426 | 0.436 | 0.142 (-0.07) | -0.047 | 3354 | 0.93 | 5652 | 0 |
+| backing_plate | FE-DA-1 | 2 | 7 | **0.245** | 0.251 | 0.506 | 0.234 | -0.323 | 0.345 | 0.134 (0.06) | -0.044 | 3153 | 1.81 | 5369 | 0 |
+| backing_plate | FE-DA-2 | 3 | 7 | **0.250** | 0.257 | 0.553 | 0.240 | -0.309 | 0.337 | 0.152 (0.09) | -0.053 | 3190 | 2.69 | 5135 | 0 |
+| dsif | uncompensated | 1 | 1 | **0.347** | 0.347 | 0.620 | 0.333 | -0.428 | 0.439 | 0.182 (-0.15) | -0.092 | 1233 | 0.34 | 2687 | 0 |
+| dsif | FE-DA-1 | 2 | 1 | **0.281** | 0.281 | 0.618 | 0.278 | -0.342 | 0.378 | 0.044 (-0.03) | -0.100 | 1324 | 0.71 | 2948 | 0 |
+| dsif | FE-DA-2 | 3 | 1 | **0.298** | 0.298 | 0.598 | 0.295 | -0.370 | 0.402 | 0.029 (-0.01) | -0.104 | 1235 | 1.05 | 2732 | 0 |
 
-The same over the 6 parts where every strategy and method has a result (dome-s2026-0000, elliptic_cone-s2026-0000, elliptic_cone-s2026-0001, pyramid-s2026-0000, pyramid-s2026-0001, truncated_cone-s2026-0000):
+The same over the 1 parts where every strategy and method has a result (dome-s2026-0000):
 
 | strategy | method | vertical RMS mean | max mean | rim sag | interior RMS (bias) |
 |---|---|--:|--:|--:|--:|
-| backing_plate | uncompensated | **0.294** | 0.580 | -0.421 | 0.143 (-0.06) |
-| backing_plate | FE-DA-1 | **0.249** | 0.504 | -0.316 | 0.149 (0.07) |
-| backing_plate | FE-DA-2 | **0.256** | 0.562 | -0.303 | 0.170 (0.11) |
+| backing_plate | uncompensated | **0.307** | 0.497 | -0.373 | 0.185 (-0.18) |
+| backing_plate | FE-DA-1 | **0.213** | 0.413 | -0.263 | 0.027 (0.00) |
+| backing_plate | FE-DA-2 | **0.203** | 0.397 | -0.245 | 0.028 (0.02) |
+| dsif | uncompensated | **0.347** | 0.620 | -0.428 | 0.182 (-0.15) |
+| dsif | FE-DA-1 | **0.281** | 0.618 | -0.342 | 0.044 (-0.03) |
+| dsif | FE-DA-2 | **0.298** | 0.598 | -0.370 | 0.029 (-0.01) |
 
 The 2 mm benchmark (benchmarks/springback, stage n18, single-point forming) on the same parts:
 
@@ -32,7 +38,8 @@ Per part, vertical RMS [mm] (max |dev| in brackets; rim sag after the slash):
 
 | part | 2 mm uncomp. | backing_plate uncompensated | backing_plate FE-DA-1 | backing_plate FE-DA-2 | dsif uncompensated | dsif FE-DA-1 | dsif FE-DA-2 | none uncompensated | none FE-DA-1 | none FE-DA-2 |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| dome-s2026-0000 | 0.654 (1.07) / -0.83 | 0.307 (0.50) / -0.37 | 0.213 (0.41) / -0.26 | 0.203 (0.40) / -0.24 | - | - | - | - | - | - |
+| dome-s2026-0000 | 0.654 (1.07) / -0.83 | 0.307 (0.50) / -0.37 | 0.213 (0.41) / -0.26 | 0.203 (0.40) / -0.24 | 0.347 (0.62) / -0.43 | 0.281 (0.62) / -0.34 | 0.298 (0.60) / -0.37 | - | - | - |
+| dome-s2026-0001 | 0.776 (1.40) / -1.16 | 0.290 (0.59) / -0.46 | 0.223 (0.51) / -0.36 | 0.216 (0.50) / -0.35 | - | - | - | - | - | - |
 | elliptic_cone-s2026-0000 | 0.621 (1.21) / -0.96 | 0.277 (0.57) / -0.42 | 0.252 (0.50) / -0.30 | 0.294 (0.69) / -0.26 | - | - | - | - | - | - |
 | elliptic_cone-s2026-0001 | 0.841 (1.51) / -1.24 | 0.305 (0.61) / -0.44 | 0.266 (0.56) / -0.36 | 0.260 (0.55) / -0.37 | - | - | - | - | - | - |
 | pyramid-s2026-0000 | 0.791 (1.45) / -1.14 | 0.290 (0.57) / -0.41 | 0.213 (0.48) / -0.29 | 0.217 (0.48) / -0.27 | - | - | - | - | - | - |
