@@ -370,3 +370,42 @@ def test_a_line_that_grazes_the_last_loop_keeps_its_nearest_point():
     B = np.array([[-0.003, 0.0], [-0.003, 0.001]])
     xy = _blend_to_height(cz, A, B, np.zeros(2))
     np.testing.assert_allclose(xy, B, atol=1e-12)
+
+
+def test_a_row_inside_the_surface_without_a_crossing_walks_to_its_loop():
+    """A line from A that never crosses z (the surface comes down to z only
+    at B) kept A, which may lie above z: the tool centre then sat inside the
+    surface. It now takes B, on its loop at z."""
+    from precomp.toolpath import _blend_to_height
+
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    cz = zeros(g).with_z(50.0 * (X + 0.003) ** 2)
+    A = np.array([[-0.004, 0.0], [-0.004, 0.001]])
+    B = np.array([[-0.003, 0.0], [-0.003, 0.001]])
+    xy = _blend_to_height(cz, A, B, np.zeros(2))
+    np.testing.assert_allclose(xy, B, atol=1e-12)
+    # with a pit next to B the row stops where the surface reaches z
+    cz2 = cz.with_z(cz.z - 2e-6)
+    xy2 = _blend_to_height(cz2, A, B, np.zeros(2))
+    gap = cz2.interpolate(xy2[:, 0], xy2[:, 1], masked=False)
+    assert np.all(gap <= 0.0) and np.all(gap > -1e-7)
+    assert np.all(np.abs(xy2[:, 0] + 0.003) < 0.25e-3)
+
+
+def test_the_last_revolution_never_gouges_a_raised_spot_of_the_floor():
+    """A DA command raises a spot of a steep cone's floor off centre. The
+    last revolution starts at the previous loop, where no line towards the
+    last loop crossed the deepest level: those points kept the previous
+    loop's position, up to a step-down below the drop-cutter surface (the
+    fine-mesh benchmark: 13 of 48 DA decks, 0.04-0.70 mm)."""
+    g = Grid.centered(0.04, 2.5e-4)
+    X, Y = g.mesh()
+    cone = TruncatedCone(0.0081, 54.0, 0.003, 0.0015, 0.0015).heightmap(g)
+    bump = 0.7e-3 * np.exp(-((X - 3.5e-3) ** 2 + Y ** 2) / (2 * 0.8e-3 ** 2))
+    target = cone.with_z(np.minimum(cone.z + bump * (cone.z < -0.003 + 1e-4), 0.0))
+    for make in (spiral_toolpath, contour_toolpath):
+        path = make(target, 0.004, 1e-3, 1e-3)
+        cz = tool_center_surface(target, 0.004)
+        assert path.metadata["max_gouge_m"] == max_gouge(path, cz) < 1e-6
+        assert path.points[:, 2].min() - float(cz.z.min()) < 1e-5

@@ -155,3 +155,69 @@ def test_limit_wall_angle_no_longer_stalls_on_combined_differences():
     info = out.metadata["wall_angle_limit"]
     assert math.tan(math.radians(65)) / math.sqrt(2) < info["cone_slope"] < 2.14
     assert 0 < info["nodes_raised"] < 10
+
+
+def test_tool_reach_is_the_closing_by_the_ball_and_keeps_the_tool_path():
+    from precomp.toolpath import spiral_toolpath, tool_center_surface, tool_reach_surface
+
+    g = Grid.centered(0.04, 2.5e-4)
+    X, Y = g.mesh()
+    cone = TruncatedCone(0.009, 40.0, 0.003, 0.001, 0.004).heightmap(g)
+    # a pit 1 mm wide (sigma 0.5 mm) and 0.5 mm deep in the 5 mm floor, off centre
+    pit = cone.with_z(cone.z - 0.5e-3 * np.exp(-((X - 1.5e-3) ** 2 + Y ** 2)
+                                              / (2 * 0.5e-3 ** 2)))
+    r = tool_reach_surface(pit, 0.004)
+    assert np.all(r.z >= pit.z) and np.all(r.z <= 0.0)
+    assert r.metadata["tool_reach"]["max_raise_m"] > 0.3e-3     # the pit is not formed
+    # a bowl curved five times less than the ball: the ball fits everywhere
+    bowl = cone.with_z(np.minimum(0.0, -3e-3 + (X ** 2 + Y ** 2) / (2 * 0.02)))
+    # (to the grid: the ball meets a node between nodes, h^2 / 8R = 2 um)
+    np.testing.assert_allclose(tool_reach_surface(bowl, 0.004).z, bowl.z, atol=3e-6)
+    # a floor fillet as large as the tool, but curved round the axis as well:
+    # the ball does not quite fit (40 um here); with a 1 mm fillet, 0.24 mm
+    raise_4 = tool_reach_surface(cone, 0.004).metadata["tool_reach"]["max_raise_m"]
+    sharp = TruncatedCone(0.009, 40.0, 0.003, 0.001, 0.001).heightmap(g)
+    raise_1 = tool_reach_surface(sharp, 0.004).metadata["tool_reach"]["max_raise_m"]
+    assert 0.02e-3 < raise_4 < 0.06e-3 and 0.2e-3 < raise_1 < 0.3e-3
+    # idempotent, and the same drop-cutter surface and tool path
+    np.testing.assert_allclose(tool_reach_surface(r, 0.004).z, r.z, atol=1e-12)
+    np.testing.assert_allclose(tool_center_surface(r, 0.004).z,
+                               tool_center_surface(pit, 0.004).z, atol=1e-12)
+    a, b = spiral_toolpath(pit, 0.004, 1e-3, 1e-3), spiral_toolpath(r, 0.004, 1e-3, 1e-3)
+    np.testing.assert_allclose(a.points, b.points, atol=1e-12)
+
+
+def test_da_clipped_to_the_tool_reach_stops_digging_what_the_tool_cannot_form():
+    """The formed part is what the tool reaches, shallower by a constant
+    springback; the target has a pit narrower than the tool. Unclipped, DA
+    digs the pit deeper every step (the formed part never follows); clipped,
+    the command stays formable and the rest of the part converges as
+    before."""
+    from precomp.toolpath import tool_reach_surface
+
+    g = Grid.centered(0.04, 2.5e-4)
+    X, Y = g.mesh()
+    cone = TruncatedCone(0.009, 40.0, 0.003, 0.001, 0.004).heightmap(g)
+    target = cone.with_z(cone.z - 0.5e-3 * np.exp(-((X - 1.5e-3) ** 2 + Y ** 2)
+                                                 / (2 * 0.5e-3 ** 2)))
+    R = 0.004
+
+    def form(c):
+        r = tool_reach_surface(c, R)
+        return r.with_z(np.minimum(0.0, 0.9 * r.z))
+
+    kw = dict(iterations=4, max_wall_angle_deg=None)
+    free = displacement_adjustment(target, form, **kw)
+    clip = displacement_adjustment(target, form, tool_radius=R, **kw)
+    d_free = [h["commanded_depth_m"] for h in free.history]
+    d_clip = [h["commanded_depth_m"] for h in clip.history]
+    assert d_free[-1] - d_free[1] > 0.5e-3                   # keeps digging
+    assert max(d_clip) < d_free[-1] - 0.5e-3
+    assert np.allclose(tool_reach_surface(clip.proposed, R).z, clip.proposed.z, atol=1e-12)
+    assert clip.proposed.metadata["tool_reach"]["tool_radius"] == R
+    assert clip.commanded.metadata["compensation"]["tool_radius_m"] == R
+    # where the ball fits, the clip changes nothing: the same error away from the pit
+    away = part_mask(target) & (np.hypot(X - 1.5e-3, Y) > 4e-3)
+    assert abs(free.history[1]["error"]["rms"] - clip.history[1]["error"]["rms"]) < 0.2e-3
+    np.testing.assert_allclose(free.history[0]["error"]["rms"], clip.history[0]["error"]["rms"])
+    assert np.abs((free.proposed.z - clip.proposed.z)[away]).max() < 1e-3

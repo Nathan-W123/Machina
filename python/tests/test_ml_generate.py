@@ -236,3 +236,28 @@ def test_the_element_formulation_and_thickness_points_are_recorded_physics():
         "sparlab:hex8:2mm:2L:finite_logarithmic:321"
     assert SparlabSimulator.fidelity_of(fine) == \
         "sparlab:hex8-im-tp5:0.833333mm:1L:finite_logarithmic:321"
+
+
+def test_the_compensated_variant_takes_da_options(tmp_path):
+    """`da_options` reaches the DA step of the compensated variant: here the
+    tool's reach, which the stored command then satisfies."""
+    from precomp.toolpath import tool_reach_surface
+
+    space = DesignSpace(families=("truncated_cone",), grid_spacing=1e-3,
+                        materials=("AA5754-O",), process={})
+    points = design_points(space, 2, seed=3)
+    seen = []
+
+    def opts(p):
+        seen.append(p.point_id)
+        return {"tool_radius": p.setup.tool_radius}
+
+    ds = Dataset.create(tmp_path / "d", created_at=ML_CREATED_AT)
+    rep = generate(ds, points, ProxySimulator(), created_at=ML_CREATED_AT, seed=3,
+                   kinds=("uncompensated", "compensated"), da_options=opts)
+    assert not rep.failed and sorted(seen) == sorted(p.point_id for p in points)
+    for p in points:
+        c = ds.load(f"{p.point_id}-comp").commanded
+        assert c.metadata["commanded"]["tool_reach_radius_m"] == p.setup.tool_radius
+        np.testing.assert_allclose(tool_reach_surface(c, p.setup.tool_radius).z, c.z,
+                                   atol=1e-9)

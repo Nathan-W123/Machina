@@ -140,3 +140,20 @@ def test_verification_through_sparlab_form_and_the_api(tmp_path, gbm_surrogate, 
     # the proxy as a model says what it is
     q = api.predict(target, setup, ProxySimulator(), method="surrogate")
     assert q.details["model_data_source"] == "proxy - not physics"
+
+
+def test_surrogate_compensation_passes_the_conditioning_on(gbm_surrogate, proxy_split):
+    """The support's bound and masks and the tool's reach reach every DA step."""
+    from precomp.toolpath import tool_reach_surface
+
+    s = next(x for x in proxy_split["test"] if gbm_surrogate.assess(x.target, x.setup)[
+        "in_envelope"])
+    R = s.forming_setup().tool_radius
+    res = surrogate_compensate(s.target, s.setup, gbm_surrogate, iterations=3,
+                               stagnation=0.0, tool_radius=R, upper_bound=0.0)
+    assert res.best_iteration > 0          # a compensated iterate, not the target
+    c = res.compensated
+    np.testing.assert_allclose(tool_reach_surface(c, R).z, c.z, atol=1e-9)
+    hold = np.ones(s.target.grid.shape, dtype=bool)
+    with pytest.raises(ValueError, match="adjusted region is empty"):
+        surrogate_compensate(s.target, s.setup, gbm_surrogate, iterations=2, hold_mask=hold)

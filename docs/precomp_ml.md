@@ -9,14 +9,13 @@ the SparLab bridge, metrology and compensation are used as they are.
 
 **Where the numbers come from.** Every metric the package reports carries its
 data source: `SparLab simulation`, `scan`, or `proxy - not physics`. The
-C++ forming solver `sparlab_form` does not exist on this branch yet, so
-everything measured so far - the tests and the demonstration in
-[Results on proxy data](#results-on-proxy-data) - comes from the
-`ProxySimulator`, an analytic stand-in that is **not physics**. Those numbers
-show that the pipeline works and what its outputs look like; they say nothing
-about how well a model predicts SparLab or a real part. The SparLab path is
-exercised end to end with the test-double solver (formed = 0.9 x commanded)
-and will be benchmarked when the solver lands.
+benchmarks on the C++ forming solver `sparlab_form` are summarised in
+[Results on SparLab simulations](#results-on-sparlab-simulations): they are
+simulations with nominal material data, not experiments, and no model here
+has seen a scanned part. The demonstration in
+[Results on proxy data](#results-on-proxy-data) and the unit tests use the
+`ProxySimulator`, an analytic stand-in that is **not physics**; those numbers
+show that the pipeline works and what its outputs look like, nothing more.
 
 ## Contents
 
@@ -33,6 +32,7 @@ and will be benchmarked when the solver lands.
 * [Compensation on the surrogate](#compensation-on-the-surrogate)
 * [Choosing the next runs](#choosing-the-next-runs)
 * [Command line and API](#command-line-and-api)
+* [Results on SparLab simulations](#results-on-sparlab-simulations)
 * [Results on proxy data](#results-on-proxy-data)
 * [Limitations](#limitations)
 
@@ -558,6 +558,32 @@ res.stopped, res.residual_interval                                  # why it sto
 check = verify_with_fea(res, setup, "runs")                         # the honest check
 ```
 
+## Results on SparLab simulations
+
+**SparLab simulations (`sparlab_form`, AA5754-O with nominal handbook data),
+not experiments.** Two benchmarks compare the ML first shot (surrogate DA on
+the target, then one simulation of the compensated shape) with forming the
+target as it is and with FE displacement adjustment (FE-DA-k: k steps with
+the FE model in the loop, k + 1 runs per part), on the same 8 held-out test
+parts (two per family: truncated cone, pyramid, dome, elliptic cone), stage
+n18 (48 training / 16 calibration parts). Vertical RMS deviation over the
+part, mean over the 8 parts [mm]:
+
+| benchmark | uncompensated | FE-DA-1 | FE-DA-2 | ML-GBM | ML-MLP | dz error GBM / MLP |
+|---|--:|--:|--:|--:|--:|--:|
+| [2 mm mesh, single-point](../benchmarks/springback/README.md) | 0.731 | 0.623 | 0.602 | 0.634 | 0.626 | 0.085 / 0.106 |
+| [fine mesh, backing plate](../benchmarks/springback_fine_ml/README.md) (data at penalty 3, test at 10) | 0.300 | 0.263 | 0.272 | 0.253 | 0.250 | 0.049 / 0.052 |
+
+On both, the ML first shot is about as good as one FE-DA step with one FE
+run fewer per part; on the plate it is 0.010-0.012 mm better on average
+(5 / 6 of 8 parts), which 8 parts do not resolve (paired sd 0.017-0.018 mm).
+The remaining deviation is dominated by the rim sag, which no method
+removes. The training set is 144 simulated samples on the 2 mm mesh and
+128 (about 43 CPU-h) on the fine mesh. Coverage of the 90 % conformal intervals
+on the fine-mesh test samples: 95 % (GBM), 88 % (MLP); one of the 8 test
+targets was outside the training envelope and compensated with the
+override. Details, per-part tables and limitations are in the two READMEs.
+
 ## Results on proxy data
 
 **All numbers in this section are measured on ProxySimulator data - proxy,
@@ -608,12 +634,13 @@ part, averaged over samples.
 
 ## Limitations
 
-* **No physics yet.** Every number measured so far is on proxy data or the
-  test double. Accuracy, coverage and the compensation factor on SparLab data
-  are unknown until the solver lands and a design is simulated; the proxy is
-  smooth and noise-free and probably easier than FE data in some respects
-  (no discretisation noise, no path-dependent local effects) and harder in
-  others (strong multiplicative process dependence by construction).
+* **Simulation, not experiment.** The SparLab results are simulations with
+  nominal material data, on 8 test parts from four families; no model has
+  been trained on or checked against scanned parts. The proxy results say
+  nothing about SparLab: the proxy is smooth and noise-free and probably
+  easier than FE data in some respects (no discretisation noise, no
+  path-dependent local effects) and harder in others (strong multiplicative
+  process dependence by construction).
 * **Small-data regime.** A few dozen parts; the part, not the node, is the
   unit of evidence. Errors are dominated by a part-wide offset, and the
   ensemble spread tracks them only loosely: whether it narrows the intervals

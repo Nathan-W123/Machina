@@ -1,0 +1,49 @@
+{
+  "baseline": "benchmarks/springback_fine/cases.csv, strategy backing_plate (penalty 10)",
+  "da": {
+    "alpha": 1.0,
+    "direction": "vertical",
+    "max_wall_angle_deg": 65.0,
+    "smoothing": null,
+    "tool_reach": true
+  },
+  "data_source": "SparLab simulation",
+  "design_from": "benchmarks/springback/config.json (families, part bounds, seed, grid, split)",
+  "fe_da_fixed": "fe_da_fixed/cases.csv (penalty 10, fixed decks, reach clip)",
+  "preset_data": "springback_fine_bulk",
+  "preset_test": "springback_fine",
+  "protocol_revision": 1,
+  "seed": 2026,
+  "split": {
+    "calibration_every": 4,
+    "seed": 2026,
+    "test_per_family": 2
+  },
+  "support": "backing_plate",
+  "support_settings": {
+    "clearance": 0.001
+  },
+  "surrogate": {
+    "gbm": {
+      "max_iter": 300,
+      "n_members": 8
+    },
+    "iterations": 8,
+    "mlp": {
+      "epochs": 40,
+      "hidden": [
+        128,
+        128
+      ],
+      "n_members": 5
+    },
+    "points_per_sample": 2000,
+    "stagnation": 0.02
+  },
+  "timeout_s": 28800.0,
+  "train_kinds": [
+    "uncompensated",
+    "compensated"
+  ],
+  "upper_band_depth": 0.001
+}

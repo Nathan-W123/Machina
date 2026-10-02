@@ -81,6 +81,28 @@ def tool_center_surface(hm: HeightMap, tool_radius: float) -> HeightMap:
                                             "tool_radius": float(tool_radius)})
 
 
+def tool_reach_surface(hm: HeightMap, tool_radius: float) -> HeightMap:
+    """The surface a ball of radius `tool_radius` pressing from above forms
+    at most under `hm` [m]: the lowest points of the balls at the drop-cutter
+    heights, ``min over |d| <= R of [c_z(x + d) - sqrt(R^2 - |d|^2)]`` - the
+    morphological closing of the surface by the ball. It is never below
+    `hm` and equals it wherever the ball fits; a pit narrower than the ball
+    or a concave corner tighter than R (a floor fillet) is filled to what
+    the ball reaches. Its drop-cutter surface is `hm`'s (closing does not
+    change the dilation), so a tool path made for either is the same.
+    Metadata: the nodes raised and the largest raise [m]."""
+    footprint, structure = spherical_structure(tool_radius, hm.grid.h)
+    cz = tool_center_surface(hm, tool_radius).z
+    z = ndimage.grey_erosion(cz, footprint=footprint, structure=structure, mode="nearest")
+    z = np.maximum(z, hm.z)                 # round-off: never below the surface
+    raised = z - hm.z
+    meta = dict(hm.metadata)
+    meta["tool_reach"] = {"tool_radius": float(tool_radius),
+                          "nodes_raised": int(np.sum(raised > 1e-12)),
+                          "max_raise_m": float(raised.max())}
+    return HeightMap(hm.grid, z, hm.mask, meta)
+
+
 # ---------------------------------------------------------------------------
 # Toolpath container
 # ---------------------------------------------------------------------------
@@ -662,8 +684,9 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
     the surface. Where A and B coincide (the first revolution, or a single
     level) the direction is the downhill direction of c_z at A (smoothed over
     two grid spacings), over four grid spacings. A row with no crossing keeps
-    A: there the surface stays below z (the tool is in the air), or, if not,
-    the point shows up in `max_gouge`.
+    A where the surface stays below z there (the tool is in the air); where
+    it is above z (A inside the surface) the point walks towards B to the
+    first point at z, or takes B (on its loop, at or below z).
     """
     A = np.asarray(A, dtype=float)
     B = np.asarray(B, dtype=float).copy()
@@ -698,6 +721,19 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
         if len(far):
             on = cz.interpolate(B[far, 0], B[far, 1], masked=False) - z[far] <= GRAZE_TOL
             out[far[on]] = B[far[on]]
+    # a row left inside the surface - no crossing at all, so it kept A,
+    # where the surface is above z (the last revolution's first points, at
+    # the previous loop over a DA-raised spot of the floor, up to 0.7 mm
+    # below the drop-cutter surface) - walks from there towards B, which
+    # lies on its loop at or below z, to the first point at z; B itself when
+    # the surface comes down to z only at B (a graze)
+    inside = np.flatnonzero(~same & (np.linalg.norm(D, axis=1) > 0)
+                            & (cz.interpolate(out[:, 0], out[:, 1], masked=False) - z
+                               > GRAZE_TOL))
+    if len(inside):
+        D3 = B[inside] - out[inside]
+        f3, r3 = _first_crossing(cz, out[inside], D3, z[inside], np.arange(65) / 64.0)
+        out[inside] = np.where(f3[:, None], out[inside] + r3[:, None] * D3, B[inside])
     return out
 
 
