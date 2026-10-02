@@ -1,7 +1,7 @@
 strategy,method,fe_runs_per_part,n_parts,n_failed,vert_rms_mean_mm,vert_rms_median_mm,vert_max_mean_mm,normal_rms_mean_mm,rim_sag_mean_mm,upper_band_rms_mean_mm,interior_rms_mean_mm,interior_bias_mean_mm,flange_bias_mean_mm,upper_band_share_mean,runtime_s_mean,runtime_s_max,cpu_h_per_part,newton_iterations_mean,cuts_mean,parts_better_than_own_uncompensated,parts_better_than_spif_uncompensated,data_source
-backing_plate,uncompensated,1,7,0,0.2939,0.2905,0.5815,0.2728,-0.4261,0.4358,0.1420,-0.0724,-0.0468,0.8588,3354.1216,6455.0463,0.9317,5652.2857,2.2857,,0,SparLab simulation
-backing_plate,FE-DA-1,2,7,0,0.2453,0.2511,0.5055,0.2344,-0.3226,0.3455,0.1339,0.0578,-0.0441,0.7905,3153.4810,4962.9320,1.8077,5368.8571,2.5714,7.0000,0,SparLab simulation
-backing_plate,FE-DA-2,3,7,0,0.2502,0.2569,0.5534,0.2399,-0.3093,0.3370,0.1517,0.0946,-0.0534,0.7415,3189.6143,6391.4258,2.6937,5135.0000,2.4286,6.0000,0,SparLab simulation
+backing_plate,uncompensated,1,8,0,0.3002,0.2975,0.5832,0.2786,-0.4363,0.4453,0.1485,-0.0505,-0.0470,0.8510,3567.6696,6455.0463,0.9910,5959.1250,2.3750,,0,SparLab simulation
+backing_plate,FE-DA-1,2,8,0,0.2629,0.2517,0.5352,0.2504,-0.3343,0.3559,0.1621,0.0768,-0.0475,0.7471,3351.8290,4962.9320,1.9221,5607.8750,2.6250,7.0000,0,SparLab simulation
+backing_plate,FE-DA-2,3,8,0,0.2722,0.2585,0.5950,0.2600,-0.3177,0.3440,0.1881,0.1234,-0.0561,0.6872,3336.4659,6391.4258,2.8489,5365.5000,2.5000,6.0000,0,SparLab simulation
 dsif,uncompensated,1,1,0,0.3472,0.3472,0.6199,0.3331,-0.4277,0.4392,0.1819,-0.1460,-0.0917,0.8757,1232.9816,1232.9816,0.3425,2687.0000,1.0000,,0,SparLab simulation
 dsif,FE-DA-1,2,1,0,0.2812,0.2812,0.6178,0.2776,-0.3416,0.3781,0.0439,-0.0291,-0.0996,0.9889,1324.4631,1324.4631,0.7104,2948.0000,2.0000,1.0000,0,SparLab simulation
 dsif,FE-DA-2,3,1,0,0.2977,0.2977,0.5984,0.2949,-0.3700,0.4016,0.0290,-0.0080,-0.1042,0.9957,1235.2121,1235.2121,1.0535,2732.0000,0.0000,1.0000,0,SparLab simulation
