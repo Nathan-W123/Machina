@@ -322,6 +322,42 @@ def _centre_levels(cz: HeightMap, tool_radius: float, step_down: float) -> List[
     return levels
 
 
+DEEPEST_LEVEL_SEARCH = 64
+
+
+def _resolvable_deepest(cz: HeightMap, levels: List[float], tool_radius: float,
+                        min_loop_length: float, single: bool) -> Tuple[List[float], float]:
+    """`levels` with the deepest ones the tool cannot follow replaced by the
+    lowest height where it can (a loop `extract_loops` keeps; exactly one
+    with `single`), searched on `DEEPEST_LEVEL_SEARCH` steps between the
+    deepest level and the deepest followable one above it. Returns (levels,
+    how far the new deepest level lies above the old one [m]).
+
+    The last level lies just above the deepest point. Over a flat floor its
+    contour is the floor's outline, but where the deepest point is a pole
+    or a dimple (a dome, an uneven compensated floor) that contour - and a
+    regular level only a little above it - is a loop too short to follow
+    and would be dropped, leaving the tool up to a step-down or more short
+    of the command."""
+    def ok(h: float) -> bool:
+        loops = extract_loops(cz, h, min_loop_length)
+        return len(loops) == 1 if single else len(loops) > 0
+
+    j = len(levels) - 1
+    while j >= 0 and not ok(levels[j]):
+        j -= 1
+    if j == len(levels) - 1:
+        return levels, 0.0
+    last = levels[-1]
+    above = levels[j] if j >= 0 else tool_radius
+    dh = (above - last) / DEEPEST_LEVEL_SEARCH
+    for k in range(DEEPEST_LEVEL_SEARCH):
+        h = last + k * dh
+        if ok(h):
+            return levels[:j + 1] + [h], h - last
+    return levels, 0.0
+
+
 def _ordered_loops(cz: HeightMap, levels: Sequence[float], spacing: float, direction: str,
                    alternate: bool, start_angle_deg: float,
                    min_loop_length: float) -> List[Tuple[float, List[np.ndarray]]]:
@@ -445,8 +481,10 @@ def contour_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     spacing = require_positive("spacing", spacing)
     cz = tool_center_surface(target, R)
     levels = _centre_levels(cz, R, step_down)
+    min_loop = _min_loop(target, spacing, min_loop_length)
+    levels, raised = _resolvable_deepest(cz, levels, R, min_loop, single=False)
     per_level = _ordered_loops(cz, levels, spacing, direction, alternate, start_angle_deg,
-                               _min_loop(target, spacing, min_loop_length))
+                               min_loop)
     safe_z = R + clearance
     pts: List[np.ndarray] = []
     lvl: List[np.ndarray] = []
@@ -475,7 +513,8 @@ def contour_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     meta = {"style": "contour", "step_down": step_down, "spacing": spacing,
             "direction": direction, "alternate": bool(alternate),
             "level_heights": [h for h, _ in per_level],
-            "loops_per_level": [len(l) for _, l in per_level], "clearance": clearance}
+            "loops_per_level": [len(l) for _, l in per_level], "clearance": clearance,
+            "deepest_level_raised_m": raised}
     path = Toolpath(np.vstack(pts), np.concatenate(lvl), R, meta)
     path.metadata["max_gouge_m"] = max_gouge(path, cz)
     return path
@@ -506,8 +545,10 @@ def spiral_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     spacing = require_positive("spacing", spacing)
     cz = tool_center_surface(target, R)
     levels = _centre_levels(cz, R, step_down)
+    min_loop = _min_loop(target, spacing, min_loop_length)
+    levels, raised = _resolvable_deepest(cz, levels, R, min_loop, single=True)
     per_level = _ordered_loops(cz, levels, spacing, direction, False, start_angle_deg,
-                               _min_loop(target, spacing, min_loop_length))
+                               min_loop)
     for k, (_, loops) in enumerate(per_level, start=1):
         if len(loops) != 1:
             raise ValueError(f"spiral_toolpath needs one loop per level; level {k} has "
@@ -543,7 +584,8 @@ def spiral_toolpath(target: HeightMap, tool_radius: float, step_down: float,
     end = np.array([[body[-1, 0], body[-1, 1], safe_z]])
     meta = {"style": "spiral", "step_down": step_down, "spacing": spacing,
             "direction": direction, "level_heights": [float(v) for v in levels],
-            "clearance": clearance, "final_loop": bool(final_loop)}
+            "clearance": clearance, "final_loop": bool(final_loop),
+            "deepest_level_raised_m": raised}
     path = Toolpath(np.vstack([start, body, end]),
                     np.concatenate([[AIR], np.concatenate(lvl), [AIR]]), R, meta)
     path.metadata["max_gouge_m"] = max_gouge(path, cz)
@@ -596,14 +638,26 @@ def _first_crossing(cz: HeightMap, A: np.ndarray, D: np.ndarray, z: np.ndarray,
     return found, root
 
 
+#: `_blend_to_height`: a crossing more than this many |AB| from A is taken
+#: only when there is none within three grid spacings of B.
+FAR_CROSSING = 2.0
+
+#: `_blend_to_height`: B stands for a far crossing with none next to it when
+#: the surface there is at most this far [m] above z (B on the loop at z,
+#: to the round-off of the densified loop it is taken from: nanometres).
+GRAZE_TOL = 1e-6
+
+
 def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray) -> np.ndarray:
     """Per row, an x-y point where the bilinear drop-cutter surface equals z.
 
     The point is searched along the line from A through B: first from a
     quarter of |AB| behind A to six times |AB| beyond it on a grid of |AB| / 8,
-    then, for rows without a crossing, within three grid spacings of B on a
+    then, for rows without a crossing or with one more than `FAR_CROSSING`
+    |AB| from A, within three grid spacings of B on a
     grid of h / 8 (a narrow crossing, such as the last small loop around the
-    pole of a dome). The first sign change of c_z - z from >= 0 to < 0 is
+    pole of a dome); a far crossing with none next to B gives way to B when
+    B is on the surface at z (a line that grazes a small last loop at B). The first sign change of c_z - z from >= 0 to < 0 is
     bisected, keeping the side where c_z < z, so the tool never ends inside
     the surface. Where A and B coincide (the first revolution, or a single
     level) the direction is the downhill direction of c_z at A (smoothed over
@@ -626,7 +680,10 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
     found, root = _first_crossing(cz, A, D, z, np.arange(-2, 49) / 8.0)
     out = A.copy()
     out[found] = A[found] + root[found, None] * D[found]
-    missing = np.flatnonzero(~found & (np.linalg.norm(D, axis=1) > 0))
+    # a crossing far beyond B (a line that misses a small loop round B and
+    # crosses the surface on the far side of the pocket, or off the grid)
+    # gives way to one next to B when there is one
+    missing = np.flatnonzero((~found | (root > FAR_CROSSING)) & (np.linalg.norm(D, axis=1) > 0))
     if len(missing):
         length = np.linalg.norm(D[missing], axis=1)
         unit = D[missing] / length[:, None]
@@ -634,6 +691,13 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
         f2, r2 = _first_crossing(cz, start, unit, z[missing], np.arange(49) * (h / 8.0))
         rows = missing[f2]
         out[rows] = start[f2] + r2[f2, None] * unit[f2]
+        # a line that only grazes the loop at B (c_z(B) = z, the last
+        # revolution at B's own level) has no sign change near B either; B
+        # itself is on the surface at z, the far crossing is not
+        far = missing[~f2 & found[missing] & (root[missing] > FAR_CROSSING)]
+        if len(far):
+            on = cz.interpolate(B[far, 0], B[far, 1], masked=False) - z[far] <= GRAZE_TOL
+            out[far[on]] = B[far[on]]
     return out
 
 

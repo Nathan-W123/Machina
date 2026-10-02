@@ -306,3 +306,67 @@ def test_flat_target_is_refused():
         Toolpath(np.zeros((1, 3)), np.zeros(1), R)
     with pytest.raises(ValueError):
         HeightMap(Grid.centered(0.05, 1e-3), np.zeros((2, 2)))
+
+
+@pytest.mark.parametrize("make", [spiral_toolpath, contour_toolpath])
+def test_the_deepest_level_reaches_a_dimpled_floor(make):
+    """Over a flat floor the last level traces the floor's outline. A dimple
+    at the deepest point (a compensated floor, a dome's pole) makes that
+    contour - and a regular level just above it - too short to follow; the
+    level is then raised only as far as needed, not dropped (a DA command
+    was formed up to a step-down short of its floor)."""
+    g = Grid.centered(0.04, 2.5e-4)
+    cone = TruncatedCone(0.009, 40.0, 0.003, 0.001, 0.002).heightmap(g)
+    X, Y = g.mesh()
+    for dimple in (0.4e-3, 1.01e-3):   # the last level alone; it and a regular one
+        target = cone.with_z(cone.z - dimple * np.exp(-(X ** 2 + Y ** 2) / (2 * 0.8e-3 ** 2)))
+        cz = tool_center_surface(target, 0.004)
+        path = make(target, 0.004, 1e-3, 1e-3)
+        reach = float(cz.z.min())
+        assert path.metadata["deepest_level_raised_m"] > 0.0
+        # within the depth of the dimple's shortest followable loop (3.1 mm
+        # round here), not a step-down (before: 0.4 and 1.0 mm short)
+        assert path.points[path.level != AIR, 2].min() - reach < 0.2e-3
+        assert max_gouge(path, cz) < 1e-9
+    # a flat floor keeps its level just above the floor
+    path = make(cone, 0.004, 1e-3, 1e-3)
+    assert path.metadata["deepest_level_raised_m"] == 0.0
+    assert path.points[:, 2].min() - float(tool_center_surface(cone, 0.004).z.min()) < 1e-5
+
+
+def test_the_spiral_stays_in_the_pocket_round_a_small_off_centre_last_loop():
+    """The last revolution blends from the previous loop towards a small loop
+    round an off-centre dimple; a line from the loop that misses it crossed
+    the surface only on the far side of the pocket or at the grid's edge
+    (r = 20 mm here, a DA command of the fine-mesh benchmark refused for
+    leaving the window). A crossing next to the small loop wins."""
+    from precomp.geometry.parts import EllipticCone
+
+    g = Grid.centered(0.04, 2.5e-4)
+    X, Y = g.mesh()
+    base = EllipticCone(semi_axis_x=0.0099, semi_axis_y=0.00698, wall_angle_deg=39.14,
+                        depth=0.0021, top_fillet=0.0019, bottom_fillet=0.0015).heightmap(g)
+    target = base.with_z(base.z - 0.1e-3 * np.exp(-((X + 3e-3) ** 2 + Y ** 2)
+                                                  / (2 * 0.7e-3 ** 2)))
+    path = spiral_toolpath(target, 0.004, 1e-3, 1e-3)
+    assert path.metadata["deepest_level_raised_m"] > 0.0
+    assert np.abs(path.points[path.level != AIR, :2]).max() < 0.012
+    assert max_gouge(path, tool_center_surface(target, 0.004)) < 1e-9
+
+
+def test_a_line_that_grazes_the_last_loop_keeps_its_nearest_point():
+    """A line from the previous loop that only touches the last level at its
+    nearest point B (the surface comes down to z there and rises again) has
+    no crossing next to B; the next one, on the far side of the pocket, put
+    the fine-mesh benchmark's pyramid-s2026-0000 FE-DA-2 command 20 mm out.
+    B, on the surface at z, wins."""
+    from precomp.toolpath import _blend_to_height
+
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    z = np.where(X > 0.0, -1e-4, 50.0 * (X + 0.003) ** 2)
+    cz = zeros(g).with_z(z)
+    A = np.array([[-0.004, 0.0], [-0.004, 0.001]])
+    B = np.array([[-0.003, 0.0], [-0.003, 0.001]])
+    xy = _blend_to_height(cz, A, B, np.zeros(2))
+    np.testing.assert_allclose(xy, B, atol=1e-12)

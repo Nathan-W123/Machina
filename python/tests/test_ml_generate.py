@@ -202,3 +202,37 @@ def test_the_proxy_fails_a_job_without_a_tool_path_as_the_deck_would(tmp_path):
     rep = generate(Dataset.create(tmp_path / "e", created_at=ML_CREATED_AT), contour,
                    ProxySimulator(), created_at=ML_CREATED_AT, kinds=("perturbed",), seed=1)
     assert not rep.failed
+
+
+def test_the_element_formulation_and_thickness_points_are_recorded_physics():
+    """A model's setup envelope records the Hex8 formulation and the points
+    through the thickness like any physics field: a model trained on the 2 mm
+    benchmark mesh refuses the fine incompatible-mode setup, and one trained
+    before the fields existed was trained at their defaults."""
+    import json
+
+    from precomp.ml.generate import SparlabSimulator
+    from precomp.ml.surrogate import setup_envelope, setup_mismatch
+
+    coarse = FormingSetup.preset("springback_2mm")
+    fine = FormingSetup.preset("springback_fine")
+    env = setup_envelope([coarse])
+    assert env["fields"]["element_formulation"] == {"values": ["standard"]}
+    assert env["fields"]["thickness_points"] == {"min": 0, "max": 0}
+    assert {m["field"] for m in setup_mismatch(env, fine)} == {
+        "element_size", "layers", "element_formulation", "thickness_points"}
+    assert setup_mismatch(setup_envelope([fine]), fine) == []
+    assert [m["field"] for m in setup_mismatch(setup_envelope([fine]),
+                                               FormingSetup.preset("springback_fine_bulk"))] \
+        == ["contact"]
+    old = json.loads(json.dumps(env))
+    del old["fields"]["element_formulation"], old["fields"]["thickness_points"]
+    assert setup_mismatch(old, coarse) == []
+    miss = setup_mismatch(old, coarse.replace(thickness_points=5))
+    assert [m["field"] for m in miss] == ["thickness_points"] and "predates" in miss[0]["note"]
+    # the simulator's fidelity label tells the meshes apart (and is unchanged
+    # for the standard element)
+    assert SparlabSimulator.fidelity_of(coarse) == \
+        "sparlab:hex8:2mm:2L:finite_logarithmic:321"
+    assert SparlabSimulator.fidelity_of(fine) == \
+        "sparlab:hex8-im-tp5:0.833333mm:1L:finite_logarithmic:321"

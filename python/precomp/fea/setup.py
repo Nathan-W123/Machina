@@ -53,6 +53,14 @@ NEWTON_KEYS = ("max_iterations", "residual_tolerance", "displacement_tolerance",
 #: ... and those that go into the `forming` block itself.
 FORMING_SOLVER_KEYS = ("friction_tangent", "solver", "mean_dilatation")
 
+#: Hex8 formulations (`FormingSetup.element_formulation`, the deck's
+#: `model.element_formulation`, docs/configuration.md): "standard" (the
+#: isoparametric Hex8; with a plastic material sparlab_form's
+#: `mean_dilatation: auto` gives it B-bar) or "incompatible_modes" (the Hex8
+#: with Wilson-Taylor incompatible modes, which does not lock in bending; Hex8
+#: only, and not with `mean_dilatation` "all").
+ELEMENT_FORMULATIONS = ("standard", "incompatible_modes")
+
 #: Rim-support strategies (`FormingSetup.support`; `precomp.fea.support`).
 SUPPORTS = ("none", "backing_plate", "dsif")
 
@@ -93,6 +101,56 @@ SUPPORT_SETTINGS: Dict[str, Dict[str, Any]] = {
 }
 
 
+#: The process of the springback benchmark (benchmarks/springback): a 40 x 40
+#: x 1 mm blank, 5 mm clamp, 4 mm tool, 1 mm spiral, 3-2-1 release.
+_BENCHMARK_PROCESS: Dict[str, Any] = {
+    "material": "AA5754-O", "blank_size": 0.04, "clamp_margin": 0.005, "thickness": 1e-3,
+    "element": "hex8", "tool_radius": 4e-3, "step_down": 1e-3, "friction": 0.1,
+    "toolpath_style": "spiral", "toolpath_spacing": 1e-3, "max_tool_travel": 1e-3,
+    "release": "321", "kinematics": "finite_logarithmic", "threads": 1}
+
+#: Named setups (`FormingSetup.preset`, `precomp setup --preset`), the
+#: FormingSetup fields each one sets. Presets are never changed once a record
+#: uses them; a new discretisation gets a new name.
+#:
+#: springback_2mm
+#:   the springback benchmark as it was run (benchmarks/springback,
+#:   protocol 1): 20 x 20 x 2 standard Hex8 (2 mm in plane, mean dilatation),
+#:   2 x 2 x 2 points, penalty 10. Not converged: the physics audit
+#:   (benchmarks/physics_audit) puts its released shape 0.08-0.12 mm RMS from
+#:   the converged answer.
+#: springback_fine
+#:   the physics audit's recommended production setup on the same process
+#:   (benchmarks/physics_audit/README.md, section 5): 48 x 48 x 1 Hex8 with
+#:   incompatible modes (in-plane 40/48 = 0.833 mm, which divides the blank
+#:   and the 5 mm clamp), 5 Gauss points through the thickness, penalty 10
+#:   (the default, so `contact` stays empty and the deck is the audit's) -
+#:   for validation and compensation runs. About 0.02-0.03 mm RMS from
+#:   converged; 7-11 times the cost of springback_2mm.
+#: springback_fine_bulk
+#:   springback_fine with penalty 3, for bulk surrogate data: +0.005-0.009 mm
+#:   RMS (always towards more sag) at about half the cost.
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "springback_2mm": {**_BENCHMARK_PROCESS, "element_size": 2e-3, "layers": 2},
+    "springback_fine": {**_BENCHMARK_PROCESS, "element_size": 0.04 / 48, "layers": 1,
+                        "element_formulation": "incompatible_modes", "thickness_points": 5,
+                        "contact": {}},
+    "springback_fine_bulk": {**_BENCHMARK_PROCESS, "element_size": 0.04 / 48, "layers": 1,
+                             "element_formulation": "incompatible_modes",
+                             "thickness_points": 5, "contact": {"penalty": 3.0}},
+}
+
+
+def preset_fields(name: str) -> Dict[str, Any]:
+    """A copy of preset `name`'s FormingSetup fields (`PRESETS`; the material
+    by library name). Raises ValueError for an unknown name."""
+    import copy
+
+    if name not in PRESETS:
+        raise ValueError(f"unknown setup preset {name!r}; presets: {', '.join(PRESETS)}")
+    return copy.deepcopy(PRESETS[name])
+
+
 def repository_root() -> Optional[Path]:
     """The SparLab checkout this package lives in (an editable install), or None."""
     here = Path(__file__).resolve()
@@ -125,6 +183,12 @@ class FormingSetup:
           round(blank_size / element_size) elements per side).
       layers : elements through the thickness.
       element : "hex8" (structured_hex) or "tet4" (structured_tet).
+      element_formulation : "standard" (the default) or "incompatible_modes"
+          (Hex8 only; `ELEMENT_FORMULATIONS`), the deck's
+          `model.element_formulation`.
+      thickness_points : Gauss points through the thickness of each Hex8
+          layer, 1-7 (the deck's `model.integration.thickness_points`, along
+          z); 0 (the default) leaves the solver's rule (2) and writes nothing.
     Material
       material : a `Material`.
     Tool and path
@@ -166,6 +230,8 @@ class FormingSetup:
     element_size: float = 2.5e-3
     layers: int = 2
     element: str = "hex8"
+    element_formulation: str = "standard"
+    thickness_points: int = 0
     tool_radius: float = 5.0e-3
     friction: float = 0.1
     step_down: float = 0.5e-3
@@ -202,6 +268,22 @@ class FormingSetup:
             raise ValueError(f"threads must be an integer >= 1, got {self.threads!r}")
         if self.element not in ("hex8", "tet4"):
             raise ValueError(f"element must be 'hex8' or 'tet4', got {self.element!r}")
+        if self.element_formulation not in ELEMENT_FORMULATIONS:
+            raise ValueError("element_formulation must be one of "
+                             f"{', '.join(ELEMENT_FORMULATIONS)}; got "
+                             f"{self.element_formulation!r}")
+        if self.element_formulation != "standard" and self.element != "hex8":
+            raise ValueError(f"element_formulation {self.element_formulation!r} needs "
+                             f"element 'hex8', got {self.element!r}")
+        tp = self.thickness_points
+        if not (isinstance(tp, int) and not isinstance(tp, bool) and 0 <= tp <= 7):
+            raise ValueError(f"thickness_points must be an integer 0-7 (0: the solver's "
+                             f"default), got {tp!r}")
+        if tp and self.element != "hex8":
+            raise ValueError("thickness_points needs element 'hex8'")
+        if tp == 1 and self.element_formulation == "incompatible_modes":
+            raise ValueError("thickness_points 1 is refused with incompatible modes (the "
+                             "mode gradients vanish at the element centre)")
         if self.toolpath_style not in ("spiral", "contour"):
             raise ValueError("toolpath_style must be 'spiral' or 'contour'")
         if self.toolpath_direction not in ("ccw", "cw"):
@@ -216,6 +298,10 @@ class FormingSetup:
         for key in CONTACT_KEYS:
             if key in self.contact:
                 require_positive(f"contact[{key!r}]", self.contact[key])
+        md = self.solver.get("mean_dilatation")
+        if self.element_formulation == "incompatible_modes" and (md is True or md == "all"):
+            raise ValueError("solver['mean_dilatation'] 'all' is refused with incompatible "
+                             "modes (the modes relax the constraint themselves)")
         if self.clamp_margin < self.element_size * (1 - 1e-9):
             raise ValueError("clamp_margin must be at least one element_size")
         if 2 * self.clamp_margin >= self.blank_size:
@@ -336,6 +422,14 @@ class FormingSetup:
         if "material" not in doc:
             raise ValueError("FormingSetup: 'material' is required")
         return cls(**doc)
+
+    @classmethod
+    def preset(cls, name: str, **overrides: Any) -> "FormingSetup":
+        """The named setup `name` (`PRESETS`) with `overrides` (FormingSetup
+        fields; e.g. a support, an executable) applied on top."""
+        doc = preset_fields(name)
+        doc.update(overrides)
+        return cls.from_dict(doc)
 
     def replace(self, **changes: Any) -> "FormingSetup":
         return dataclasses.replace(self, **changes)

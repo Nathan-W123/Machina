@@ -125,9 +125,16 @@ def cmd_setup(args: argparse.Namespace) -> int:
     from .fea.setup import FormingSetup
     from .materials import Material, get_material
 
-    material = (Material.from_dict(read_json(args.material_json)) if args.material_json
-                else get_material(args.material))
-    setup = FormingSetup(material, **_parse_assignments(args.set))
+    over = _parse_assignments(args.set)
+    if args.material_json:
+        over["material"] = Material.from_dict(read_json(args.material_json))
+    elif args.material:
+        over["material"] = get_material(args.material)
+    if args.preset:
+        setup = FormingSetup.preset(args.preset, **over)
+    else:
+        over.setdefault("material", get_material("AA5754-O"))
+        setup = FormingSetup(**over)
     write_json(args.out, setup.to_dict())
     print(f"wrote {args.out}")
     return 0
@@ -361,7 +368,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_material)
 
     s = sub.add_parser("setup", help="write a FormingSetup JSON")
-    s.add_argument("--material", default="AA5754-O", help="library material name")
+    from .fea.setup import PRESETS
+    s.add_argument("--preset", choices=sorted(PRESETS),
+                   help="start from a named setup (precomp.fea.setup.PRESETS)")
+    s.add_argument("--material", help="library material name (default: the preset's, else "
+                                      "AA5754-O)")
     s.add_argument("--material-json", help="material from a JSON file (Material.to_dict)")
     s.add_argument("--set", nargs="*", metavar="KEY=VALUE", help="override setup fields [SI]")
     s.add_argument("--out", required=True)

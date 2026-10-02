@@ -82,6 +82,14 @@ COMMAND_TOLERANCE = 1e-6
 BOUND_CONVERGENCE = 1e-8
 #: ... or after this many iterations.
 BOUND_ITERATIONS = 8
+#: Largest move of the DSIF support between two trajectory knots while both
+#: tools are in contact [m]: the solver moves a tool in a straight line
+#: between knots, so where the support swings round the forming tool (a
+#: corner of the path) it would cut the chord, towards the forming tool, and
+#: pinch the sheet; knots are added there (`dsif_trajectory`).
+SUPPORT_KNOT_STEP = 0.5e-3
+#: Rounds of knot insertion (each recomputes the support on the new knots).
+SUPPORT_KNOT_ROUNDS = 4
 
 
 @dataclass
@@ -278,17 +286,50 @@ def dsif_trajectory(setup: FormingSetup, forming_surface: HeightMap, path: Toolp
 
     On [0, 1] the knots of the forming tool's `path` (its `t`) with
     `dsif_support_points` over `forming_surface` (the surface the path was
-    made for); with `rim_pass`, the knots of `rim_pass_path` over
+    made for), plus knots on the path's segments wherever the support would
+    otherwise move more than `SUPPORT_KNOT_STEP` between two knots in
+    contact (swinging round the forming tool at a corner, a straight move
+    would cut towards it and pinch the sheet); with `rim_pass`, the knots of `rim_pass_path` over
     `commanded` (its full command, above the plane included) and the
     outline of `reference`, on `RIM_PASS_WINDOW` by arc length, the pass
     ending (`rim_pass_end`) at its last point in contact."""
     s = setup.resolved_support()
     R2 = float(s["radius"])
     t0 = float(setup.thickness)
-    pts = dsif_support_points(path, forming_surface, t0, R2, squeeze=float(s["squeeze"]),
-                              thickness_law=s["thickness_law"], clearance=float(s["clearance"]))
-    contact = path.level != AIR
-    n = path.points - pts
+
+    def support(p: Toolpath) -> np.ndarray:
+        return dsif_support_points(p, forming_surface, t0, R2, squeeze=float(s["squeeze"]),
+                                   thickness_law=s["thickness_law"],
+                                   clearance=float(s["clearance"]))
+
+    # knots where the support moves more than SUPPORT_KNOT_STEP between two
+    # contact knots: the forming tool's segment split evenly (collinear
+    # points, so its motion and pseudo-time are unchanged)
+    knots, tk = path, path.t
+    pts = support(knots)
+    added = 0
+    for _ in range(SUPPORT_KNOT_ROUNDS):
+        move = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        both = (knots.level[:-1] != AIR) & (knots.level[1:] != AIR)
+        split = np.where(both, np.ceil(move / SUPPORT_KNOT_STEP - 1e-9), 1).astype(int)
+        if not (split > 1).any():
+            break
+        P, L, Tn = [knots.points[:1]], [knots.level[:1]], [tk[:1]]
+        for i, m in enumerate(split):
+            a, b = knots.points[i], knots.points[i + 1]
+            u = np.arange(1, m) / m
+            P += [a + u[:, None] * (b - a), b[None]]
+            L.append(np.full(m, knots.level[i + 1]))
+            # the forming tool's knots keep their pseudo-time exactly
+            Tn += [tk[i] + u * (tk[i + 1] - tk[i]), tk[i + 1:i + 2]]
+        added += int((split - 1).sum())
+        knots = Toolpath(np.vstack(P), np.concatenate(L), path.tool_radius, path.metadata)
+        tk = np.concatenate(Tn)
+        if len(tk) != len(knots.points):
+            raise PrecompError("support knots: a repeated point on the tool path")
+        pts = support(knots)
+    contact = knots.level != AIR
+    n = knots.points - pts
     norm = np.linalg.norm(n, axis=1, keepdims=True)
     n = np.divide(n, norm, out=np.zeros_like(n), where=norm > 0)
     _check_reach(setup, pts[contact], n[contact], R2, "support tool")
@@ -300,8 +341,9 @@ def dsif_trajectory(setup: FormingSetup, forming_surface: HeightMap, path: Toolp
                             "support_body_reach_m": float(np.abs(pts[contact, :2]).max() + R2)
                             if contact.any() else None,
                             "support_z_max_in_contact_m":
-                                float(pts[contact, 2].max()) if contact.any() else None}
-    t = path.t
+                                float(pts[contact, 2].max()) if contact.any() else None,
+                            "support_knots_added": added}
+    t = tk
     if not s["rim_pass"]:
         return t, pts, None, info
     if commanded is None or reference is None:

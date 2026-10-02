@@ -301,6 +301,30 @@ constraint is `"mode": "hold"`: it keeps its DOFs where the step finds them,
 so the support nodes stay where the clamp held them and the released part
 keeps its place on the fixture.
 
+`element_formulation` (`"standard"` by default, or `"incompatible_modes"`:
+the Hex8 with Wilson-Taylor incompatible modes, which does not lock in
+bending) and `thickness_points` (Gauss points through each Hex8 layer, 1-7;
+0, the default, leaves the solver's 2) go into the deck's `model` block
+(`model.element_formulation`, `model.integration.thickness_points` along z;
+`docs/configuration.md`). At their defaults neither key is written, so the
+deck and its content hash are those of before the fields existed. Like every
+physics field they are recorded in a model's setup envelope: a surrogate
+trained on one mesh refuses a setup on another (`setup_mismatch`).
+
+**Named setups.** `FormingSetup.preset(name, **overrides)` (`precomp setup
+--preset NAME`; `precomp.fea.PRESETS`) gives the springback benchmark's
+process (40 x 40 x 1 mm AA5754-O blank, 5 mm clamp, 4 mm tool, 1 mm spiral,
+3-2-1 release) on a fixed discretisation:
+
+| Preset | Mesh | Penalty | Use |
+|--------|------|--:|-----|
+| `springback_2mm` | 20 x 20 x 2 standard Hex8 (2 mm, mean dilatation, 2 x 2 x 2 points) | 10 | `benchmarks/springback` as run; 0.08-0.12 mm RMS from converged (`benchmarks/physics_audit`) |
+| `springback_fine` | 48 x 48 x 1 Hex8 with incompatible modes (0.833 mm), 2 x 2 x 5 points | 10 | the physics audit's recommended setup: validation and compensation runs, about 0.02-0.03 mm RMS from converged, 7-11 times the cost |
+| `springback_fine_bulk` | as `springback_fine` | 3 | bulk surrogate data: +0.005-0.009 mm RMS, about half the cost |
+
+A preset is never changed once a record uses it; another discretisation
+gets another name.
+
 `kinematics` is `"finite_logarithmic"` by default - the large-strain
 formulation, whose plastic return works in the logarithmic strain, since
 SPIF reaches plastic strains of order one - or `"finite"` / `"small_strain"`.

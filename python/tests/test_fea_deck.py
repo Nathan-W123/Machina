@@ -131,3 +131,85 @@ def test_setup_round_trip_validation_and_executable_resolution(tmp_path, monkeyp
     monkeypatch.setenv(EXECUTABLE_ENV, str(exe))
     assert s.resolved_executable() == exe.resolve()
     assert s.replace(executable=str(exe)).resolved_executable() == exe.resolve()
+
+
+def test_element_formulation_and_thickness_points_go_into_the_model_block(small_setup):
+    """The Hex8 formulation and the points through the thickness are written
+    into `model` only when set, so a setup at the defaults keeps its deck (and
+    its content hash) of before these fields existed."""
+    assert deck_document(small_setup)["model"] == {"stress_state": "three_dimensional"}
+    s = small_setup.replace(layers=1, element_formulation="incompatible_modes",
+                            thickness_points=5)
+    assert deck_document(s)["model"] == {
+        "stress_state": "three_dimensional", "element_formulation": "incompatible_modes",
+        "integration": {"thickness_points": 5, "thickness_direction": "z"}}
+    assert deck_document(small_setup.replace(thickness_points=7))["model"]["integration"] == \
+        {"thickness_points": 7, "thickness_direction": "z"}
+    for bad, match in [({"element_formulation": "reduced"}, "element_formulation"),
+                       ({"element": "tet4", "element_formulation": "incompatible_modes"},
+                        "needs element 'hex8'"),
+                       ({"thickness_points": 8}, "thickness_points"),
+                       ({"thickness_points": 2.0}, "thickness_points"),
+                       ({"element": "tet4", "thickness_points": 5}, "thickness_points"),
+                       ({"element_formulation": "incompatible_modes", "thickness_points": 1},
+                        "thickness_points 1"),
+                       ({"element_formulation": "incompatible_modes",
+                         "solver": {"mean_dilatation": "all"}}, "mean_dilatation")]:
+        with pytest.raises(ValueError, match=match):
+            small_setup.replace(**bad)
+
+
+def test_element_formulation_and_thickness_points_change_the_content_hash(tmp_path, small_setup,
+                                                                          small_cone):
+    s0 = small_setup.replace(layers=1)
+    cmd = small_cone.heightmap(Grid.centered(0.12, 1e-3))
+    hashes = set()
+    for name, s in {"std": s0, "im": s0.replace(element_formulation="incompatible_modes"),
+                    "im5": s0.replace(element_formulation="incompatible_modes",
+                                      thickness_points=5),
+                    "im7": s0.replace(element_formulation="incompatible_modes",
+                                      thickness_points=7)}.items():
+        hashes.add(deck_hash(build_deck(s, cmd, tmp_path / name), "sparlab 1"))
+    assert len(hashes) == 4
+    d = FormingSetup.from_dict(s0.replace(element_formulation="incompatible_modes",
+                                          thickness_points=5).to_dict())
+    assert (d.element_formulation, d.thickness_points) == ("incompatible_modes", 5)
+    # a setup recorded before the fields existed reads back at the defaults
+    old = s0.to_dict()
+    del old["element_formulation"], old["thickness_points"]
+    assert FormingSetup.from_dict(old) == s0
+
+
+def test_presets_are_the_benchmark_and_the_audit_setups():
+    """`springback_2mm` is benchmarks/springback's solver setup field for
+    field; `springback_fine` the physics audit's recommended 0.833 mm IM5 mesh
+    on the same process (its convergence deck h0.833_L1_im_tp5)."""
+    from pathlib import Path
+
+    from precomp.fea import PRESETS
+
+    repo = Path(__file__).resolve().parents[2]
+    old = json.loads((repo / "benchmarks" / "springback" / "config.json").read_text())
+    s2 = FormingSetup.preset("springback_2mm")
+    assert s2 == FormingSetup.from_dict(old["solver"]["setup"])
+    fine = FormingSetup.preset("springback_fine")
+    assert fine.elements_per_side == 48 and fine.meshed_blank_size == pytest.approx(0.04)
+    assert (fine.layers, fine.element_formulation, fine.thickness_points) == \
+        (1, "incompatible_modes", 5)
+    assert fine.contact == {}                   # penalty 10, the default
+    assert fine.replace(element_size=2e-3, layers=2, element_formulation="standard",
+                        thickness_points=0) == s2
+    bulk = FormingSetup.preset("springback_fine_bulk")
+    assert bulk == fine.replace(contact={"penalty": 3.0})
+    audit = repo / "benchmarks/physics_audit/convergence/cases/h0.833_L1_im_tp5/deck/deck.json"
+    if audit.is_file():
+        doc = json.loads(audit.read_text())
+        mine = deck_document(fine)
+        assert mine["mesh"] == pytest.approx(doc["mesh"])
+        assert mine["model"] == doc["model"]
+    # overrides go on top; a preset is never changed by its use
+    d = FormingSetup.preset("springback_fine", support="dsif", threads=2)
+    assert d.support == "dsif" and d.threads == 2
+    assert "support" not in PRESETS["springback_fine"]
+    with pytest.raises(ValueError, match="unknown setup preset"):
+        FormingSetup.preset("fine")
