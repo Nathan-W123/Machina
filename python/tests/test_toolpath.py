@@ -352,3 +352,21 @@ def test_the_spiral_stays_in_the_pocket_round_a_small_off_centre_last_loop():
     assert path.metadata["deepest_level_raised_m"] > 0.0
     assert np.abs(path.points[path.level != AIR, :2]).max() < 0.012
     assert max_gouge(path, tool_center_surface(target, 0.004)) < 1e-9
+
+
+def test_a_line_that_grazes_the_last_loop_keeps_its_nearest_point():
+    """A line from the previous loop that only touches the last level at its
+    nearest point B (the surface comes down to z there and rises again) has
+    no crossing next to B; the next one, on the far side of the pocket, put
+    the fine-mesh benchmark's pyramid-s2026-0000 FE-DA-2 command 20 mm out.
+    B, on the surface at z, wins."""
+    from precomp.toolpath import _blend_to_height
+
+    g = Grid.centered(0.02, 2.5e-4)
+    X, Y = g.mesh()
+    z = np.where(X > 0.0, -1e-4, 50.0 * (X + 0.003) ** 2)
+    cz = zeros(g).with_z(z)
+    A = np.array([[-0.004, 0.0], [-0.004, 0.001]])
+    B = np.array([[-0.003, 0.0], [-0.003, 0.001]])
+    xy = _blend_to_height(cz, A, B, np.zeros(2))
+    np.testing.assert_allclose(xy, B, atol=1e-12)

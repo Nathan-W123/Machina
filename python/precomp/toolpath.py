@@ -642,6 +642,11 @@ def _first_crossing(cz: HeightMap, A: np.ndarray, D: np.ndarray, z: np.ndarray,
 #: only when there is none within three grid spacings of B.
 FAR_CROSSING = 2.0
 
+#: `_blend_to_height`: B stands for a far crossing with none next to it when
+#: the surface there is at most this far [m] above z (B on the loop at z,
+#: to the round-off of the densified loop it is taken from: nanometres).
+GRAZE_TOL = 1e-6
+
 
 def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray) -> np.ndarray:
     """Per row, an x-y point where the bilinear drop-cutter surface equals z.
@@ -651,7 +656,8 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
     then, for rows without a crossing or with one more than `FAR_CROSSING`
     |AB| from A, within three grid spacings of B on a
     grid of h / 8 (a narrow crossing, such as the last small loop around the
-    pole of a dome). The first sign change of c_z - z from >= 0 to < 0 is
+    pole of a dome); a far crossing with none next to B gives way to B when
+    B is on the surface at z (a line that grazes a small last loop at B). The first sign change of c_z - z from >= 0 to < 0 is
     bisected, keeping the side where c_z < z, so the tool never ends inside
     the surface. Where A and B coincide (the first revolution, or a single
     level) the direction is the downhill direction of c_z at A (smoothed over
@@ -685,6 +691,13 @@ def _blend_to_height(cz: HeightMap, A: np.ndarray, B: np.ndarray, z: np.ndarray)
         f2, r2 = _first_crossing(cz, start, unit, z[missing], np.arange(49) * (h / 8.0))
         rows = missing[f2]
         out[rows] = start[f2] + r2[f2, None] * unit[f2]
+        # a line that only grazes the loop at B (c_z(B) = z, the last
+        # revolution at B's own level) has no sign change near B either; B
+        # itself is on the surface at z, the far crossing is not
+        far = missing[~f2 & found[missing] & (root[missing] > FAR_CROSSING)]
+        if len(far):
+            on = cz.interpolate(B[far, 0], B[far, 1], masked=False) - z[far] <= GRAZE_TOL
+            out[far[on]] = B[far[on]]
     return out
 
 
