@@ -295,11 +295,15 @@ def write_tables(out: Path, cfg: Dict[str, Any], cases: pd.DataFrame, tools: pd.
     cmp_ = compare_2mm(cases)
     cmp_.to_csv(out / "compare_2mm.csv", index=False, float_format="%.4f")
     old, old_sims = old_numbers()
+    from precomp.fea.setup import PRESETS
+
+    penalty = PRESETS[cfg["preset"]].get("contact", {}).get("penalty", 10.0)
     L = ["# Springback benchmark test parts on the fine mesh: SparLab simulations, not "
          "experiments", "",
          f"Setup `{cfg['preset']}` (0.833 mm incompatible-mode Hex8, 1 layer, 5 thickness "
-         "points, penalty 10); the 8 test parts of benchmarks/springback. Deviation of the "
-         "released part from the target over the part [mm]; rim sag = mean vertical deviation "
+         f"points, penalty {penalty:g}); the 8 test parts of benchmarks/springback. Deviation "
+         "of the released part from the target over the part [mm]; rim sag = mean vertical "
+         "deviation "
          "of the part less than 1 mm deep (negative = too deep); interior = the part deeper "
          "than that.", "",
          f"{int(cases['completed'].fillna(False).astype(bool).sum())} simulations complete, "
