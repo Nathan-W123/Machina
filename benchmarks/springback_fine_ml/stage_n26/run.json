@@ -1,0 +1,136 @@
+{
+  "command": "python3 python/scripts/springback_fine_ml.py --out benchmarks/springback_fine_ml --work benchmarks/springback_fine_ml/work --workers 4 --threads 4 --stages 18 26",
+  "config": {
+    "baseline": "benchmarks/springback_fine/cases.csv, strategy backing_plate (penalty 10)",
+    "da": {
+      "alpha": 1.0,
+      "direction": "vertical",
+      "max_wall_angle_deg": 65.0,
+      "smoothing": null,
+      "tool_reach": true
+    },
+    "data_source": "SparLab simulation",
+    "design_from": "benchmarks/springback/config.json (families, part bounds, seed, grid, split)",
+    "fe_da_fixed": "fe_da_fixed/cases.csv (penalty 10, fixed decks, reach clip)",
+    "preset_data": "springback_fine_bulk",
+    "preset_test": "springback_fine",
+    "protocol_revision": 1,
+    "seed": 2026,
+    "split": {
+      "calibration_every": 4,
+      "seed": 2026,
+      "test_per_family": 2
+    },
+    "support": "backing_plate",
+    "support_settings": {
+      "clearance": 0.001
+    },
+    "surrogate": {
+      "gbm": {
+        "max_iter": 300,
+        "n_members": 8
+      },
+      "iterations": 8,
+      "mlp": {
+        "epochs": 40,
+        "hidden": [
+          128,
+          128
+        ],
+        "n_members": 5
+      },
+      "points_per_sample": 2000,
+      "stagnation": 0.02
+    },
+    "timeout_s": 28800.0,
+    "train_kinds": [
+      "uncompensated",
+      "compensated"
+    ],
+    "upper_band_depth": 0.001
+  },
+  "cpu_count": 4,
+  "created_at": "2026-10-04T18:00:41Z",
+  "data_source": "SparLab simulation",
+  "dataset": {
+    "by_split": {
+      "calibration": 24,
+      "test": 0,
+      "train": 72
+    },
+    "data_runs_complete": 192,
+    "data_runtime_s_mean": 1346.5122316984427,
+    "data_runtime_s_total": 258530.34848610102,
+    "generation_failures": 0,
+    "parts": 96,
+    "samples": 192
+  },
+  "dz": {
+    "gbm": {
+      "data_source": "SparLab simulation",
+      "test": {
+        "coverage_level": 0.9,
+        "coverage_mean": 0.9402291207851623,
+        "dz_rms_mean_m": 0.00028916005483097397,
+        "err_max_abs_mean_m": 0.00012516896301744982,
+        "err_rms_mean_m": 4.575485943540632e-05,
+        "err_rms_median_m": 4.216445044016096e-05,
+        "n_parts": 8,
+        "n_samples": 16,
+        "ood_flagged_share": 0.0,
+        "rel_rms_mean": 0.15941008907155485
+      }
+    },
+    "mlp": {
+      "data_source": "SparLab simulation",
+      "test": {
+        "coverage_level": 0.9,
+        "coverage_mean": 0.8822894560701595,
+        "dz_rms_mean_m": 0.00028916005483097397,
+        "err_max_abs_mean_m": 0.00013433372088667903,
+        "err_rms_mean_m": 4.683517739777114e-05,
+        "err_rms_median_m": 4.604213275904053e-05,
+        "n_parts": 8,
+        "n_samples": 16,
+        "ood_flagged_share": 0.0,
+        "rel_rms_mean": 0.16402074288865054
+      }
+    }
+  },
+  "elapsed_s": 42632.23745274544,
+  "load_average_end": [
+    1.0,
+    1.0,
+    1.20556640625
+  ],
+  "load_average_start": [
+    0.92333984375,
+    0.30859375,
+    0.11083984375
+  ],
+  "n_per_family": 26,
+  "stage": "stage_n26",
+  "timings_s": {
+    "data_s": 26098.773982524872,
+    "gbm_s": 6709.178480386734,
+    "mlp_s": 9820.02868270874
+  },
+  "training_threads": 4,
+  "training_time_s": {
+    "gbm": 206.69771911000134,
+    "mlp": 130.07919895699888
+  },
+  "versions": {
+    "git_revision": "ef89f00",
+    "numpy": "2.4.6",
+    "pandas": "3.0.6",
+    "platform": "Linux-6.18.44-fc-v64-x86_64-with-glibc2.39",
+    "precomp": "0.1.0",
+    "python": "3.11.15",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.17.1",
+    "sparlab_form": "sparlab 1.0.0 (bd26230795aa)",
+    "torch": "2.14.0+cpu"
+  },
+  "workers": 4
+}
