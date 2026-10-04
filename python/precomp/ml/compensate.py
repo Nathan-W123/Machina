@@ -20,6 +20,11 @@ is evaluated on it - the first one outside ends the loop ("left_envelope"),
 keeping the best iterate inside - unless `allow_out_of_envelope`, in which
 case the verdicts are recorded in the history and the result.
 
+`surrogate_optimize` goes further than DA's pointwise update: starting from
+the DA command it searches a smooth, low-dimensional correction field (depth
+level x angle) that minimises the predicted deviation over the part, under
+the same constraints and the envelope, with a penalty on the model's std.
+
 A prediction is not a result. `verify_with_fea` simulates the compensated
 shape with sparlab_form and reports the achieved deviation from the target
 (and, optionally, that of the uncompensated target for the improvement
@@ -30,18 +35,20 @@ ProxySimulator for CI - labelled "proxy - not physics".
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from .._util import PathLike, PrecompError, call_with_target, to_jsonable, write_json
 from ..compensation import SurrogatePredictor as _BaseSurrogatePredictor
-from ..compensation import displacement_adjustment
+from ..compensation import _condition, displacement_adjustment, smooth_update
 from ..geometry.heightmap import HeightMap
 from ..geometry.parts import MAX_WALL_ANGLE_DEG
-from ..metrology import metrics, part_mask, region_masks, signed_deviation, vertical_deviation
+from ..metrology import (flange_mask, metrics, part_mask, region_masks, signed_deviation,
+                         vertical_deviation)
 from .dataset import SOURCE_LABELS
 from .features import as_setup
 
@@ -74,7 +81,8 @@ class SurrogateCompensation:
     uncompensated target). history : per iteration, the predicted error over
     the part, the update size, the envelope verdict and the interval
     half-width. stopped : "tolerance", "within_interval", "stagnation",
-    "left_envelope" or "iterations". data_source : what the model learned
+    "left_envelope" or "iterations" (`surrogate_compensate`), "optimizer"
+    (`surrogate_optimize`). data_source : what the model learned
     from.
     verification : filled by `verify_with_fea` / `verify_with_simulator`.
     allowed_out_of_envelope : whether the envelope was overridden.
@@ -129,7 +137,8 @@ class SurrogateCompensation:
             self.residual_interval[0].save(d / "residual_lower.npz")
             self.residual_interval[1].save(d / "residual_upper.npz")
         write_json(d / "compensation.json", to_jsonable({
-            "method": "surrogate displacement adjustment", "stopped": self.stopped,
+            "method": self.compensated.metadata.get("compensation", {}).get(
+                "method", "surrogate displacement adjustment"), "stopped": self.stopped,
             "best_iteration": self.best_iteration, "level": self.level,
             "model_data_source": self.data_source,
             "history_quantity": "predictions of the surrogate (model data source: "
@@ -270,6 +279,287 @@ def surrogate_compensate(target: HeightMap, setup: Any, surrogate: Any, *,
                                  allowed_out_of_envelope=bool(allow_out_of_envelope))
 
 
+#: Knots of the hat functions of `correction_basis` in the normalised depth
+#: level s = -z_target / depth (0 at the sheet plane, 1 at the bottom): dense
+#: in the upper band next to the clamp, where the surrogate's DA leaves most
+#: of its error.
+DEFAULT_LEVEL_KNOTS: Tuple[float, ...] = (0.0, 0.1, 0.2, 0.35, 0.6, 1.0)
+
+
+def correction_basis(target: HeightMap, region: np.ndarray,
+                     level_knots: Sequence[float] = DEFAULT_LEVEL_KNOTS,
+                     angular_orders: Sequence[int] = (2, 4),
+                     smoothing: Optional[float] = 1e-3) -> np.ndarray:
+    """The smooth correction fields `surrogate_optimize` searches over, as an
+    (n, ny, nx) array (each field's largest magnitude 1, zero outside
+    `region`): hat functions (piecewise-linear B-splines) in the normalised
+    depth level s = -z_target / depth at `level_knots`, times the angular
+    Fourier modes 1, cos(m theta), sin(m theta) for m in `angular_orders`
+    (theta about the region's centroid), each smoothed in plan at
+    `smoothing` [m] over the region (`smooth_update`). n = len(level_knots)
+    * (1 + 2 len(angular_orders)).
+
+    The smoothing matters: on a steep wall a band of depth levels is a
+    ring a node or two wide in plan, and a learned surrogate answers such a
+    groove far outside anything it was trained on (on the fine-mesh MLP a
+    25 um groove at the rim predicted a 0.85 mm residual, std 2.4 mm)."""
+    region = np.asarray(region, bool)
+    if not region.any():
+        raise ValueError("the correction region is empty")
+    knots = np.asarray(sorted(float(k) for k in level_knots))
+    if knots.size < 2 or knots[0] < 0 or knots[-1] > 1 or np.any(np.diff(knots) <= 0):
+        raise ValueError("level_knots must be >= 2 distinct values in [0, 1]")
+    depth = float(-target.z[region].min())
+    s = np.clip(-target.z / max(depth, 1e-12), 0.0, 1.0)
+    X, Y = target.grid.mesh()
+    th = np.arctan2(Y - Y[region].mean(), X - X[region].mean())
+    modes = [np.ones_like(th)]
+    for m in angular_orders:
+        modes += [np.cos(m * th), np.sin(m * th)]
+    out = []
+    for i in range(knots.size):
+        hat = np.interp(s, knots, np.eye(knots.size)[i])
+        for mode in modes:
+            f = np.where(region, hat * mode, 0.0)
+            if smoothing:
+                f = smooth_update(f, region, smoothing, target.grid.h)
+            peak = float(np.abs(f).max())
+            if peak > 1e-12:
+                out.append(f / peak)
+    return np.asarray(out)
+
+
+def surrogate_optimize(target: HeightMap, setup: Any, surrogate: Any, *,
+                       start: Any = None,
+                       level_knots: Sequence[float] = DEFAULT_LEVEL_KNOTS,
+                       angular_orders: Sequence[int] = (2, 4),
+                       basis_smoothing: Optional[float] = 1e-3,
+                       std_weight: float = 0.25, reg_weight: float = 0.05,
+                       fd_step: float = 5e-5, central: bool = True,
+                       max_correction: float = 1e-3,
+                       max_step: float = 3e-4,
+                       dampings: Sequence[float] = (1e-3, 1e-2, 1e-1, 1.0),
+                       max_iterations: int = 8, rel_tol: float = 1e-3,
+                       max_time_s: Optional[float] = 300.0,
+                       level: float = 0.9,
+                       max_wall_angle_deg: Optional[float] = MAX_WALL_ANGLE_DEG,
+                       allow_out_of_envelope: bool = False,
+                       upper_bound: Any = None,
+                       hold_mask: Optional[np.ndarray] = None,
+                       adjust_mask: Optional[np.ndarray] = None,
+                       tool_radius: Optional[float] = None,
+                       da_kwargs: Optional[Dict[str, Any]] = None) -> SurrogateCompensation:
+    """Search the commanded surface whose PREDICTED formed surface is closest
+    to `target`, starting from a surrogate DA result: a prediction, not a
+    result (verify it, `verify_with_fea`).
+
+    DA corrects each node by its own predicted error, so it cannot trade a
+    change in one place for an effect in another (a deeper wall that pulls
+    the rim down, say). Here the command is
+
+        c(p) = condition(start + sum_k p_k B_k),
+
+    B the smooth fields of `correction_basis` (hat functions in the depth
+    level - dense next to the rim - times angular Fourier modes, smoothed
+    in plan at `basis_smoothing` [m]; ~30 parameters [m]) and `condition` DA's own (`precomp.compensation`: hold
+    mask kept at the target, `upper_bound`, the wall-angle limit, the
+    tool's reach), and p minimises
+
+        J(p) = mean_part(r^2) + std_weight mean_part(std^2) + reg_weight mean(p^2),
+
+    r the predicted vertical residual and std the model's std at c(p), over
+    the part (`part_mask(target)`, as `SurrogateCompensation.predicted_metrics`).
+    The std term keeps the search where the model is sure of itself
+    instead of exploiting its errors. J is a sum of squares: a
+    Levenberg-Marquardt iteration with a finite-difference Jacobian (step
+    `fd_step` [m] per parameter, central unless not `central`: one
+    evaluation batch of 2n (n) predictions), then a full and a half step
+    per damping in `dampings` (relative to the mean diagonal of J^T J),
+    each limited to `max_step` [m] in the command and |p| <=
+    `max_correction` [m]. The difference probes are candidates too: a
+    learned surrogate is rough at the scale of tens of microns (on the
+    fine-mesh MLP most smooth 25 um perturbations of the DA command made
+    the predicted RMS worse in both directions), where a Gauss-Newton
+    step alone stalls. The best candidate that
+    lowers J by more than `rel_tol` (relative) and whose command is inside
+    the training envelope is accepted (one outside is rejected, unless
+    `allow_out_of_envelope`). It stops after `max_iterations`, at no
+    accepted step, or at `max_time_s` (not starting a batch the last one's
+    duration says would end after it; checked between predictions).
+
+    start : the starting command - a HeightMap, a SurrogateCompensation, or
+        None to run `surrogate_compensate` with `da_kwargs` and the
+        constraint keywords here.
+    Returns a SurrogateCompensation with stopped = "optimizer" (the reason
+    in `history[-1]["stop_reason"]` and the command's metadata), the best
+    accepted iterate (the start if none), and a history entry per
+    evaluation batch (the predicted RMS of its accepted or best candidate
+    in "error").
+    """
+    t_start = time.perf_counter()
+    setup = as_setup(setup)
+    constraints = dict(max_wall_angle_deg=max_wall_angle_deg, upper_bound=upper_bound,
+                       hold_mask=hold_mask, adjust_mask=adjust_mask, tool_radius=tool_radius)
+    started_from = "surrogate DA" if start is None else "given"
+    if start is None:
+        start = surrogate_compensate(target, setup, surrogate, level=level,
+                                     allow_out_of_envelope=allow_out_of_envelope,
+                                     **constraints, **(da_kwargs or {}))
+    c0 = start.compensated if isinstance(start, SurrogateCompensation) else start
+    if not c0.grid.matches(target.grid):
+        c0 = c0.resample(target.grid)
+    has_env = getattr(surrogate, "ood", None) is not None and hasattr(surrogate, "assess")
+    ood_t = dict(surrogate.assess(target, setup)) if has_env else None
+    if ood_t is not None and not ood_t["in_envelope"] and not allow_out_of_envelope:
+        raise PrecompError(
+            "the target is outside the model's training envelope (reasons: "
+            f"{', '.join(ood_t['reasons'][:5]) or 'fraction of nodes out'}): the surrogate "
+            "would extrapolate; pass allow_out_of_envelope=True to optimise anyway")
+    hold = flange_mask(target) if hold_mask is None else np.asarray(hold_mask, bool)
+    adjust = part_mask(target) if adjust_mask is None else np.asarray(adjust_mask, bool)
+    region = adjust & ~hold
+    B = correction_basis(target, region, level_knots, angular_orders, basis_smoothing)
+    n = B.shape[0]
+    pred = SurrogatePredictor(surrogate, setup, target)
+    pm = part_mask(target)
+    sel: Optional[np.ndarray] = None
+
+    def evaluate(p: np.ndarray) -> Dict[str, Any]:
+        nonlocal sel
+        z_new = c0.z + np.tensordot(p, B, axes=1)
+        cmd = _condition(c0, z_new, hold, target, max_wall_angle_deg, upper_bound,
+                         tool_radius)
+        formed, std = pred.predict_with_uncertainty(cmd)
+        res = vertical_deviation(formed, target)
+        if sel is None:
+            sel = pm & res.mask
+        r = np.nan_to_num(res.z[sel])
+        sd = np.zeros(0) if std is None else np.nan_to_num(np.asarray(std)[sel])
+        N = float(r.size)
+        vec = np.concatenate([r / np.sqrt(N), np.sqrt(std_weight / N) * sd,
+                              np.sqrt(reg_weight / n) * p])
+        return {"p": p, "cmd": cmd, "formed": formed, "std": std, "res": res, "vec": vec,
+                "J": float(vec @ vec), "rms": float(np.sqrt(np.mean(r ** 2))),
+                "std_rms": float(np.sqrt(np.mean(sd ** 2))) if sd.size else None}
+
+    def out_of_time() -> bool:
+        return max_time_s is not None and time.perf_counter() - t_start > max_time_s
+
+    def entry(k: int, kind: str, e: Dict[str, Any], evals: int, **extra) -> Dict[str, Any]:
+        return {"iteration": k, "batch": kind, "evaluations": evals, "predicted": True,
+                "error": metrics(e["res"], sel), "objective": e["J"],
+                "std_rms_m": e["std_rms"], "params_rms_m": float(np.sqrt(np.mean(e["p"] ** 2))),
+                "elapsed_s": time.perf_counter() - t_start, **extra}
+
+    cur = evaluate(np.zeros(n))
+    a0 = dict(surrogate.assess(cur["cmd"], setup)) if has_env else None
+    history: List[Dict[str, Any]] = [entry(0, "start", cur, 1, accepted=True,
+                                           in_envelope=None if a0 is None
+                                           else bool(a0["in_envelope"]))]
+    ood_best = a0
+    reason = "max_iterations"
+    last_batch_s = 0.0
+    for k in range(1, max_iterations + 1):
+        t_batch = time.perf_counter()
+        if out_of_time() or (max_time_s is not None and
+                             t_batch - t_start + last_batch_s > max_time_s):
+            reason = "time"     # (the next batch would not finish in time)
+            break
+        # finite-difference Jacobian of the residual vector; the probes are
+        # candidates too (a coordinate search where the model is too rough
+        # for the Gauss-Newton step)
+        Jm = np.empty((cur["vec"].size, n))
+        evals, done = 0, 0
+        cands: List[Dict[str, Any]] = []
+        for j in range(n):
+            if out_of_time():
+                break
+            pj = cur["p"].copy()
+            pj[j] += fd_step
+            ep = evaluate(pj)
+            ep["damping"] = "probe"
+            cands.append(ep)
+            if central:
+                pj = cur["p"].copy()
+                pj[j] -= fd_step
+                em = evaluate(pj)
+                em["damping"] = "probe"
+                cands.append(em)
+                Jm[:, j] = (ep["vec"] - em["vec"]) / (2.0 * fd_step)
+                evals += 2
+            else:
+                Jm[:, j] = (ep["vec"] - cur["vec"]) / fd_step
+                evals += 1
+            done += 1
+        if done < n:
+            reason = "time"
+            history.append({"iteration": k, "batch": "jacobian (incomplete)",
+                            "evaluations": evals, "predicted": True,
+                            "elapsed_s": time.perf_counter() - t_start})
+            break
+        A = Jm.T @ Jm
+        g = Jm.T @ cur["vec"]
+        scale = float(np.mean(np.diag(A))) or 1.0
+        for mu in dampings:
+            d = -np.linalg.solve(A + mu * scale * np.eye(n), g)
+            big = float(np.abs(np.tensordot(d, B, axes=1)).max())
+            if big > max_step:
+                d *= max_step / big
+            for frac in (1.0, 0.5):
+                if out_of_time():
+                    break
+                p = np.clip(cur["p"] + frac * d, -max_correction, max_correction)
+                e = evaluate(p)
+                evals += 1
+                e["damping"] = mu if frac == 1.0 else f"{mu:g} (half step)"
+                cands.append(e)
+        cands.sort(key=lambda e: e["J"])
+        accepted, verdict = None, None
+        for e in cands:
+            if e["J"] >= (1.0 - rel_tol) * cur["J"]:
+                break
+            a = dict(surrogate.assess(e["cmd"], setup)) if has_env else None
+            if a is not None and not a["in_envelope"] and not allow_out_of_envelope:
+                continue
+            accepted, verdict = e, a
+            break
+        shown = accepted or cands[0]
+        history.append(entry(k, "jacobian + steps", shown, evals,
+                             accepted=accepted is not None, damping=shown["damping"],
+                             in_envelope=None if verdict is None
+                             else bool(verdict["in_envelope"]),
+                             step_max_abs_m=float(np.abs(shown["cmd"].z - cur["cmd"].z).max())))
+        last_batch_s = time.perf_counter() - t_batch
+        if accepted is None:
+            reason = "no_improvement"
+            break
+        cur, ood_best = accepted, verdict
+    history[-1]["stop_reason"] = reason
+    best_k = max(i for i, h in enumerate(history) if h.get("accepted"))
+    comp = cur["cmd"].copy()
+    comp.metadata["compensation"] = {
+        "method": "surrogate optimisation (Levenberg-Marquardt on a smooth basis)",
+        "start": started_from, "parameters": n,
+        "params_m": [float(x) for x in cur["p"]], "stop_reason": reason,
+        "predictions": pred.calls, "time_s": time.perf_counter() - t_start,
+        "model_data_source": getattr(surrogate, "data_source", None)}
+    residual = cur["res"]
+    residual.metadata.update(quantity="predicted residual (surrogate)",
+                             model_data_source=getattr(surrogate, "data_source", None))
+    cal = getattr(surrogate, "calibrator", None)
+    interval = None
+    if (hasattr(surrogate, "predict_interval") and cal is not None and cal.fitted
+            and cal.supports(level)):
+        lo, hi = call_with_target(surrogate.predict_interval, comp, setup, level,
+                                  target=target)
+        interval = (residual.with_z(comp.z + lo - target.z),
+                    residual.with_z(comp.z + hi - target.z))
+    return SurrogateCompensation(target, comp, cur["formed"], residual, interval, cur["std"],
+                                 level, ood_best, ood_t, history, "optimizer", best_k,
+                                 str(getattr(surrogate, "data_source", "unknown")),
+                                 allowed_out_of_envelope=bool(allow_out_of_envelope))
+
+
 def _deviation_report(formed: HeightMap, target: HeightMap,
                       tolerance: Optional[float]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -341,4 +631,5 @@ def verify_with_fea(result: SurrogateCompensation, setup: Any, work_dir: PathLik
 
 
 __all__ = ["SurrogatePredictor", "SurrogateCompensation", "surrogate_compensate",
-           "verify_with_fea", "verify_with_simulator"]
+           "surrogate_optimize", "correction_basis", "verify_with_fea",
+           "verify_with_simulator"]

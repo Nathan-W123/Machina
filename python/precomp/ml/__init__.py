@@ -19,7 +19,7 @@ surrogate    DeviationSurrogate (model + features + calibration + envelope),
              train_surrogate, transfer_surrogate
 registry     save_model / load_model: bundles with manifests
 evaluate     held-out, cross-validated and leave-family-out evaluation
-compensate   surrogate displacement adjustment, verify_with_fea
+compensate   surrogate displacement adjustment, surrogate_optimize, verify_with_fea
 active       ranking of candidate parts for the next simulations
 cli          `precomp dataset|train|evaluate|active`
 
@@ -28,8 +28,9 @@ physics" or "scan". torch is needed only for MLPEnsemble and FieldUNet.
 """
 
 from .active import Candidate, rank_candidates
-from .compensate import (SurrogateCompensation, SurrogatePredictor, surrogate_compensate,
-                         verify_with_fea, verify_with_simulator)
+from .compensate import (SurrogateCompensation, SurrogatePredictor, correction_basis,
+                         surrogate_compensate, surrogate_optimize, verify_with_fea,
+                         verify_with_simulator)
 from .dataset import (SOURCE_LABELS, Dataset, Sample, Table, build_table, family_split,
                       grouped_kfold, grouped_split, source_label)
 from .evaluate import EvaluationReport, cross_validate, evaluate_surrogate, family_holdout
@@ -57,6 +58,7 @@ __all__ = [
     "DeviationSurrogate", "train_surrogate", "transfer_surrogate",
     "save_model", "load_model", "read_manifest",
     "EvaluationReport", "evaluate_surrogate", "cross_validate", "family_holdout",
-    "SurrogatePredictor", "SurrogateCompensation", "surrogate_compensate", "verify_with_fea",
-    "verify_with_simulator", "Candidate", "rank_candidates",
+    "SurrogatePredictor", "SurrogateCompensation", "surrogate_compensate",
+    "surrogate_optimize", "correction_basis", "verify_with_fea", "verify_with_simulator",
+    "Candidate", "rank_candidates",
 ]
