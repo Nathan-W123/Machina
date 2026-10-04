@@ -157,3 +157,41 @@ def test_surrogate_compensation_passes_the_conditioning_on(gbm_surrogate, proxy_
     hold = np.ones(s.target.grid.shape, dtype=bool)
     with pytest.raises(ValueError, match="adjusted region is empty"):
         surrogate_compensate(s.target, s.setup, gbm_surrogate, iterations=2, hold_mask=hold)
+
+
+def test_the_optimiser_does_not_predict_worse_than_da(gbm_surrogate, proxy_split):
+    """`surrogate_optimize` from a surrogate DA command (one DA update): its
+    predicted RMS deviation over the part is at most DA's (the start is a
+    candidate, every accepted step lowers the objective) - here clearly
+    below it - the command keeps DA's constraints
+    (the flange held, at or below the sheet plane, the wall-angle limit) and
+    stays inside the envelope. Predictions of a proxy-trained model only."""
+    from precomp.geometry.parts import MAX_WALL_ANGLE_DEG
+    from precomp.metrology import flange_mask
+    from precomp.ml import correction_basis, surrogate_optimize
+
+    s = next(x for x in proxy_split["test"] if x.kind == "uncompensated"
+             and gbm_surrogate.assess(x.target, x.setup)["in_envelope"])
+    # one DA update (two predictions): a start the optimiser can improve on
+    da = surrogate_compensate(s.target, s.setup, gbm_surrogate, iterations=2,
+                              stagnation=0.0)
+    opt = surrogate_optimize(s.target, s.setup, gbm_surrogate, start=da,
+                             level_knots=(0.0, 0.25, 0.6, 1.0), angular_orders=(2,),
+                             max_iterations=3, max_time_s=60.0)
+    assert opt.stopped == "optimizer" and opt.data_source == "proxy - not physics"
+    rms_da = da.predicted_metrics()["rms"]
+    rms_opt = opt.predicted_metrics()["rms"]
+    assert rms_opt <= rms_da * (1 + 1e-9), (rms_opt, rms_da)
+    assert rms_opt < 0.9 * rms_da, (rms_opt, rms_da)    # here it improves on it
+    assert opt.history[0]["batch"] == "start"
+    assert abs(opt.history[0]["error"]["rms"] - rms_da) < 1e-12
+    assert "stop_reason" in opt.history[-1] and opt.history[opt.best_iteration]["accepted"]
+    assert opt.in_envelope
+    c = opt.compensated
+    fl = flange_mask(s.target)
+    assert np.allclose(c.z[fl], s.target.z[fl]) and c.z.max() <= 1e-12
+    assert np.degrees(c.wall_angle().max()) <= MAX_WALL_ANGLE_DEG + 1e-6
+    assert c.metadata["compensation"]["parameters"] == 12
+    B = correction_basis(s.target, s.target.z < -1e-6, (0.0, 0.25, 0.6, 1.0), (2,))
+    assert B.shape[0] == 12 and np.allclose(np.abs(B).max(axis=(1, 2)), 1.0)
+    assert np.all(B[:, s.target.z >= -1e-6] == 0.0)
