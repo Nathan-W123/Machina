@@ -77,12 +77,13 @@ CW2 = WORK / "combined_rim2"
 CW1 = cr.CW
 OUT1 = cr.OUT
 COLS = se.COLS
-#: SparLab runs at a time and threads per run. One run on 4 threads finishes
+#: SparLab runs at a time and threads per run. 4 threads made one run only ~1.1x
+#: faster (2897 s vs ~2600-3500 s on 1 thread), so 2 runs x 2 threads: each should finish
 #: well inside the container's ~1 h restart interval (4 runs on 1 thread each
 #: take ~85 min and were lost to restarts). Threads are an execution field:
 #: the deck hash and the run cache do not change.
-SLOTS = int(os.environ.get("COMBINED_SLOTS", "1"))
-SIM_THREADS = int(os.environ.get("COMBINED_SIM_THREADS", "4"))
+SLOTS = int(os.environ.get("COMBINED_SLOTS", "2"))
+SIM_THREADS = int(os.environ.get("COMBINED_SIM_THREADS", "2"))
 #: fix 2: the optimiser's std weight (v1: the default 0.25); chosen a priori
 STD_WEIGHT = 1.0
 STD_WEIGHT_V1 = 0.25
