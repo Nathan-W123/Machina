@@ -53,3 +53,21 @@ Picked per family among the TRAIN parts whose penalty-3 data run took at most th
 | truncated_cone-s2026-0015 | fit | 16.34 | 2.18 | 50.2 | ok | 4033.888 | 0.392 | 0.024 | 0.493 |
 
 Made by `python/scripts/combined_rim_ml.py` (rim-pass setup = `smoke_optimizer_edge.edge_setup(True)`: benchmarks/springback_fine's dsif strategy with benchmarks/support_cone's dsif_rim). Data set: benchmarks/springback_fine_ml/work/data_rim (kept apart from the plate data).
+
+## All 8 test parts (run_all8.sh)
+
+**SparLab simulation**, penalty 10, the 8 held-out test parts of stage_n26. Vertical RMS of formed - target [mm]. Combined = DSIF + rim pass, transfer MLP (fitted on the 8 rim-pass runs above), surrogate DA + optimiser, one verifying run per part. The other columns are the backing-plate results of stage_n26 (`stage_n26/headline.csv`). All 8 runs completed; no envelope override. Per-part rows with the band/deep split: `all8_results.csv`.
+
+| part | uncompensated | FE-DA-1 | ML-MLP | combined |
+|---|--:|--:|--:|--:|
+| dome-s2026-0000 | 0.307 | 0.213 | 0.211 | 0.071 |
+| dome-s2026-0001 | 0.290 | 0.223 | 0.217 | 0.145 |
+| elliptic_cone-s2026-0000 | 0.278 | 0.252 | 0.258 | 0.202 |
+| elliptic_cone-s2026-0001 | 0.305 | 0.266 | 0.258 | 0.205 |
+| pyramid-s2026-0000 | 0.290 | 0.213 | 0.196 | 0.103 |
+| pyramid-s2026-0001 | 0.308 | 0.299 | 0.268 | 0.216 |
+| truncated_cone-s2026-0000 | 0.280 | 0.251 | 0.234 | 0.205 |
+| truncated_cone-s2026-0001 | 0.344 | 0.386 | 0.344 | 0.365 |
+| **mean** | **0.300** | **0.263** | **0.248** | **0.189** |
+
+Mean upper-band RMS: 0.445 / 0.356 / 0.367 / 0.129 mm; mean deep RMS: 0.148 / 0.162 / 0.115 / 0.213 mm. Combined beats ML-MLP on 7 of 8 parts (worse on truncated_cone-s2026-0001). The surrogate predicted a mean of 0.139 mm for the combined commands (simulated 0.189): it still over-promises.
