@@ -1,0 +1,97 @@
+{
+  "da": {
+    "best_iteration": 1,
+    "commanded_depth_mm": 3.1197218974253995,
+    "deep_bias_mm": 0.19106901714896274,
+    "deep_rms_mm": 0.2648528492143913,
+    "stopped": "stagnation",
+    "time_s": 2.34649034999984,
+    "upper_band_bias_mm": -0.008770738119806849,
+    "upper_band_rms_mm": 0.09638103321431692,
+    "vert_rms_mm": 0.2183779478622038
+  },
+  "data_source": "transfer-model prediction (stage_n26 MLP on plate data, penalty 3, + linear correction on DSIF rim-pass runs, penalty 10; SparLab simulation)",
+  "envelope_override": false,
+  "masks": {
+    "adjust_nodes": 2273,
+    "band_nodes": 1640,
+    "hold_nodes": 23648,
+    "strip_nodes": 1012
+  },
+  "optimizer": {
+    "commanded_depth_mm": 3.2490661639289993,
+    "deep_bias_mm": 0.08744707976982874,
+    "deep_rms_mm": 0.21999559335340071,
+    "evaluations": 5,
+    "in_envelope": true,
+    "max_abs_change_from_da_mm": 0.21682974410184913,
+    "stop_reason": "no_improvement",
+    "stopped": "optimizer",
+    "time_s": 88.73201789399991,
+    "upper_band_bias_mm": -0.02497762152351032,
+    "upper_band_rms_mm": 0.10170745538652988,
+    "vert_rms_mm": 0.18535172207069567
+  },
+  "point_id": "pyramid-s2026-0001",
+  "setup": "smoke_optimizer_edge.edge_setup(True) (dsif + rim pass, penalty 10)",
+  "target_predicted": {
+    "deep_bias_mm": 0.40784595804965695,
+    "deep_rms_mm": 0.4213869296552207,
+    "upper_band_bias_mm": 0.03582162802123172,
+    "upper_band_rms_mm": 0.09435017167550563,
+    "vert_rms_mm": 0.3395955294747343
+  },
+  "transfer_accepted": true,
+  "transfer_validation": {
+    "lopo_base_rms_m": 0.0004855557437754807,
+    "lopo_corrected_rms_m": 0.00010047394884767137,
+    "n_parts": 8,
+    "per_part": [
+      {
+        "base_rms_m": 0.000550163165131422,
+        "corrected_rms_m": 0.00010344487511829801,
+        "part": "dome-s2026-0010"
+      },
+      {
+        "base_rms_m": 0.0005258256895245019,
+        "corrected_rms_m": 0.0001041968754070471,
+        "part": "dome-s2026-0011"
+      },
+      {
+        "base_rms_m": 0.00043904742618972335,
+        "corrected_rms_m": 6.518642699433839e-05,
+        "part": "elliptic_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.00046117625669952106,
+        "corrected_rms_m": 7.506732578963971e-05,
+        "part": "elliptic_cone-s2026-0015"
+      },
+      {
+        "base_rms_m": 0.0003869366526408956,
+        "corrected_rms_m": 0.00010936706349681336,
+        "part": "pyramid-s2026-0006"
+      },
+      {
+        "base_rms_m": 0.0004672098488907729,
+        "corrected_rms_m": 6.964734355049626e-05,
+        "part": "pyramid-s2026-0023"
+      },
+      {
+        "base_rms_m": 0.0006144090384994163,
+        "corrected_rms_m": 0.00019185601785777636,
+        "part": "truncated_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.0004396778726275922,
+        "corrected_rms_m": 8.502566256696171e-05,
+        "part": "truncated_cone-s2026-0015"
+      }
+    ],
+    "reason": "leave-one-real-part-out error below the base's",
+    "theta": [
+      0.00042010037702198586,
+      -0.18603209592800898
+    ]
+  }
+}

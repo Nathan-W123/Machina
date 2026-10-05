@@ -1,0 +1,13 @@
+point_id,family,role,footprint_mm,depth_mm,max_wall_angle_deg,status,termination,runtime_s,vert_rms_mm,upper_band_rms_mm,upper_band_bias_mm,deep_rms_mm,deep_bias_mm,deck_hash,data_source
+dome-s2026-0010,dome,fit,19.6000,2.4190,33.7400,ok,completed every step,2321.3733,0.2938,0.1873,0.1652,0.3732,0.3631,c9ffe2532c8a8ae8d331050860e546cc1746612441af78b2a70aec027d0c7c88,SparLab simulation
+dome-s2026-0011,dome,fit,15.3600,3.8890,54.1600,ok,completed every step,2914.0663,0.3889,0.1610,-0.0743,0.4661,0.4607,3ef80b5231875e30644d34e8df324bbb58ee528cb9d59f6542aa63fe7b6f682f,SparLab simulation
+dome-s2026-0018,dome,holdout,15.0000,2.1570,39.7400,ok,completed every step,1589.7754,0.3047,0.1642,0.0996,0.4084,0.4014,648b1b7e5202b836af6a7a14b031d1f0e41f9f562e5ca80ebf1ee2dacd25e17a,SparLab simulation
+elliptic_cone-s2026-0008,elliptic_cone,fit,19.0700,2.2740,32.3600,ok,completed every step,2774.3312,0.2370,0.1304,0.0760,0.2938,0.2859,48f5f09f3ed8fac3ed5ee5b795dd9f59071cba8e0b51dd228b027c5ce00c5423,SparLab simulation
+elliptic_cone-s2026-0015,elliptic_cone,fit,17.8500,3.3370,44.3700,ok,completed every step,4013.4993,0.3243,0.1155,0.0385,0.3982,0.3871,c678823d317346f02e0238f550b4519695f5e38b35d9b516d9b8b79e5a3e3d31,SparLab simulation
+elliptic_cone-s2026-0016,elliptic_cone,holdout,18.1100,2.0320,45.4700,ok,completed every step,2918.4317,0.5450,0.1977,0.1493,0.6600,0.6507,4ac1996457170ab6a8fa3f07a4ae6ec8ac6e0c086c974ada33c899d1d903c67f,SparLab simulation
+pyramid-s2026-0006,pyramid,fit,17.7600,2.3000,30.1900,ok,completed every step,2814.1699,0.1844,0.0988,0.0206,0.2333,0.2226,9fc17bb353f5c2e960bf03d5900e79a590bc1a089d774c44c8bd60354f9200bb,SparLab simulation
+pyramid-s2026-0019,pyramid,holdout,17.9100,2.0500,45.5900,ok,completed every step,2890.6398,0.5522,0.1909,0.1397,0.6780,0.6669,aa5d6b55679cc23da2c4adc7b81e35b5e24755525965debac3b141b1e2768b1c,SparLab simulation
+pyramid-s2026-0023,pyramid,fit,16.6400,3.2050,42.0600,ok,completed every step,4206.9499,0.3359,0.1231,0.0401,0.4173,0.3992,db63970f41df1c22f3a5851af9d626e1a6dfb1e5ab5efd7947dcd1f1dfcd3e31,SparLab simulation
+truncated_cone-s2026-0008,truncated_cone,fit,15.1700,3.7800,52.4400,ok,completed every step,3877.2933,0.5310,0.1113,0.0508,0.6748,0.6517,ea7e062a95352d90fb1bd8c397bffdb519aceefd7cfdc9720d40c4008b69dd5a,SparLab simulation
+truncated_cone-s2026-0010,truncated_cone,holdout,17.0600,3.2060,31.9300,ok,completed every step,2750.5091,0.2291,0.1147,0.0642,0.2890,0.2753,dd0bfa01701dc8815be1cc8062c1d69888f8a68bed7d87f214afb1f62c1e6294,SparLab simulation
+truncated_cone-s2026-0015,truncated_cone,fit,16.3400,2.1770,50.2200,ok,completed every step,4033.8877,0.3915,0.1012,0.0239,0.5048,0.4930,043a0c4ff9cb07ebf3c1083168b3cd9947658444b9c41bad60a35ee805e65098,SparLab simulation

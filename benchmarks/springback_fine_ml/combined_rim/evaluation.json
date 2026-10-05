@@ -1,0 +1,151 @@
+{
+  "heldout_base": {
+    "dz_rms_mean_mm": 0.4077632273113657,
+    "err_rms_mean_mm": 0.5263264985353204,
+    "n_samples": 4
+  },
+  "heldout_transfer": {
+    "dz_rms_mean_mm": 0.4077632273113657,
+    "err_rms_mean_mm": 0.12412646838148136,
+    "n_samples": 4
+  },
+  "lopo_all": {
+    "accepted": true,
+    "base_rms_mm": 0.4989844393021987,
+    "n_parts": 12,
+    "per_part": [
+      {
+        "base_rms_m": 0.000550163165131422,
+        "corrected_rms_m": 8.710956735736402e-05,
+        "part": "dome-s2026-0010"
+      },
+      {
+        "base_rms_m": 0.0005258256895245019,
+        "corrected_rms_m": 8.312803974894367e-05,
+        "part": "dome-s2026-0011"
+      },
+      {
+        "base_rms_m": 0.0004694973772085981,
+        "corrected_rms_m": 7.475566310774242e-05,
+        "part": "dome-s2026-0018"
+      },
+      {
+        "base_rms_m": 0.00043904742618972335,
+        "corrected_rms_m": 8.229215211461095e-05,
+        "part": "elliptic_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.00046117625669952106,
+        "corrected_rms_m": 9.366498634330075e-05,
+        "part": "elliptic_cone-s2026-0015"
+      },
+      {
+        "base_rms_m": 0.0005916813672365616,
+        "corrected_rms_m": 0.00015453826337985513,
+        "part": "elliptic_cone-s2026-0016"
+      },
+      {
+        "base_rms_m": 0.0003869366526408956,
+        "corrected_rms_m": 0.00012166831719008275,
+        "part": "pyramid-s2026-0006"
+      },
+      {
+        "base_rms_m": 0.0006008493172655707,
+        "corrected_rms_m": 0.00016344106275672105,
+        "part": "pyramid-s2026-0019"
+      },
+      {
+        "base_rms_m": 0.0004672098488907729,
+        "corrected_rms_m": 8.135090573486065e-05,
+        "part": "pyramid-s2026-0023"
+      },
+      {
+        "base_rms_m": 0.0006144090384994163,
+        "corrected_rms_m": 0.00016041962424149855,
+        "part": "truncated_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.0004413392597118096,
+        "corrected_rms_m": 7.253725931491112e-05,
+        "part": "truncated_cone-s2026-0010"
+      },
+      {
+        "base_rms_m": 0.0004396778726275922,
+        "corrected_rms_m": 7.553794611670444e-05,
+        "part": "truncated_cone-s2026-0015"
+      }
+    ],
+    "theta": [
+      0.0004567234384114492,
+      -0.09972063331850262
+    ],
+    "transfer_rms_mm": 0.10420364895054962
+  },
+  "lopo_fit": {
+    "accepted": true,
+    "base_rms_mm": 0.4855557437754807,
+    "n_parts": 8,
+    "per_part": [
+      {
+        "base_rms_m": 0.000550163165131422,
+        "corrected_rms_m": 0.00010344487511829801,
+        "part": "dome-s2026-0010"
+      },
+      {
+        "base_rms_m": 0.0005258256895245019,
+        "corrected_rms_m": 0.0001041968754070471,
+        "part": "dome-s2026-0011"
+      },
+      {
+        "base_rms_m": 0.00043904742618972335,
+        "corrected_rms_m": 6.518642699433839e-05,
+        "part": "elliptic_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.00046117625669952106,
+        "corrected_rms_m": 7.506732578963971e-05,
+        "part": "elliptic_cone-s2026-0015"
+      },
+      {
+        "base_rms_m": 0.0003869366526408956,
+        "corrected_rms_m": 0.00010936706349681336,
+        "part": "pyramid-s2026-0006"
+      },
+      {
+        "base_rms_m": 0.0004672098488907729,
+        "corrected_rms_m": 6.964734355049626e-05,
+        "part": "pyramid-s2026-0023"
+      },
+      {
+        "base_rms_m": 0.0006144090384994163,
+        "corrected_rms_m": 0.00019185601785777636,
+        "part": "truncated_cone-s2026-0008"
+      },
+      {
+        "base_rms_m": 0.0004396778726275922,
+        "corrected_rms_m": 8.502566256696171e-05,
+        "part": "truncated_cone-s2026-0015"
+      }
+    ],
+    "theta": [
+      0.00042010037702198586,
+      -0.18603209592800898
+    ],
+    "transfer_rms_mm": 0.10047394884767137
+  },
+  "note": "the 12 parts are TRAIN parts of the base MLP (with the backing plate at penalty 3): 'held out' means held out from the transfer correction, not unseen geometry",
+  "samples": [
+    "dome-s2026-0010-rimu",
+    "dome-s2026-0011-rimu",
+    "dome-s2026-0018-rimu",
+    "elliptic_cone-s2026-0008-rimu",
+    "elliptic_cone-s2026-0015-rimu",
+    "elliptic_cone-s2026-0016-rimu",
+    "pyramid-s2026-0006-rimu",
+    "pyramid-s2026-0019-rimu",
+    "pyramid-s2026-0023-rimu",
+    "truncated_cone-s2026-0008-rimu",
+    "truncated_cone-s2026-0010-rimu",
+    "truncated_cone-s2026-0015-rimu"
+  ]
+}
