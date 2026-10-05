@@ -69,7 +69,8 @@ WORK = se.WORK
 OUT = OUT_ML / "combined_rim"
 CW = WORK / "combined_rim"
 DATA = WORK / "data_rim"
-PART = se.PART
+#: the test part (env COMBINED_PART selects another one, for `one`)
+PART = os.environ.get("COMBINED_PART", se.PART)
 FIDELITY = "sparlab:dsif_rim"
 SLOTS = 4
 COLS = se.COLS
@@ -665,12 +666,18 @@ def main() -> int:
     except ImportError:
         pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("what", choices=["all", "select", "status", "report"])
+    ap.add_argument("what", choices=["all", "one", "select", "status", "report"])
     ap.add_argument("--max-time", type=float, default=240.0,
                     help="optimiser wall-time cap [s] (the smoke test's)")
     a = ap.parse_args()
     if a.what == "select":
         print(select_parts().to_string(index=False))
+        return 0
+    if a.what == "one":
+        # the combined compensation + verification of PART only (the rim-pass
+        # data and the transfer model must exist: run `all` first)
+        rec = combined(Ctx(), select_parts(), a.max_time)
+        log(f"one {PART}: " + json.dumps(rec, default=str))
         return 0
     {"all": cmd_all, "status": cmd_status, "report": cmd_report}[a.what](a)
     return 0

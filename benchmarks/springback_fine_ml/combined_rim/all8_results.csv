@@ -1,0 +1,33 @@
+point_id,method,vert_rms_mm,upper_band_rms_mm,upper_band_bias_mm,deep_rms_mm,deep_bias_mm,data_source
+dome-s2026-0000,uncompensated,0.3071,0.3794,-0.3725,0.1852,-0.1779,SparLab simulation
+dome-s2026-0000,FE-DA-1,0.2131,0.2871,-0.2628,0.0271,0.0045,SparLab simulation
+dome-s2026-0000,ML-MLP,0.2112,0.2832,-0.2563,0.0401,-0.0095,SparLab simulation
+dome-s2026-0001,uncompensated,0.2905,0.4637,-0.455,0.1354,-0.1212,SparLab simulation
+dome-s2026-0001,FE-DA-1,0.2234,0.3813,-0.3626,0.0403,0.0141,SparLab simulation
+dome-s2026-0001,ML-MLP,0.2166,0.3632,-0.3406,0.0629,-0.0013,SparLab simulation
+elliptic_cone-s2026-0000,uncompensated,0.2775,0.4327,-0.4224,0.0968,-0.0122,SparLab simulation
+elliptic_cone-s2026-0000,FE-DA-1,0.2523,0.3292,-0.3028,0.1903,0.0584,SparLab simulation
+elliptic_cone-s2026-0000,ML-MLP,0.2582,0.3605,-0.3372,0.167,0.048,SparLab simulation
+elliptic_cone-s2026-0001,uncompensated,0.3046,0.4554,-0.4442,0.1449,-0.0215,SparLab simulation
+elliptic_cone-s2026-0001,FE-DA-1,0.2655,0.3776,-0.3567,0.1593,0.0941,SparLab simulation
+elliptic_cone-s2026-0001,ML-MLP,0.2575,0.3841,-0.3628,0.1245,0.0675,SparLab simulation
+pyramid-s2026-0000,uncompensated,0.2898,0.4142,-0.4065,0.172,-0.1109,SparLab simulation
+pyramid-s2026-0000,FE-DA-1,0.2126,0.3137,-0.2943,0.1102,-0.0122,SparLab simulation
+pyramid-s2026-0000,ML-MLP,0.1959,0.3033,-0.279,0.0712,0.0186,SparLab simulation
+pyramid-s2026-0001,uncompensated,0.3084,0.4783,-0.4644,0.1302,-0.0116,SparLab simulation
+pyramid-s2026-0001,FE-DA-1,0.2991,0.3936,-0.3664,0.2263,0.1278,SparLab simulation
+pyramid-s2026-0001,ML-MLP,0.2677,0.3588,-0.3287,0.1956,0.1434,SparLab simulation
+truncated_cone-s2026-0000,uncompensated,0.2795,0.427,-0.4178,0.1296,-0.0514,SparLab simulation
+truncated_cone-s2026-0000,FE-DA-1,0.2511,0.3358,-0.3124,0.1838,0.1183,SparLab simulation
+truncated_cone-s2026-0000,ML-MLP,0.2343,0.3748,-0.3569,0.0667,-0.0297,SparLab simulation
+truncated_cone-s2026-0001,uncompensated,0.344,0.5117,-0.5072,0.1939,0.1028,SparLab simulation
+truncated_cone-s2026-0001,FE-DA-1,0.386,0.4284,-0.4168,0.3599,0.2097,SparLab simulation
+truncated_cone-s2026-0001,ML-MLP,0.344,0.5117,-0.5072,0.1939,0.1028,SparLab simulation
+dome-s2026-0000,combined (rim pass + transfer MLP + optimiser),0.07086686213949762,0.0721979765903937,0.031511429245513076,0.06922449968615203,-0.043810254625783064,SparLab simulation
+dome-s2026-0001,combined (rim pass + transfer MLP + optimiser),0.1454225666140528,0.12386363978138044,0.0779617052646806,0.15518284868685736,0.13458250545909706,SparLab simulation
+elliptic_cone-s2026-0000,combined (rim pass + transfer MLP + optimiser),0.2016816034165012,0.1174159975931744,0.056437035474442815,0.23910837744984204,0.10219177048403953,SparLab simulation
+elliptic_cone-s2026-0001,combined (rim pass + transfer MLP + optimiser),0.2047704988339742,0.14231166628065123,0.07686646019088114,0.2355873874771136,0.19417633890657043,SparLab simulation
+pyramid-s2026-0000,combined (rim pass + transfer MLP + optimiser),0.1027086992581118,0.11488950298688702,0.07660854422288217,0.09435558249838555,0.012918671676995265,SparLab simulation
+pyramid-s2026-0001,combined (rim pass + transfer MLP + optimiser),0.2164182251031983,0.14278854471330363,0.06602789634225897,0.24961005953944534,0.09553834528237208,SparLab simulation
+truncated_cone-s2026-0000,combined (rim pass + transfer MLP + optimiser),0.20501196469616115,0.19512403313776,0.1588443489407743,0.21061818567687793,0.17610874836904464,SparLab simulation
+truncated_cone-s2026-0001,combined (rim pass + transfer MLP + optimiser),0.36524907987027944,0.12252693356087847,0.08380285965270563,0.447274561366558,0.2774161167987876,SparLab simulation
