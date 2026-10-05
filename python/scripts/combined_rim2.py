@@ -45,6 +45,7 @@ usage (worktree root; OPENBLAS_NUM_THREADS=1 PYTHONPATH=python):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -76,7 +77,12 @@ CW2 = WORK / "combined_rim2"
 CW1 = cr.CW
 OUT1 = cr.OUT
 COLS = se.COLS
-SLOTS = 4
+#: SparLab runs at a time and threads per run. One run on 4 threads finishes
+#: well inside the container's ~1 h restart interval (4 runs on 1 thread each
+#: take ~85 min and were lost to restarts). Threads are an execution field:
+#: the deck hash and the run cache do not change.
+SLOTS = int(os.environ.get("COMBINED_SLOTS", "1"))
+SIM_THREADS = int(os.environ.get("COMBINED_SIM_THREADS", "4"))
 #: fix 2: the optimiser's std weight (v1: the default 0.25); chosen a priori
 STD_WEIGHT = 1.0
 STD_WEIGHT_V1 = 0.25
@@ -371,7 +377,9 @@ def sim(ctx: cr.Ctx, pid: str, comp, f: Path, as_sample: bool) -> Dict[str, Any]
     log(f"sim {pid}: start (dsif + rim pass, penalty 10) -> {f.name}")
     t0 = time.perf_counter()
     try:
-        res = simulate(ctx.setup, comp, WORK / "runs", target=target)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(SIM_THREADS)  # the subprocess's BLAS
+        res = simulate(dataclasses.replace(ctx.setup, threads=SIM_THREADS), comp,
+                       WORK / "runs", target=target)
         formed = res.formed_surface(-1, grid=target.grid)
         prov = res.provenance
         rec.update(ok=True, deck_hash=prov.get("key"), cache_hit=prov.get("cache_hit"),
