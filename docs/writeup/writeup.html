@@ -2,172 +2,178 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Springback pre-compensation for incremental sheet forming</title>
+<title>Simulation-trained springback pre-compensation for robotic incremental sheet forming</title>
 <style>
-  @page { size: Letter; margin: 0.55in 0.6in; }
-  :root { --ink: #111; --muted: #52514e; --rule: #d9d8d3; --accent: #2a78d6; }
+  @page { size: Letter; margin: 0.6in 0.65in; }
   html, body { background: #fff; }
-  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink);
-         font-size: 9.1pt; line-height: 1.3; margin: 0; }
-  h1 { font-size: 15.5pt; margin: 0 0 2pt; letter-spacing: -0.2pt; }
-  .byline { color: var(--muted); font-size: 8.8pt; margin-bottom: 7pt; }
-  .tag { display: inline-block; border: 1px solid var(--accent); color: var(--accent);
-         border-radius: 3px; padding: 0 5px; font-size: 7.8pt; font-weight: 600; margin-left: 4pt; }
-  h2 { font-size: 10pt; margin: 6pt 0 2pt; color: var(--accent); text-transform: uppercase;
-       letter-spacing: 0.6pt; border-bottom: 1px solid var(--rule); padding-bottom: 1.5pt; }
-  p { margin: 0 0 4pt; }
-  ul { margin: 0 0 4pt 14pt; padding: 0; }
-  li { margin: 0 0 1.6pt; }
-  .fig { text-align: center; margin: 3pt 0 2pt; }
-  .fig img { width: 66%; }
-  .cap { font-size: 7.8pt; color: var(--muted); text-align: center; margin-bottom: 4pt; }
-  table { border-collapse: collapse; width: 100%; font-size: 8.6pt; margin: 2pt 0 5pt; }
-  th, td { text-align: left; padding: 2pt 5pt; border-bottom: 1px solid var(--rule); }
-  th { color: var(--muted); font-weight: 600; }
-  td.num, th.num { text-align: right; }
-  tr.best td { font-weight: 700; }
+  body { font-family: "Liberation Serif", "Times New Roman", Times, serif; color: #000;
+         font-size: 9.3pt; line-height: 1.2; margin: 0; text-align: justify; hyphens: auto; }
+  .title { text-align: center; font-size: 15pt; font-weight: 700; line-height: 1.2; margin: 0 0 5pt; }
+  .authors { text-align: center; font-size: 10pt; margin-bottom: 1pt; }
+  .affil { text-align: center; font-size: 8.8pt; font-style: italic; margin-bottom: 8pt; }
+  .abstract { margin: 0 0.3in 6pt; font-size: 8.8pt; }
+  .abstract b.lbl { display: block; text-align: center; font-size: 9.5pt; margin-bottom: 2pt; }
+  .kw { margin: 3pt 0 0; font-size: 8.6pt; }
+  .cols { column-count: 2; column-gap: 0.25in; }
+  h2 { font-size: 10pt; font-weight: 700; margin: 5pt 0 2pt; text-align: left; break-after: avoid; }
+  h3 { font-size: 9.6pt; font-weight: 700; font-style: italic; margin: 4pt 0 1.5pt; }
+  p { margin: 0 0 3.5pt; text-indent: 0; }
+  p + p { text-indent: 12pt; }
+  ul { margin: 0 0 3.5pt 12pt; padding: 0; }
+  li { margin: 0 0 1.2pt; }
+  figure { margin: 3pt 0 5pt; break-inside: avoid; text-align: center; }
+  figure img { width: 90%; }
+  figcaption { font-size: 8.3pt; text-align: justify; margin-top: 2pt; }
+  table { border-collapse: collapse; width: 100%; font-size: 8.4pt; margin: 2pt 0 2pt;
+          border-top: 1.2pt solid #000; border-bottom: 1.2pt solid #000; }
+  th { border-bottom: 0.6pt solid #000; font-weight: 700; }
+  th, td { padding: 1.4pt 3pt; text-align: left; }
+  td.n, th.n { text-align: right; }
+  .tcap { font-size: 8.3pt; margin: 3pt 0 1pt; text-align: justify; }
   .page { page-break-after: always; }
   .page:last-child { page-break-after: auto; }
-  .appx h2 { margin-top: 2pt; }
-  .appx .fig img { width: 78%; }
-  .appx .fig.maps img { width: 62%; }
-  .two { display: flex; gap: 14pt; }
-  .two > div { flex: 1; }
-  .small { font-size: 8.4pt; }
+  .appx .full { width: 100%; }
+  .appx figure img.w80 { width: 80%; }
+  .appx figure img.w62 { width: 62%; }
+  .small { font-size: 9pt; }
 </style>
 </head>
 <body>
 
 <div class="page">
-  <h1>Predicting and correcting springback in robotic incremental sheet forming</h1>
-  <div class="byline">Nathan Ward, UC Davis &nbsp;|&nbsp; ncward@ucdavis.edu &nbsp;|&nbsp;
-    github.com/Nathan-W123/springback-precomp <span class="tag">ALL RESULTS: SIMULATION</span></div>
+  <div class="title">Simulation-Trained Springback Pre-Compensation for<br>Robotic Incremental Sheet Forming</div>
+  <div class="authors">Nathan Ward</div>
+  <div class="affil">University of California, Davis &nbsp;&middot;&nbsp; ncward@ucdavis.edu &nbsp;&middot;&nbsp;
+    github.com/Nathan-W123/springback-precomp</div>
 
-  <h2>Problem</h2>
-  <p>In incremental sheet forming a robot pushes a clamped sheet into shape one contour at a time.
-  When the tool and clamps let go, the elastic part of the deformation recovers and the part
-  <b>springs back</b>, coming out shallower and bent. Today each new geometry is fixed by
-  iteration: form, scan, correct the toolpath, form again. Every loop costs a sheet, robot time
-  and a scan. The goal of this project is to move as much of that loop as possible into software,
-  so the first formed part lands close to the target.</p>
-
-  <h2>Approach</h2>
-  <ul>
-    <li><b>Physics: a forming simulator written from scratch in C++.</b> Implicit finite-element
-      model with moving rigid tools, frictional contact, anisotropic (Hill48) and
-      kinematic-hardening (Chaboche) plasticity at finite strain, thin-sheet elements with 5
-      integration points through the thickness, and the full sequence of forming, unloading and
-      release onto 3-point supports, where springback happens.</li>
-    <li><b>Learning: an ML surrogate trained on the simulations.</b> A neural-network ensemble
-      predicts the springback at every point of a part in seconds, with an uncertainty estimate
-      and a check that flags parts unlike its training data.</li>
-    <li><b>Correction: an optimiser on the surrogate</b> searches the commanded shape whose
-      predicted result best matches the target, then one simulation verifies it.</li>
-    <li><b>Process change where software cannot reach.</b> Most of the remaining error sat at the
-      top edge next to the clamp, which toolpath changes cannot move. A second tool sweeping that
-      edge from underneath removed it, and the model learned the new process from only 8 extra
-      simulations through a transfer correction rather than a full retrain.</li>
-  </ul>
-
-  <h2>Results (8 held-out test parts, simulation)</h2>
-  <div class="fig"><img src="fig_headline.png" alt="Mean shape error by method"></div>
-  <div class="cap">Mean vertical RMS deviation from the target after release. Domes, cones,
-    elliptic cones and pyramids, 15 to 20 mm across, 1 mm AA5754-O sheet; none seen in training.</div>
-  <ul>
-    <li><b>37% less shape error than an uncorrected part</b> (0.300 to 0.189 mm), on the first
-      attempt, and better than a full simulate-and-correct round that needs twice the simulations.</li>
-    <li>Better than the plain ML correction on 7 of 8 parts; the best part improved from
-      0.307 to 0.071 mm. The edge error fell from 0.45 to 0.13 mm.</li>
-    <li>The surrogate predicts springback to within 0.047 mm on unseen parts, against a typical
-      springback of 0.29 mm, and runs in seconds instead of the 45 to 90 minutes of a simulation.</li>
-  </ul>
-
-  <h2>Limits</h2>
-  <p>All results are simulations; nothing has yet been compared with a formed and scanned part.
-  Parts are small (15 to 20 mm) with one material and one tool. Eight test parts is a small sample,
-  one part got slightly worse, and the optimiser is optimistic about its own result
-  (it predicts 0.14 mm against 0.19 mm simulated).</p>
-
-  <h2>Next steps</h2>
-  <ul>
-    <li><b>Validate on real data:</b> compare one formed and scanned part with the simulation, then
-      fit the transfer correction to scans, which the pipeline already supports.</li>
-    <li><b>Close the loop automatically:</b> ML first shot, check, and one engine correction only
-      when a part misses tolerance (implemented; being evaluated).</li>
-    <li><b>Scale:</b> larger parts, more materials, and faster simulations to grow the training set.</li>
-  </ul>
-</div>
-
-<div class="page appx">
-  <h2>Appendix A. Per-part results</h2>
-  <div class="fig"><img src="fig_per_part.png" alt="Per-part shape error"></div>
-  <div class="cap">Vertical RMS deviation over the part for each held-out test part. One verifying
-    simulation per part and method.</div>
-  <table>
-    <tr><th>Method</th><th class="num">Mean error</th><th class="num">Simulations per part</th><th class="num">Better than no correction</th></tr>
-    <tr><td>No correction</td><td class="num">0.300 mm</td><td class="num">1</td><td class="num">-</td></tr>
-    <tr><td>One simulate-and-correct round</td><td class="num">0.263 mm</td><td class="num">2</td><td class="num">7 of 8</td></tr>
-    <tr><td>ML correction (backing plate)</td><td class="num">0.248 mm</td><td class="num">1</td><td class="num">8 of 8</td></tr>
-    <tr class="best"><td>Edge pass + ML + optimiser</td><td class="num">0.189 mm</td><td class="num">1</td><td class="num">7 of 8</td></tr>
-  </table>
-
-  <h2>Appendix B. Deviation maps</h2>
-  <div class="fig maps"><img src="fig_deviation_maps.png" alt="Deviation maps before and after correction"></div>
-  <div class="cap">Formed minus target, vertical, over the part (the flat flange outside the part is
-    not part of the error metric and is shown in grey). Blue: too deep; red: too shallow. Top row:
-    the best of the 8 parts; bottom row: a typical part.</div>
-</div>
-
-<div class="page appx">
-  <h2>Appendix C. The engine</h2>
-  <div class="two small">
-    <div>
-      <p><b>Forming simulator (C++17)</b></p>
-      <ul>
-        <li>Implicit quasi-static finite elements; Newton solver with sparse direct
-          factorisation (SuiteSparse CHOLMOD / UMFPACK).</li>
-        <li>Rigid sphere, plane and cylinder tools on tabulated trajectories; penalty contact
-          with Coulomb friction.</li>
-        <li>Plasticity: von Mises, Hill48 anisotropy, Chaboche kinematic hardening, finite strain
-          through a logarithmic-strain formulation.</li>
-        <li>Incompatible-mode hexahedra (no bending locking in thin sheet) with 5 integration
-          points through the thickness.</li>
-        <li>Steps: form, unload, optional edge pass by the underside tool, release onto 3-2-1
-          supports; restartable state between steps.</li>
-        <li>Built on a structural FEA and topology-optimisation engine with a verification
-          suite (patch tests, analytical benchmarks, cross-checks against independent codes).
-          The forming mesh was chosen from a mesh-convergence study.</li>
-      </ul>
-    </div>
-    <div>
-      <p><b>Pre-compensation and ML (Python)</b></p>
-      <ul>
-        <li>Part families, toolpath generation (ball-tool offset, contour and spiral paths),
-          simulation decks and a content-addressed run cache.</li>
-        <li>57 geometric, process and material features per surface point.</li>
-        <li>Neural-network ensemble (5 networks) and gradient-boosted ensemble (8 models) with
-          per-point uncertainty; conformal prediction intervals.</li>
-        <li>Out-of-distribution check that refuses parts outside the training envelope.</li>
-        <li>Transfer correction to adapt to a new process or to scans from a few samples.</li>
-        <li>Surrogate optimiser with physical limits: wall angle, tool reach, held regions.</li>
-        <li>Trained on 72 simulated parts (144 forming simulations), calibrated on 24, tested
-          on 8 never seen in training.</li>
-      </ul>
-    </div>
+  <div class="abstract">
+    <b class="lbl">Abstract</b>
+    Springback makes the first formed part in incremental sheet forming deviate from its target,
+    so new geometries are usually corrected by iterating between forming and scanning. This work
+    builds the correction into software. An implicit finite-element forming model written from
+    scratch in C++ simulates forming, unloading and release; an ML surrogate trained on these
+    simulations predicts the springback field of a new part in seconds, and an optimiser on the
+    surrogate computes a pre-compensated toolpath before forming. Residual error concentrated at
+    the clamped edge was removed by adding an underside edge pass, with the surrogate adapted to
+    the new process from eight additional simulations. On eight held-out parts, the method reduces
+    the mean vertical RMS error from 0.300 mm to 0.189 mm (37%) in a single attempt, outperforming
+    one full simulate-and-correct iteration at half the simulation cost. All results are from
+    simulation; validation against formed and scanned parts is the next step.
+    <div class="kw"><i>Keywords:</i> incremental sheet forming, springback, finite element method,
+      surrogate modelling, toolpath compensation, transfer learning.</div>
   </div>
 
-  <h2>Appendix D. Evaluation protocol and what did not work</h2>
-  <ul class="small">
-    <li>Test parts are fixed in advance and never used for training, model selection or tuning.
-      Every reported error comes from a full simulation of the corrected toolpath.</li>
-    <li>More training data improved the surrogate's prediction error (0.052 to 0.047 mm) but not
-      the corrected parts, which showed the limit was the correction strategy, not the data.
-      That finding led to the edge pass.</li>
-    <li>A follow-up that retrained on the optimiser's own shapes and penalised uncertainty more
-      strongly made the predictions more realistic (gap 0.05 to 0.02 mm) but the parts slightly
-      worse (0.203 mm). It is recorded and being separated into its two causes.</li>
-    <li>Code, data provenance, and every benchmark table are in the repository, with a
-      reproduction script for each result.</li>
+  <div class="cols">
+    <h2>1&nbsp;&nbsp;Introduction</h2>
+    <p>In robotic incremental sheet forming, a tool deforms a clamped sheet one contour at a time.
+    When the tool and clamps are released the elastic part of the deformation recovers, and the
+    part comes out shallower and bent. The usual remedy is iterative: form, measure, adjust the
+    commanded shape, and form again. Each iteration costs material, machine time and metrology.
+    The aim here is to predict that outcome before forming and to command a shape that springs
+    back onto the target, so that the first part is already close.</p>
+
+    <h2>2&nbsp;&nbsp;Method</h2>
+    <h3>2.1&nbsp;&nbsp;Forming simulation</h3>
+    <p>A quasi-static implicit finite-element model, written in C++17 on the author's structural
+    FEA engine, simulates the process: rigid tools on prescribed trajectories, penalty contact
+    with Coulomb friction, Hill48 anisotropic yield with Chaboche kinematic hardening at finite
+    (logarithmic) strain, and incompatible-mode hexahedra with five integration points through the
+    1 mm thickness. Each run forms the part, unloads the tool, and releases the sheet onto 3-2-1
+    supports, where springback occurs. The mesh size follows a convergence study.</p>
+    <h3>2.2&nbsp;&nbsp;Surrogate and compensation</h3>
+    <p>Each surface point is described by 57 geometric, process and material features. A
+    five-network ensemble, trained on 144 simulations of 72 parts and calibrated on 24 more,
+    predicts the vertical springback with a per-point uncertainty; an envelope check rejects parts
+    unlike the training data. An optimiser then searches a smooth correction of the commanded
+    shape that minimises the predicted error, subject to wall-angle and tool-reach limits.</p>
+    <h3>2.3&nbsp;&nbsp;Edge pass and transfer</h3>
+    <p>With a backing plate, most of the error (85% before correction) lay in a band next to the
+    clamp, and correction left much of it in place, because toolpath changes
+    cannot reach. A second tool sweeping that edge from underneath was added to the process. Rather
+    than retraining, a correction fitted on eight simulations of the new process adapts the
+    surrogate, reducing its held-out prediction error from 0.53 mm to 0.12 mm.</p>
+
+    <h2>3&nbsp;&nbsp;Results</h2>
+    <p>Eight test parts (domes, cones, elliptic cones and pyramids, 15 to 20 mm across, 2 to 4 mm
+    deep, AA5754-O) were fixed in advance and never used for training or tuning. Every reported
+    error comes from a full simulation of the corrected toolpath (Table 1, Fig. 1).</p>
+    <div class="tcap"><b>Table 1.</b> Mean vertical RMS error over the part, eight held-out parts.</div>
+    <table>
+      <tr><th>Method</th><th class="n">Error [mm]</th><th class="n">Sims/part</th></tr>
+      <tr><td>No correction</td><td class="n">0.300</td><td class="n">1</td></tr>
+      <tr><td>Simulate-and-correct, one round</td><td class="n">0.263</td><td class="n">2</td></tr>
+      <tr><td>ML correction (backing plate)</td><td class="n">0.248</td><td class="n">1</td></tr>
+      <tr><td><b>Edge pass + ML + optimiser</b></td><td class="n"><b>0.189</b></td><td class="n"><b>1</b></td></tr>
+    </table>
+    <figure>
+      <img src="fig_headline.png" alt="Mean error by method">
+      <figcaption><b>Figure 1.</b> Mean vertical RMS shape error after release by method
+        (SparLab simulation). Per-part results and deviation maps are in Appendix A.</figcaption>
+    </figure>
+    <p>The combined method improves on the plain ML correction for seven of eight parts, with the
+    best part reduced from 0.307 mm to 0.071 mm, and lowers the mean edge-band error from 0.45 mm
+    to 0.13 mm. The surrogate predicts springback to 0.047 mm RMS on unseen parts against a typical
+    springback of 0.29 mm, in seconds rather than the 45 to 90 minutes of one simulation.</p>
+
+    <h2>4&nbsp;&nbsp;Limitations</h2>
+    <p>The results are simulations and have not yet been compared with formed parts. The parts are
+    small, with one material and one tool, and eight test parts form a small sample. One part
+    became slightly worse, and the optimiser overestimates its own gain (0.14 mm predicted against
+    0.19 mm simulated).</p>
+
+    <h2>5&nbsp;&nbsp;Future Work</h2>
+    <p>The immediate step is validation on a formed and scanned part, followed by fitting the
+    transfer correction to scan data, which the pipeline supports. A closed loop that adds one
+    finite-element correction only when a part misses tolerance is implemented and under
+    evaluation. Larger parts, more materials and faster simulation would extend the training set.</p>
+  </div>
+</div>
+
+<div class="page appx">
+  <h2>Appendix A&nbsp;&nbsp;Per-Part Results</h2>
+  <figure>
+    <img class="w80" src="fig_per_part.png" alt="Per-part error">
+    <figcaption><b>Figure A1.</b> Vertical RMS error for each held-out test part and method. One
+      verifying simulation per part and method. The combined method is worse than no correction on
+      one part (truncated cone 0001: 0.344 mm to 0.365 mm).</figcaption>
+  </figure>
+  <figure>
+    <img class="w62" src="fig_deviation_maps.png" alt="Deviation maps">
+    <figcaption><b>Figure A2.</b> Formed minus target, vertical, over the part; the flange outside
+      the part is excluded from the error metric and shown in grey. Blue: too deep; red: too
+      shallow. (a) The best of the eight parts; (b) a typical part.</figcaption>
+  </figure>
+</div>
+
+<div class="page appx small">
+  <h2>Appendix B&nbsp;&nbsp;Implementation</h2>
+  <p><b>Forming simulator (C++17).</b> Implicit quasi-static finite elements with Newton iteration
+  and sparse direct factorisation (SuiteSparse CHOLMOD and UMFPACK). Rigid sphere, plane and
+  cylinder tools on tabulated trajectories; penalty contact with Coulomb friction. Von Mises,
+  Hill48 and Chaboche plasticity with a logarithmic-strain finite-strain formulation.
+  Incompatible-mode hexahedra avoid bending locking in thin sheet. Process steps: form, unload,
+  optional underside edge pass, release onto 3-2-1 supports, with restartable state between steps.
+  The engine carries a verification suite of patch tests, analytical benchmarks and cross-checks
+  against independent finite-element codes.</p>
+  <p><b>Pipeline (Python).</b> Parametric part families, ball-tool toolpaths (contour and spiral),
+  simulation decks with a content-addressed run cache, deviation metrology and
+  displacement-adjustment compensation.</p>
+  <p><b>Learning.</b> 57 features per surface point; a five-network neural ensemble and an
+  eight-model gradient-boosted ensemble with per-point uncertainty and conformal prediction
+  intervals; an out-of-distribution envelope; a transfer correction for new processes or scan
+  data; and a surrogate optimiser with physical constraints.</p>
+
+  <h2>Appendix C&nbsp;&nbsp;Evaluation Protocol and Negative Results</h2>
+  <ul>
+    <li>Test parts are fixed in advance and excluded from training, model selection and tuning.</li>
+    <li>Adding training data improved the surrogate (prediction error 0.052 mm to 0.047 mm) but not
+      the corrected parts, indicating that the correction strategy, not data volume, was the
+      limit. This motivated the edge pass.</li>
+    <li>Retraining on the optimiser's own shapes with a stronger uncertainty penalty made the
+      predictions more realistic (prediction gap 0.05 mm to 0.02 mm) but the parts slightly worse
+      (0.203 mm). This result is recorded, and the two changes are being evaluated separately.</li>
+    <li>Code, data provenance, benchmark tables and a reproduction script for every result are in
+      the repository.</li>
   </ul>
 </div>
 
