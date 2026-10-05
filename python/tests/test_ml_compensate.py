@@ -195,3 +195,48 @@ def test_the_optimiser_does_not_predict_worse_than_da(gbm_surrogate, proxy_split
     B = correction_basis(s.target, s.target.z < -1e-6, (0.0, 0.25, 0.6, 1.0), (2,))
     assert B.shape[0] == 12 and np.allclose(np.abs(B).max(axis=(1, 2)), 1.0)
     assert np.all(B[:, s.target.z >= -1e-6] == 0.0)
+
+
+def test_the_optimiser_std_weight_keeps_it_where_the_model_is_sure(gbm_surrogate, proxy_split):
+    """`std_weight` (default 0.25, backward compatible) weighs the model's std
+    in the objective. A wrapped surrogate whose std grows with the distance
+    from the start command (a model sure only of what it has seen): without
+    the std term the optimiser moves and lowers the predicted RMS; with a
+    strong weight it stays much closer to the start (smaller std), trading
+    predicted RMS for confidence. The weights are recorded; a negative one is
+    refused. Predictions of a proxy-trained model only."""
+    import inspect
+
+    from precomp.ml import surrogate_optimize
+
+    assert inspect.signature(surrogate_optimize).parameters["std_weight"].default == 0.25
+    s = next(x for x in proxy_split["test"] if x.kind == "uncompensated"
+             and gbm_surrogate.assess(x.target, x.setup)["in_envelope"])
+    da = surrogate_compensate(s.target, s.setup, gbm_surrogate, iterations=2,
+                              stagnation=0.0)
+    c0 = da.compensated
+
+    class Unsure:
+        """gbm_surrogate, with std = its own + 3 x |command - start|."""
+
+        def __getattr__(self, name):
+            return getattr(gbm_surrogate, name)
+
+        def predict_deviation(self, commanded, setup):
+            mu, sd = gbm_surrogate.predict_deviation(commanded, setup)
+            return mu, np.sqrt(np.asarray(sd) ** 2 + (3.0 * (commanded.z - c0.z)) ** 2)
+
+    kw = dict(start=da, level_knots=(0.0, 0.25, 0.6, 1.0), angular_orders=(2,),
+              max_iterations=3, max_time_s=60.0)
+    free = surrogate_optimize(s.target, s.setup, Unsure(), std_weight=0.0, **kw)
+    sure = surrogate_optimize(s.target, s.setup, Unsure(), std_weight=4.0, **kw)
+    move = lambda r: float(np.abs(r.compensated.z - c0.z).max())  # noqa: E731
+    assert free.predicted_metrics()["rms"] < 0.9 * da.predicted_metrics()["rms"]
+    assert move(sure) < 0.5 * move(free), (move(sure), move(free))
+    pm = s.target.z < -1e-6
+    sd_rms = lambda r: float(np.sqrt(np.mean(r.std[pm] ** 2)))  # noqa: E731
+    assert sd_rms(sure) < sd_rms(free), (sd_rms(sure), sd_rms(free))
+    assert free.compensated.metadata["compensation"]["std_weight"] == 0.0
+    assert sure.compensated.metadata["compensation"]["std_weight"] == 4.0
+    with pytest.raises(ValueError, match="std_weight"):
+        surrogate_optimize(s.target, s.setup, gbm_surrogate, std_weight=-1.0, **kw)

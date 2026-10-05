@@ -370,7 +370,12 @@ def surrogate_optimize(target: HeightMap, setup: Any, surrogate: Any, *,
     r the predicted vertical residual and std the model's std at c(p), over
     the part (`part_mask(target)`, as `SurrogateCompensation.predicted_metrics`).
     The std term keeps the search where the model is sure of itself
-    instead of exploiting its errors. J is a sum of squares: a
+    instead of exploiting its errors. `std_weight` (default 0.25, >= 0; 0
+    ignores the std) sets how strongly: an under-dispersed std (an ensemble
+    whose spread is below its actual error, e.g. a transfer model fitted on
+    a few parts) lets the search exploit model error, which a larger weight
+    (1.0: the std counts as much as the residual) resists. The weights are
+    recorded in the command's metadata. J is a sum of squares: a
     Levenberg-Marquardt iteration with a finite-difference Jacobian (step
     `fd_step` [m] per parameter, central unless not `central`: one
     evaluation batch of 2n (n) predictions), then a full and a half step
@@ -397,6 +402,10 @@ def surrogate_optimize(target: HeightMap, setup: Any, surrogate: Any, *,
     in "error").
     """
     t_start = time.perf_counter()
+    if not (np.isfinite(std_weight) and std_weight >= 0.0):
+        raise ValueError(f"std_weight must be finite and >= 0, got {std_weight!r}")
+    if not (np.isfinite(reg_weight) and reg_weight >= 0.0):
+        raise ValueError(f"reg_weight must be finite and >= 0, got {reg_weight!r}")
     setup = as_setup(setup)
     constraints = dict(max_wall_angle_deg=max_wall_angle_deg, upper_bound=upper_bound,
                        hold_mask=hold_mask, adjust_mask=adjust_mask, tool_radius=tool_radius)
@@ -541,6 +550,7 @@ def surrogate_optimize(target: HeightMap, setup: Any, surrogate: Any, *,
         "method": "surrogate optimisation (Levenberg-Marquardt on a smooth basis)",
         "start": started_from, "parameters": n,
         "params_m": [float(x) for x in cur["p"]], "stop_reason": reason,
+        "std_weight": float(std_weight), "reg_weight": float(reg_weight),
         "predictions": pred.calls, "time_s": time.perf_counter() - t_start,
         "model_data_source": getattr(surrogate, "data_source", None)}
     residual = cur["res"]
