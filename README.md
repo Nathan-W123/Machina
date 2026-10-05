@@ -1,29 +1,65 @@
-# SparLab: springback pre-compensation for robotic incremental sheet forming
+# springback-precomp: first-time-right incremental sheet forming
 
-**Predict how a sheet-metal part will spring back before it is formed, and
-form a corrected shape instead - so the first part is closer to the target.**
+**Predict how a formed sheet-metal part will spring back - and form a corrected
+shape instead, so the first part lands closer to the target.**
 
-In single-point incremental forming (SPIF) a robot pushes a small spherical
-tool over a clamped sheet, contour by contour, until the sheet takes the
-shape of the part. When the tool leaves and the clamp is released, the
-elastic part of the deformation recovers: the part **springs back**, and
-comes out shallower and bent compared with the programmed shape. The usual
-remedy is trial and error - form a part, scan it, correct the tool path,
-form again - which costs sheets, robot time and scans for every new
-geometry.
+In robotic incremental sheet forming a tool pushes a clamped sheet into shape,
+contour by contour. When the tool leaves and the clamp is released, the part
+**springs back** and comes out shallower and bent. Today that is fixed by trial
+and error: form, scan, correct the tool path, form again. This project replaces
+those loops with computation:
 
-This project replaces as many of those iterations as it can with
-computation: a finite-element model of the forming process predicts the
-formed and released part, a compensation loop adjusts the commanded shape
-until the *predicted* part matches the target, and - once there is data - a
-learned surrogate makes that prediction in seconds instead of minutes, with
-an uncertainty estimate and a check of whether the part is inside what the
-model was trained on. Measured scans close the same loop on the shop floor.
+* **SparLab** - a C++ finite-element forming simulator (moving rigid tools,
+  frictional contact, Hill48 / Chaboche plasticity at finite strain, form ->
+  unload -> release onto supports).
+* **precomp** - a Python pipeline: part geometry, tool paths, metrology and
+  displacement-adjustment compensation.
+* **precomp.ml** - ML surrogates (MLP / GBM ensembles) trained on SparLab
+  simulations, with uncertainty, an out-of-distribution check, a transfer model
+  for a new process from a few runs, and an optimiser that searches the
+  corrected shape on the surrogate.
 
-It is an independent, open project. **Status: a working pipeline with
-simulation results on small parts; nothing here has yet been compared with a
-formed part** (see [Results](#current-results) and
-[Limitations](#limitations-of-the-pre-compensation-pipeline)).
+**Status: an independent project. Every number below is a SparLab
+simulation; nothing has been compared with a formed and scanned part yet.**
+
+## Headline result (simulation)
+
+![Shape error after springback on 8 held-out test parts](docs/figures/headline_results.png)
+
+On 8 held-out test parts (domes, cones, elliptic cones, pyramids; 15-20 mm
+footprint, 2-4 mm deep, 1 mm AA5754-O, fine-mesh SparLab model), one forming
+run per part:
+
+| Method | Mean shape error (vertical RMS) | Simulations per part |
+|---|--:|--:|
+| No correction | 0.300 mm | 1 |
+| One simulate-and-correct round (FE displacement adjustment) | 0.263 mm | 2 |
+| ML first shot (backing plate) | 0.248 mm | 1 |
+| **Edge pass (underside tool) + ML + optimiser** | **0.189 mm** | **1** |
+
+* **37 % less error than no correction, and better than a simulate-and-correct
+  round with half the simulations.** It beats the plain ML first shot on 7 of
+  8 parts.
+* Most of the remaining error used to sit at the top edge by the clamp (0.45
+  mm), which changing the tool path cannot reach. A second tool sweeping the
+  edge from underside fixes it (0.13 mm); the ML corrects the rest.
+* The ML learned the new edge-pass process from **8 extra simulations**
+  (transfer model), not a full retrain: prediction error 0.53 -> 0.12 mm on
+  held-out parts.
+* Honest gaps: the model still over-promises (predicted 0.14 mm vs 0.19 mm
+  simulated), one part got slightly worse, and 8 parts is a small sample.
+  A follow-up that retrained on the optimiser's own shapes made the model's
+  predictions more honest but the parts slightly worse (0.203 mm) - recorded
+  in [`combined_rim2`](benchmarks/springback_fine_ml/combined_rim2/README.md).
+
+Details and per-part tables:
+[`benchmarks/springback_fine_ml/combined_rim`](benchmarks/springback_fine_ml/combined_rim/README.md)
+(edge pass + ML),
+[`benchmarks/springback_fine_ml`](benchmarks/springback_fine_ml/README.md)
+(ML first shot), [`benchmarks/springback_fine`](benchmarks/springback_fine/README.md)
+(the fine-mesh model and FE compensation),
+[`benchmarks/physics_audit`](benchmarks/physics_audit/README.md) (mesh
+convergence and physics checks).
 
 ## How it fits together
 
@@ -112,69 +148,19 @@ surrogate --verify-fea`) are listed in
 [`docs/precomp.md`](docs/precomp.md#high-level-api-and-command-line) and
 [`docs/precomp_ml.md`](docs/precomp_ml.md#command-line-and-api).
 
-## Current results
-
-### Compensation with the forming FEA (simulation)
-
-From [`benchmarks/fea_da_cone`](benchmarks/fea_da_cone/README.md): a
-truncated cone 3 mm deep (top radius 9 mm, 45 degree wall) in a 40 x 40 x
-1 mm AA5754-O blank with nominal material data, 20 x 20 x 2 Hex8, a 4 mm
-tool on a spiral path, formed, unloaded and released onto 3-2-1 supports.
-Deviation of the released part from the target, over the part, after one
-step of displacement adjustment (two `sparlab_form` simulations):
-
-| Clamp | Vertical RMS, as designed | Vertical RMS, compensated | Change | Vertical max, as designed / compensated |
-|-------|--------------------------:|--------------------------:|-------:|----------------------------------------:|
-| 9 mm frame (like a backing plate) | **0.465 mm** | **0.405 mm** | -13 % | 0.970 / 0.833 mm |
-| 5 mm frame | 0.739 mm | 0.630 mm | -15 % | 1.392 / 1.196 mm |
-
-Each simulation takes two to four minutes on one thread (126-249 s). These
-are **simulations of a coarse model, not measurements**. The benchmark's
-own analysis explains why one compensation step removes only 13-15 % here:
-the rim sags between the clamp and the first contour where the tool cannot
-push upwards, the tool does not sweep the floor, and the response to a
-change of the commanded shape is not local. Clamping close to the part cut
-the deviation before any compensation by 37 % (0.739 to 0.465 mm) - more
-than the compensation step did.
-
-### The ML layer on proxy data (not physics)
-
-The learning pipeline has so far been exercised end to end **only on the
-`ProxySimulator`, an analytic stand-in for springback that is not physics
-and is not validated against anything**
-([`benchmarks/ml_proxy`](benchmarks/ml_proxy/README.md)). On 70 proxy parts
-of seven families, held-out relative errors of the predicted springback
-were 3.1 % (MLP ensemble), 6.7 % (GBM ensemble) and 9.5 % (U-Net) on test
-parts; the 90 % conformal intervals covered 96.7-97.1 % of a new part in
-expectation; the training envelope flagged every probe with an unseen
-material, thickness, release or tool-path style, and 87 % of a left-out
-family with novel features (freeform) - but not an elliptic cone that was
-predicted worse. Surrogate compensation, checked by the proxy, cut the
-deviation by a median factor of 18.2. **These numbers show that the
-machinery works; they say nothing about accuracy on SparLab simulations or
-on real parts** - that benchmark has not been run yet.
-
-## Limitations of the pre-compensation pipeline
+## Limitations
 
 * **No experiment yet.** No simulated or compensated shape has been compared
-  with a formed and scanned part; the metrology and scan-update path is
-  tested on synthetic scans only.
-* **Coarse, slow forming model.** The forming analysis is implicit: a 3 mm
-  cone on a 40 mm blank takes minutes, and a 60 x 60 x 2 Hex8 cone about
-  7 hours for ten contours to 10 mm ([`docs/forming.md`](docs/forming.md),
-  section 5). Two Hex8 layers are stiff in bending, and a tool on elements
-  not much smaller than itself touches the sheet at one to three nodes.
-* **Material data** are nominal handbook values, not certified; Hill48 with
-  r < 1 is known to misrepresent the equibiaxial yield stress of aluminium
-  alloys.
-* **Compensation** is displacement adjustment on the vertical error: it
-  converges slowly on the benchmark cone and cannot command the surface above
-  the sheet plane, where the rim sags.
-* **ML** has been trained and evaluated only on proxy data; a model is
-  only as good as the simulations it is trained on, and one material per
-  model.
-* One spherical tool, height-field parts (no overhangs), no thermal
-  effects, no trimming. Every item, with what it would take to lift it:
+  with a formed and scanned part. The first step with real data would be one
+  scanned part: check the simulation, then fit the transfer model to scans.
+* **Small, simple parts.** 15-20 mm footprint, height-field shapes (dome,
+  cone, elliptic cone, pyramid), one material (AA5754-O, nominal handbook
+  data), one spherical tool.
+* **Cost.** One fine-mesh forming simulation takes about 45-90 minutes on one
+  CPU core; data sets are therefore small (about 100 parts per model).
+* **The ML is only as good as the simulations**, and the optimiser exploits
+  model error (it predicts better results than the simulations deliver).
+* Every item, with what it would take to lift it:
   [`docs/precomp.md`](docs/precomp.md#limitations),
   [`docs/precomp_ml.md`](docs/precomp_ml.md#limitations),
   [`docs/forming.md`](docs/forming.md) and
