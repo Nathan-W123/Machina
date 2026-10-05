@@ -1,0 +1,11 @@
+point_id,case,kind,fe_runs,vert_rms_mm,upper_band_rms_mm,upper_band_bias_mm,deep_rms_mm,deep_bias_mm,deck_hash,source,note,data_source
+pyramid-s2026-0001,plate uncompensated,simulated,1,0.3084,0.4783,-0.4644,0.1302,-0.0116,bee33d5fc4a939cec4333cc9282650ec5fe45b4f3775bd3d85f4d21826df673b,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,ML-MLP DA (plate),predicted (MLP),0,0.2682,0.2639,-0.2184,0.2707,0.2121,,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,ML-MLP DA (plate),simulated,1,0.2677,0.3588,-0.3287,0.1956,0.1434,c350679a2e7896fb61746af6c47ffec3583aba43828427786e836075b54e4011,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,MLP + optimiser (plate),predicted (MLP),0,0.2277,0.2853,-0.2448,0.1860,0.0862,,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,MLP + optimiser (plate),simulated,1,0.2587,0.3899,-0.3655,0.1309,0.0408,39b64d4d12f097bb4c2f733dd81cd54eae3dbf941798ac8ce82df4fb45c6f4e7,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,DSIF + rim pass uncompensated,simulated,1,0.3619,0.1365,0.0685,0.4435,0.4322,52f544b2edcc436dfcbb222ffafa9c376062bcc50963332463e1d870efadc037,benchmarks/springback_fine_ml/smoke_n26,,SparLab simulation
+pyramid-s2026-0001,DSIF + rim pass uncompensated,predicted (transfer),0,0.3396,0.0944,0.0358,0.4214,0.4078,,this run,,SparLab simulation
+pyramid-s2026-0001,combined: rim pass + transfer DA,predicted (transfer),0,0.2184,0.0964,-0.0088,0.2649,0.1911,,this run,,SparLab simulation
+pyramid-s2026-0001,combined: rim pass + transfer DA + optimiser,predicted (transfer),0,0.1854,0.1017,-0.0250,0.2200,0.0874,,this run,,SparLab simulation
+pyramid-s2026-0001,combined: rim pass + transfer DA + optimiser,simulated,1,0.2164,0.1428,0.0660,0.2496,0.0955,fea52c02fdf5d294b6e78fd3b4d4c04cab886b769df2625ba90d2c8413ed315e,this run,,SparLab simulation
