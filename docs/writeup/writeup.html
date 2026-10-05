@@ -123,9 +123,9 @@
 
     <h2>5&nbsp;&nbsp;Future Work</h2>
     <p>The immediate step is validation on a formed and scanned part, followed by fitting the
-    transfer correction to scan data, which the pipeline supports. A closed loop that adds one
-    finite-element correction only when a part misses tolerance is implemented and under
-    evaluation. Larger parts, more materials and faster simulation would extend the training set.</p>
+    transfer correction to scan data, which the pipeline supports. A second, model-corrected round
+    for parts above 0.15 mm lowered the mean to 0.186 mm at 1.6 simulations per part (Appendix C),
+    so further gains are expected from the process, such as the underside tool's squeeze. Larger parts, more materials and faster simulation would extend the training set.</p>
   </div>
 </div>
 
@@ -171,7 +171,11 @@
       limit. This motivated the edge pass.</li>
     <li>Retraining on the optimiser's own shapes with a stronger uncertainty penalty made the
       predictions more realistic (prediction gap 0.05 mm to 0.02 mm) but the parts slightly worse
-      (0.203 mm). This result is recorded, and the two changes are being evaluated separately.</li>
+      (0.203 mm). The two changes were applied together and have not yet been separated.</li>
+    <li>Second round for parts above 0.15 mm: a full displacement-adjustment step from the
+      simulated error overshot (0.202 to 0.256 mm and 0.205 to 0.251 mm) and was dropped. Correcting
+      the surrogate with the first shot's simulated error and re-optimising improved 3 of 5 parts
+      (best 0.205 to 0.193 mm); the other 2 kept their first shot. Mean 0.189 to 0.186 mm.</li>
     <li>Code, data provenance, benchmark tables and a reproduction script for every result are in
       the repository.</li>
   </ul>
