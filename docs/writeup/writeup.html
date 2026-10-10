@@ -53,9 +53,9 @@
     builds the correction into software. An implicit finite-element forming model written from
     scratch in C++ simulates forming, unloading and release; an ML surrogate trained on these
     simulations predicts the springback field of a new part in seconds, and an optimiser on the
-    surrogate computes a pre-compensated toolpath before forming. Residual error concentrated at
-    the clamped edge was removed by adding an underside edge pass, with the surrogate adapted to
-    the new process from eight additional simulations. On eight held-out parts, the method reduces
+    surrogate computes a pre-compensated toolpath before forming. Two-tool (double-sided) forming
+    with an underside edge pass cut the residual error at the clamped edge by 71%; the surrogate
+    was adapted to this process from eight additional simulations. On eight held-out parts, the method reduces
     the mean vertical RMS error from 0.300 mm to 0.189 mm (37%) in a single attempt, outperforming
     one full simulate-and-correct iteration at half the simulation cost. All results are from
     simulation; validation against formed and scanned parts is the next step.
@@ -76,7 +76,7 @@
     <h3>2.1&nbsp;&nbsp;Forming simulation</h3>
     <p>A quasi-static implicit finite-element model, written in C++17 on the author's structural
     FEA engine, simulates the process: rigid tools on prescribed trajectories, penalty contact
-    with Coulomb friction, Hill48 anisotropic yield with Chaboche kinematic hardening at finite
+    with Coulomb friction, Hill48 anisotropic yield with isotropic hardening at finite
     (logarithmic) strain, and incompatible-mode hexahedra with five integration points through the
     1 mm thickness. Each run forms the part, unloads the tool, and releases the sheet onto 3-2-1
     supports, where springback occurs. The mesh size follows a convergence study.</p>
@@ -86,10 +86,11 @@
     predicts the vertical springback with a per-point uncertainty; an envelope check rejects parts
     unlike the training data. An optimiser then searches a smooth correction of the commanded
     shape that minimises the predicted error, subject to wall-angle and tool-reach limits.</p>
-    <h3>2.3&nbsp;&nbsp;Edge pass and transfer</h3>
+    <h3>2.3&nbsp;&nbsp;Two-tool forming, edge pass and transfer</h3>
     <p>With a backing plate, most of the error (85% before correction) lay in a band next to the
-    clamp, and correction left much of it in place, because toolpath changes
-    cannot reach. A second tool sweeping that edge from underneath was added to the process. Rather
+    clamp, out of reach of toolpath changes. The process was therefore changed to two-tool
+    (double-sided) forming: an underside tool follows the forming tool, then sweeps the edge band
+    from underneath. Uncorrected, this gives 0.273 mm (Table 1). Rather
     than retraining, a correction fitted on eight simulations of the new process adapts the
     surrogate, reducing its held-out prediction error from 0.53 mm to 0.12 mm.</p>
 
@@ -103,10 +104,11 @@
       <tr><td>No correction</td><td class="n">0.300</td><td class="n">1</td></tr>
       <tr><td>Simulate-and-correct, one round</td><td class="n">0.263</td><td class="n">2</td></tr>
       <tr><td>ML correction (backing plate)</td><td class="n">0.248</td><td class="n">1</td></tr>
-      <tr><td><b>Edge pass + ML + optimiser</b></td><td class="n"><b>0.189</b></td><td class="n"><b>1</b></td></tr>
+      <tr><td>Two-tool forming, no correction</td><td class="n">0.273</td><td class="n">1</td></tr>
+      <tr><td><b>Two-tool + edge pass + ML + optimiser</b></td><td class="n"><b>0.189</b></td><td class="n"><b>1</b></td></tr>
     </table>
     <figure>
-      <img src="fig_headline.png" alt="Mean error by method">
+      <img src="fig_headline.png" alt="Mean error by method" style="width:82%">
       <figcaption><b>Figure 1.</b> Mean vertical RMS shape error after release by method
         (SparLab simulation). Per-part results and deviation maps are in Appendix A.</figcaption>
     </figure>
@@ -119,7 +121,8 @@
     <p>The results are simulations and have not yet been compared with formed parts. The parts are
     small, with one material and one tool, and eight test parts form a small sample. One part
     became slightly worse, and the optimiser overestimates its own gain (0.14 mm predicted against
-    0.19 mm simulated).</p>
+    0.19 mm simulated). The edge-band gain comes with a higher interior error (0.15 mm to
+    0.21 mm), the next target.</p>
 
     <h2>5&nbsp;&nbsp;Future Work</h2>
     <p>The immediate step is validation on a formed and scanned part, followed by fitting the
@@ -151,8 +154,9 @@
   and sparse direct factorisation (SuiteSparse CHOLMOD and UMFPACK). Rigid sphere, plane and
   cylinder tools on tabulated trajectories; penalty contact with Coulomb friction. Von Mises,
   Hill48 and Chaboche plasticity with a logarithmic-strain finite-strain formulation.
-  Incompatible-mode hexahedra avoid bending locking in thin sheet. Process steps: form, unload,
-  optional underside edge pass, release onto 3-2-1 supports, with restartable state between steps.
+  Incompatible-mode hexahedra avoid bending locking in thin sheet. Process steps: form (one tool
+  with a backing plate, or two tools), unload, optional underside edge pass, release onto 3-2-1
+  supports, with restartable state between steps.
   The engine carries a verification suite of patch tests, analytical benchmarks and cross-checks
   against independent finite-element codes.</p>
   <p><b>Pipeline (Python).</b> Parametric part families, ball-tool toolpaths (contour and spiral),

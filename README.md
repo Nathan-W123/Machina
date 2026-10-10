@@ -35,26 +35,30 @@ run per part:
 | No correction | 0.300 mm | 1 |
 | One simulate-and-correct round (FE displacement adjustment) | 0.263 mm | 2 |
 | ML first shot (backing plate) | 0.248 mm | 1 |
-| **Edge pass (underside tool) + ML + optimiser** | **0.189 mm** | **1** |
+| Two-tool forming (underside support tool), no correction | 0.273 mm | 1 |
+| **Two-tool forming + edge pass + ML + optimiser** | **0.189 mm** | **1** |
 
 * **37 % less error than no correction, and better than a simulate-and-correct
   round with half the simulations.** It beats the plain ML first shot on 7 of
   8 parts.
 * Most of the remaining error used to sit at the top edge by the clamp (0.45
-  mm), which changing the tool path cannot reach. A second tool sweeping the
-  edge from underside fixes it (0.13 mm); the ML corrects the rest.
-* The ML learned the new edge-pass process from **8 extra simulations**
+  mm), which changing the tool path cannot reach. Switching to two-tool
+  (double-sided) forming, where an underside tool follows the forming tool and
+  then sweeps the edge, cuts it to 0.13 mm; the ML corrects the rest. Two-tool
+  forming alone, without correction, gives 0.273 mm.
+* The ML learned the new two-tool process from **8 extra simulations**
   (transfer model), not a full retrain: prediction error 0.53 -> 0.12 mm on
   held-out parts.
 * Honest gaps: the model still over-promises (predicted 0.14 mm vs 0.19 mm
-  simulated), one part got slightly worse, and 8 parts is a small sample.
+  simulated), one part got slightly worse, the interior error rose (0.15 ->
+  0.21 mm) while the edge error fell, and 8 parts is a small sample.
   A follow-up that retrained on the optimiser's own shapes made the model's
   predictions more honest but the parts slightly worse (0.203 mm) - recorded
   in [`combined_rim2`](benchmarks/springback_fine_ml/combined_rim2/README.md).
 
 Details and per-part tables:
 [`benchmarks/springback_fine_ml/combined_rim`](benchmarks/springback_fine_ml/combined_rim/README.md)
-(edge pass + ML),
+(two-tool forming + edge pass + ML),
 [`benchmarks/springback_fine_ml`](benchmarks/springback_fine_ml/README.md)
 (ML first shot), [`benchmarks/springback_fine`](benchmarks/springback_fine/README.md)
 (the fine-mesh model and FE compensation),
